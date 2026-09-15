@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, NoReturn
 
+import numpy
 import pytest
 from fastapi.testclient import TestClient
 
 from ocs_storage_exploration.api.schemas import TIME_STEP_ATTRIBUTE, AppendRasterRequest
-from ocs_storage_exploration.storage.errors import RasterContractError
-from ocs_storage_exploration.storage.models import (
+from ocs_storage_exploration.storage.errors import QuerySizeGuardError, RasterContractError
+from ocs_storage_exploration.storage.schemas import (
     BoundingBox,
     CoverageDataset,
     GridSpecification,
@@ -29,6 +30,10 @@ CREATE_BODY: dict[str, Any] = {
     "step": "month",
     "publish": False,
 }
+
+
+def refuse_allocation(*arguments: Any, **keywords: Any) -> NoReturn:
+    raise AssertionError("the cube was allocated before the guard refused the request")
 
 
 def create_coverage(client: TestClient, **overrides: Any) -> dict[str, Any]:
@@ -106,7 +111,7 @@ def test_append_can_publish_the_snapshot_it_wrote(client: TestClient) -> None:
 
 
 def test_query_summarises_the_whole_cube(client: TestClient) -> None:
-    create_coverage(client)
+    create_coverage(client, publish=True)
 
     response = client.get(f"/api/v1/raster/{IDENTIFIER}/query", params={"variable": VARIABLE})
 
@@ -121,7 +126,7 @@ def test_query_summarises_the_whole_cube(client: TestClient) -> None:
 
 
 def test_a_bbox_query_reads_fewer_cells_than_the_whole_cube(client: TestClient) -> None:
-    create_coverage(client)
+    create_coverage(client, publish=True)
 
     whole = client.get(f"/api/v1/raster/{IDENTIFIER}/query").json()
     window = client.get(f"/api/v1/raster/{IDENTIFIER}/query", params={"bbox": "0,0,45,45"}).json()
@@ -133,7 +138,7 @@ def test_a_bbox_query_reads_fewer_cells_than_the_whole_cube(client: TestClient) 
 
 
 def test_a_time_window_narrows_the_query(client: TestClient) -> None:
-    create_coverage(client)
+    create_coverage(client, publish=True)
 
     response = client.get(
         f"/api/v1/raster/{IDENTIFIER}/query",
@@ -153,7 +158,7 @@ def test_a_malformed_bbox_is_refused(client: TestClient) -> None:
 
 
 def test_an_unknown_variable_is_refused(client: TestClient) -> None:
-    create_coverage(client)
+    create_coverage(client, publish=True)
 
     response = client.get(f"/api/v1/raster/{IDENTIFIER}/query", params={"variable": "humidity"})
 
@@ -305,3 +310,65 @@ def test_a_free_text_licence_is_refused(client: TestClient) -> None:
     body = {**CREATE_BODY, "license": "Creative Commons Attribution 4.0"}
 
     assert client.post(f"/api/v1/raster/{IDENTIFIER}", json=body).status_code == 422
+
+
+def test_an_oversized_create_is_refused_before_the_cube_is_allocated(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(numpy.random, "default_rng", refuse_allocation)
+
+    response = client.post(
+        f"/api/v1/raster/{IDENTIFIER}",
+        json={**CREATE_BODY, "shape": [4096, 4096], "timestep_count": 512},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["error"] == "QuerySizeGuardError"
+    assert client.get(f"/api/v1/datasets/{IDENTIFIER}").status_code == 404
+
+
+def test_an_oversized_append_request_is_refused_before_the_cube_is_allocated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = CoverageDataset(
+        dataset_identifier=IDENTIFIER,
+        title=IDENTIFIER,
+        address="memory://memory/ocs/raster/coverage-api",
+        grid=GridSpecification(
+            shape=(4096, 4096),
+            bbox=BoundingBox(minimum_x=0.0, minimum_y=0.0, maximum_x=4096.0, maximum_y=4096.0),
+            crs="EPSG:4326",
+        ),
+        variables=(VARIABLE,),
+        temporal=TemporalExtent(start=datetime(2020, 1, 1), end=datetime(2020, 1, 2)),
+        timestep_count=2,
+    )
+    monkeypatch.setattr(numpy.random, "default_rng", refuse_allocation)
+
+    with pytest.raises(QuerySizeGuardError, match="more than the"):
+        AppendRasterRequest(timestep_count=512).to_cube(record)
+
+
+def test_publishing_the_initialisation_snapshot_is_refused(client: TestClient) -> None:
+    create_coverage(client, publish=True)
+    versions = client.get(f"/api/v1/raster/{IDENTIFIER}/versions").json()["items"]
+
+    response = client.post(
+        f"/api/v1/raster/{IDENTIFIER}/publish",
+        json={"snapshot_identifier": versions[-1]["snapshot_identifier"]},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"] == "NothingToPublishError"
+    assert client.get(f"/api/v1/raster/{IDENTIFIER}/query").status_code == 200
+
+
+def test_a_query_without_a_published_version_is_refused(client: TestClient) -> None:
+    create_coverage(client)
+
+    response = client.get(f"/api/v1/raster/{IDENTIFIER}/query")
+
+    assert response.status_code == 404
+    assert response.json()["error"] == "SnapshotNotFoundError"
+    assert client.get(f"/api/v1/raster/{IDENTIFIER}/query", params={"version": "draft"}).status_code == 200

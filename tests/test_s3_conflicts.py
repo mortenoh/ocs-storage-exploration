@@ -12,16 +12,17 @@ from obstore.exceptions import PreconditionError
 
 from ocs_storage_exploration.settings import Settings
 from ocs_storage_exploration.storage.catalog import ObjectCatalog
-from ocs_storage_exploration.storage.errors import PublicationConflictError
-from ocs_storage_exploration.storage.models import (
+from ocs_storage_exploration.storage.errors import DatasetAlreadyExistsError, PublicationConflictError
+from ocs_storage_exploration.storage.keys import vector_data_key
+from ocs_storage_exploration.storage.protocols import StorageBackend
+from ocs_storage_exploration.storage.raster import RasterRepository, TimeStep, build_synthetic_cube, build_timestamps
+from ocs_storage_exploration.storage.schemas import (
     BoundingBox,
     CoverageDataset,
     GridSpecification,
     Publication,
     current_timestamp,
 )
-from ocs_storage_exploration.storage.protocols import StorageBackend
-from ocs_storage_exploration.storage.raster import RasterRepository, TimeStep, build_synthetic_cube, build_timestamps
 from ocs_storage_exploration.storage.vector.collection import VectorCollectionPointer, VectorCollectionStore
 
 pytestmark = pytest.mark.s3
@@ -75,17 +76,57 @@ def test_the_object_store_uses_the_real_conditional_put(live_s3_backend: Storage
         obstore.put(store, key, b"second", mode={"e_tag": '"not-the-current-etag"'})
 
 
+def test_two_catalogs_creating_one_record_lose_the_conditional_create(live_s3_backend: StorageBackend) -> None:
+    first = ObjectCatalog(live_s3_backend)
+    second = ObjectCatalog(live_s3_backend)
+
+    first.put(build_record(), create=True)
+
+    with pytest.raises(DatasetAlreadyExistsError):
+        second.put(build_record(title="Written by the second catalog"), create=True)
+    assert second.require(COVERAGE).title == "Conflict coverage"
+
+
 def test_two_catalogs_racing_one_record_lose_the_compare_and_swap(live_s3_backend: StorageBackend) -> None:
     first = ObjectCatalog(live_s3_backend)
     second = ObjectCatalog(live_s3_backend)
-    first.put(build_record())
-    assert second.get(COVERAGE) is not None
+    first.put(build_record(), create=True)
+    stale = first.require_entry(COVERAGE)
 
-    second.put(build_record(title="Written by the second catalog"))
+    second.put(build_record(title="Written by the second catalog"), revision=second.require_entry(COVERAGE).revision)
 
-    with pytest.raises(PublicationConflictError):
-        first.put(build_record(title="Written by the first catalog"))
+    # A read in between must not launder the revision the first catalog still holds.
     assert first.require(COVERAGE).title == "Written by the second catalog"
+    with pytest.raises(PublicationConflictError):
+        first.put(build_record(title="Written by the first catalog"), revision=stale.revision)
+    assert first.require(COVERAGE).title == "Written by the second catalog"
+
+
+def test_two_vector_writers_racing_one_version_reserve_different_numbers(
+    live_s3_backend: StorageBackend,
+    live_s3_settings: Settings,
+    sample_features: geopandas.GeoDataFrame,
+) -> None:
+    writer = VectorCollectionStore(live_s3_backend, ObjectCatalog(live_s3_backend), live_s3_settings)
+    racing = VectorCollectionStore(live_s3_backend, ObjectCatalog(live_s3_backend), live_s3_settings)
+    writer.write(COLLECTION, sample_features, identifier_property="id", publish=True)
+    published = bytes(
+        obstore.get(
+            live_s3_backend.object_store(), live_s3_backend.address(vector_data_key(COLLECTION, 1)).key
+        ).bytes(),
+    )
+    # Freeze the racing writer on the empty listing it saw before the first writer created version 1.
+    racing.versions = lambda collection_identifier: []  # type: ignore[method-assign]
+
+    result = racing.write(COLLECTION, sample_features.iloc[:5], identifier_property="id")
+
+    assert result.version == 2
+    replayed = bytes(
+        obstore.get(
+            live_s3_backend.object_store(), live_s3_backend.address(vector_data_key(COLLECTION, 1)).key
+        ).bytes(),
+    )
+    assert replayed == published
 
 
 def test_two_raster_publishes_with_a_stale_snapshot_lose_the_compare_and_swap(

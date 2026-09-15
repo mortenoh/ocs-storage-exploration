@@ -7,13 +7,19 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Final, Literal, Self
 
 import xarray
+from geojson_pydantic import FeatureCollection
 from pydantic import BaseModel, Field, field_validator, model_validator
-from pyproj import CRS
-from pyproj.exceptions import CRSError
 
+from ocs_storage_exploration.settings import get_settings
 from ocs_storage_exploration.storage.addresses import StorageScheme
-from ocs_storage_exploration.storage.errors import PublicationSelectorError, RasterContractError
-from ocs_storage_exploration.storage.models import (
+from ocs_storage_exploration.storage.errors import (
+    CrsError,
+    PublicationSelectorError,
+    QuerySizeGuardError,
+    RasterContractError,
+)
+from ocs_storage_exploration.storage.raster import TimeStep, build_synthetic_cube, build_timestamps
+from ocs_storage_exploration.storage.schemas import (
     BackendDescription,
     BoundingBox,
     CoverageDataset,
@@ -23,8 +29,7 @@ from ocs_storage_exploration.storage.models import (
     normalise_attribution,
     normalise_license,
 )
-from ocs_storage_exploration.storage.raster import TimeStep, build_synthetic_cube, build_timestamps
-from ocs_storage_exploration.storage.vector import DEFAULT_CRS, VectorReadHandle, crs_identifier
+from ocs_storage_exploration.storage.vector import DEFAULT_CRS, VectorReadHandle, crs_identifier, require_crs
 
 TIME_STEP_ATTRIBUTE: Final[str] = "time_step"
 TIME_STEP_VALUES: Final[frozenset[str]] = frozenset(step.value for step in TimeStep)
@@ -39,10 +44,22 @@ GridSide = Annotated[int, Field(ge=1, le=MAXIMUM_GRID_SIDE)]
 def validate_crs(value: str) -> str:
     """Refuse a coordinate reference system that pyproj cannot parse."""
     try:
-        CRS.from_user_input(value)
-    except CRSError as error:
+        require_crs(value)
+    except CrsError as error:
         raise ValueError(f"unknown coordinate reference system: {value!r}") from error
     return value
+
+
+def assert_cube_size(dataset_label: str, shape: tuple[int, int], timestep_count: int) -> None:
+    """Refuse a cube larger than the configured guard before anything allocates one."""
+    rows, columns = shape
+    cell_count = rows * columns * timestep_count
+    allowed = get_settings().max_cube_cells
+    if cell_count > allowed:
+        raise QuerySizeGuardError(
+            f"{dataset_label} of {rows} by {columns} cells over {timestep_count} timesteps holds "
+            f"{cell_count} cells, more than the {allowed} allowed",
+        )
 
 
 def resolve_time_step(value: str | None) -> TimeStep:
@@ -97,6 +114,12 @@ class CreateRasterRequest(BaseModel):
         """Trim the attribution string, treating a blank one as absent."""
         return normalise_attribution(value)
 
+    @model_validator(mode="after")
+    def check_cube_size(self) -> Self:
+        """Refuse a request whose cube would hold more cells than the guard allows."""
+        assert_cube_size("requested cube", self.shape, self.timestep_count)
+        return self
+
     def to_grid(self) -> GridSpecification:
         """Build the grid of this request, recording the time step so an append can continue the axis."""
         return GridSpecification(
@@ -125,6 +148,7 @@ class AppendRasterRequest(BaseModel):
         """Build the cube that continues the time axis of a coverage with the step its grid records."""
         if record.temporal is None or not record.variables:
             raise RasterContractError(f"coverage {record.dataset_identifier!r} has no time axis to continue")
+        assert_cube_size(f"append to {record.dataset_identifier!r}", record.grid.shape, self.timestep_count)
         step = resolve_time_step(record.grid.attributes.get(TIME_STEP_ATTRIBUTE))
         # The axis is regular, so the continuation is the tail of the same series rebuilt one span longer.
         timestamps = build_timestamps(record.temporal.start, record.timestep_count + self.timestep_count, step)
@@ -172,7 +196,9 @@ class CreateVectorRequest(BaseModel):
     crs: str = DEFAULT_CRS
     selectable_columns: tuple[str, ...] = ()
     publish: bool = False
-    feature_collection: dict[str, Any]
+    # geojson-pydantic owns the structural validation, so a null feature, a missing geometry or
+    # properties that are not an object are refused as 422 with the path of the offending member.
+    feature_collection: FeatureCollection
 
     @field_validator("crs")
     @classmethod
@@ -193,11 +219,9 @@ class CreateVectorRequest(BaseModel):
         return normalise_attribution(value)
 
 
-class FeatureCollectionResponse(BaseModel):
-    """GeoJSON FeatureCollection answered in the coordinate reference system of the collection."""
+class FeatureCollectionResponse(FeatureCollection):
+    """Valid GeoJSON FeatureCollection answered in the coordinate reference system of the collection."""
 
-    type: Literal["FeatureCollection"] = "FeatureCollection"
-    features: list[dict[str, Any]]
     number_returned: int
     number_matched: int | None = None
     version: int
@@ -211,13 +235,16 @@ class FeatureCollectionResponse(BaseModel):
         features: list[dict[str, Any]] = list(payload["features"])
         # A read that returns exactly as many features as the limit cannot be told from a full page.
         truncated = limit is not None and len(features) >= limit
-        return cls(
-            features=features,
-            number_returned=len(features),
-            number_matched=None if truncated else len(features),
-            version=handle.version,
-            crs=crs_identifier(handle.frame.crs) if handle.frame.crs is not None else DEFAULT_CRS,
-            truncated=truncated,
+        return cls.model_validate(
+            {
+                "type": "FeatureCollection",
+                "features": features,
+                "number_returned": len(features),
+                "number_matched": None if truncated else len(features),
+                "version": handle.version,
+                "crs": crs_identifier(handle.frame.crs) if handle.frame.crs is not None else DEFAULT_CRS,
+                "truncated": truncated,
+            },
         )
 
 

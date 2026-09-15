@@ -7,16 +7,16 @@ from typing import TYPE_CHECKING, Final, assert_never
 
 from ocs_storage_exploration.storage.catalog import ObjectCatalog
 from ocs_storage_exploration.storage.errors import ItemTypeMismatchError
-from ocs_storage_exploration.storage.models import (
+from ocs_storage_exploration.storage.protocols import Catalog, StorageBackend
+from ocs_storage_exploration.storage.raster.repository import RasterRepository
+from ocs_storage_exploration.storage.registry import build_backend, registered_schemes
+from ocs_storage_exploration.storage.schemas import (
     BackendDescription,
     CoverageDataset,
     Dataset,
     FeatureDataset,
     ItemType,
 )
-from ocs_storage_exploration.storage.protocols import Catalog, StorageBackend
-from ocs_storage_exploration.storage.raster.repository import RasterRepository
-from ocs_storage_exploration.storage.registry import build_backend, registered_schemes
 from ocs_storage_exploration.storage.vector.collection import VectorCollectionStore
 
 if TYPE_CHECKING:

@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     s3: ObjectStorageSettings | None = None
     max_unqualified_feature_count: int = Field(default=50_000, ge=1)
     max_query_cell_count: int = Field(default=50_000_000, ge=1)
+    max_cube_cells: int = Field(default=50_000_000, ge=1)
     parquet_row_group_size: int = Field(default=65_536, ge=1)
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)

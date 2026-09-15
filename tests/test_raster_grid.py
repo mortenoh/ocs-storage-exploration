@@ -7,7 +7,6 @@ import pytest
 from pyproj import CRS
 
 from ocs_storage_exploration.storage.errors import RasterContractError
-from ocs_storage_exploration.storage.models import BoundingBox, GridSpecification
 from ocs_storage_exploration.storage.raster import (
     PROJECTION_CODE_ATTRIBUTE,
     SPATIAL_BBOX_ATTRIBUTE,
@@ -19,6 +18,7 @@ from ocs_storage_exploration.storage.raster import (
     build_synthetic_cube,
     build_timestamps,
 )
+from ocs_storage_exploration.storage.schemas import BoundingBox, GridSpecification
 
 VARIABLE = "temperature"
 

@@ -28,6 +28,12 @@ class BackendNotSupportedError(StorageError):
     status_code: ClassVar[int] = 501
 
 
+class CrsError(StorageError):
+    """Raised when a coordinate reference system cannot be read by pyproj."""
+
+    status_code: ClassVar[int] = 400
+
+
 class DatasetNotFoundError(StorageError):
     """Raised when no catalog record exists for the requested dataset identifier."""
 
@@ -78,6 +84,12 @@ class RasterContractError(StorageError):
 
 class FeatureIdentityError(StorageError):
     """Raised when feature identifiers are missing, null or duplicated."""
+
+    status_code: ClassVar[int] = 422
+
+
+class VectorInputError(StorageError):
+    """Raised when vector input is structurally wrong in a way the feature models do not catch."""
 
     status_code: ClassVar[int] = 422
 

@@ -49,6 +49,13 @@ pins its snapshot when it is opened, so a reader that started before a publish
 finishes reading the version it started with. Nothing disappears underneath it,
 and nothing needs to be retained on the side for it.
 
+The branch move is the publication. The catalog record is written after it and
+is therefore a cache, not the decision: a reader that asks for the published
+version opens the branch when the repository has one and is told 404 when it has
+none, without reading the record at all. A crash between the two writes leaves a
+stale record rather than a wrong answer, and the next publication or version
+listing reconciles it from the branch tip.
+
 Rollback is `publish(snapshot_id=<older>)`. It is not a distinct operation: the
 same compare-and-swap, the same ancestry check, the same conflict behaviour.
 `versions()` reads `ancestry` and marks which snapshot the `published` branch

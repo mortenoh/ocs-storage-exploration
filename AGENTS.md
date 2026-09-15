@@ -33,6 +33,11 @@ other output. Use plain text instead:
 - Ask before creating branches or pull requests.
 - Always run `make lint && make test` after making changes.
 
+## Code quality
+
+- `schemas.py` holds pydantic `BaseModel` classes; `models.py` is reserved for
+  ORM models and must not contain pydantic schemas.
+
 ## Documentation standards
 
 - Every Python module: one-line module docstring at the top.
@@ -72,7 +77,7 @@ src/ocs_storage_exploration/
     addresses.py      StorageScheme and StorageAddress
     keys.py           object key layout and identifier validation
     errors.py         StorageError hierarchy with HTTP status codes
-    models.py         catalog records, the tagged dataset union and result models
+    schemas.py        catalog records, the tagged dataset union and result models
     protocols.py      StorageBackend and Catalog protocols
     registry.py       scheme to backend factory registry
     catalog.py        ObjectCatalog over the backend object store

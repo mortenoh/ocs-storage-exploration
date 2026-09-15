@@ -8,7 +8,6 @@ import xarray
 from ocs_storage_exploration.settings import Settings
 from ocs_storage_exploration.storage.catalog import ObjectCatalog
 from ocs_storage_exploration.storage.errors import DatasetNotFoundError
-from ocs_storage_exploration.storage.models import BoundingBox, GridSpecification
 from ocs_storage_exploration.storage.protocols import StorageBackend
 from ocs_storage_exploration.storage.raster import (
     RasterRepository,
@@ -16,6 +15,7 @@ from ocs_storage_exploration.storage.raster import (
     build_synthetic_cube,
     build_timestamps,
 )
+from ocs_storage_exploration.storage.schemas import BoundingBox, GridSpecification
 
 IDENTIFIER = "versions"
 VARIABLE = "temperature"

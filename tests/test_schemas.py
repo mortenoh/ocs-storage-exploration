@@ -1,4 +1,4 @@
-"""Tests for the catalog record models and the discriminated dataset union."""
+"""Tests for the catalog record schemas and the discriminated dataset union."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from ocs_storage_exploration.storage.addresses import StorageScheme
-from ocs_storage_exploration.storage.models import (
+from ocs_storage_exploration.storage.schemas import (
     BackendDescription,
     BoundingBox,
     CoverageDataset,

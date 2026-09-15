@@ -61,16 +61,26 @@ Each part of the storage package uses exactly what it needs:
 | Component | Handles it uses |
 | --- | --- |
 | `RasterRepository` | `icechunk_storage` for every read and write; `delete_prefix` to remove a repository |
-| `VectorCollectionStore` | `parquet_filesystem` and `parquet_path` to write and read Parquet, falling back to obstore plus a `pyarrow.BufferReader` when the filesystem is `None`; obstore for the `current.json` pointer and for listing versions |
-| `ObjectCatalog` | obstore only: `put` with etag compare-and-swap, `get`, `delete`, `list` |
+| `VectorCollectionStore` | `parquet_filesystem` and `parquet_path` to write and read Parquet, falling back to obstore plus a `pyarrow.BufferReader` when the filesystem is `None`; obstore for the `current.json` pointer, the per-version `reservation.json` and `metadata.json`, and for listing versions |
+| `ObjectCatalog` | obstore only: `put` as a conditional create, an etag compare-and-swap or a plain overwrite, `get`, `delete`, `list` |
 
-The catalogue record and the vector pointer are both written through
+The catalogue record and every conditional vector object go through
 `storage/objects.py`, which is the one place that knows how a conditional PUT
 fails: `AlreadyExistsError` and `PreconditionError` become
-`PublicationConflictError`, and the non-atomic head-then-put emulation is
-reached only on obstore's `LocalStore`. Any other store that reports
-`NotImplementedError` for a conditional write raises `BackendNotSupportedError`
-rather than quietly losing the guarantee.
+`PublicationConflictError`, `create_object_if_absent` reports a lost create as
+`None` for the callers that retry rather than fail, and the non-atomic
+head-then-put emulation is reached only on obstore's `LocalStore`, and only for
+an etag replace. Any other store that reports `NotImplementedError` for a
+conditional write raises `BackendNotSupportedError` rather than quietly losing
+the guarantee.
+
+`ObjectCatalog` remembers nothing between calls. A caller that intends to edit a
+record reads it with `get_entry`, which returns a `CatalogEntry` carrying the
+record and the revision it was read at, and passes that revision back to `put`;
+a caller creating a record passes `create=True`. A `put` with neither is a
+documented, unconditional overwrite. There is no instance-wide etag memory, so
+one component reading a record can no longer refresh the revision another
+component is about to write against.
 
 The memory backend returns `None` from `parquet_filesystem()`, which is why the
 vector engine has the buffered path at all. That path is not a test-only
@@ -109,10 +119,19 @@ under the bucket:
 
 ```text
 {base_prefix}/catalog/datasets/{dataset_identifier}.json
-{base_prefix}/raster/{dataset_identifier}/                       Icechunk repository
-{base_prefix}/vector/{dataset_identifier}/current.json           published pointer
-{base_prefix}/vector/{dataset_identifier}/versions/vNNNNN/data.parquet
+{base_prefix}/raster/{dataset_identifier}/                              Icechunk repository
+{base_prefix}/vector/{dataset_identifier}/current.json                  published pointer
+{base_prefix}/vector/{dataset_identifier}/versions/vNNNNN/reservation.json   version claim
+{base_prefix}/vector/{dataset_identifier}/versions/vNNNNN/data.parquet       the features
+{base_prefix}/vector/{dataset_identifier}/versions/vNNNNN/metadata.json      version metadata
 ```
+
+Three objects make up a collection version, and the order they are written in is
+the whole safety argument. `reservation.json` is created first, with obstore's
+`mode="create"`, so exactly one writer owns that version number. `data.parquet`
+follows, and is never written over a key that already holds one. `metadata.json`
+is created last and is what marks the version as finished: a directory without
+one is a claim, not a version, and is skipped by every listing that matters.
 
 Identifiers are validated against `[a-z0-9][a-z0-9_-]{0,127}` before they become
 part of a key, and addresses reject empty, `.` and `..` segments, backslashes and

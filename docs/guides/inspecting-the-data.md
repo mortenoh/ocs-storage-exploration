@@ -27,9 +27,16 @@ they are keys under the bucket rather than directories on disk, as
     catalog/datasets/{dataset_identifier}.json   one record per dataset, either item type
     raster/{dataset_identifier}/                 one Icechunk repository per coverage
     vector/{dataset_identifier}/current.json     pointer naming the published version
+    vector/{dataset_identifier}/versions/v00001/reservation.json
     vector/{dataset_identifier}/versions/v00001/data.parquet
-    vector/{dataset_identifier}/versions/v00002/data.parquet
+    vector/{dataset_identifier}/versions/v00001/metadata.json
+    vector/{dataset_identifier}/versions/v00002/...
 ```
+
+Each version directory holds three objects: the `reservation.json` that claimed
+the version number, the Parquet file, and the `metadata.json` sidecar that both
+completes the version and records the coordinate reference system, feature
+count, identifier property and selectable columns a read of that version uses.
 
 `find` over the directory the walkthrough wrote shows both halves:
 

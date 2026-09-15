@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from ocs_storage_exploration.api.parameters import parse_bbox, parse_columns
-from ocs_storage_exploration.storage.errors import StorageAddressError
-from ocs_storage_exploration.storage.models import BoundingBox
+from ocs_storage_exploration.api.parameters import parse_bbox, parse_columns, parse_crs
+from ocs_storage_exploration.storage.errors import CrsError, StorageAddressError
+from ocs_storage_exploration.storage.schemas import BoundingBox
 
 
 def test_bbox_is_parsed_into_an_envelope() -> None:
@@ -27,3 +27,21 @@ def test_invalid_bbox_is_rejected(value: str) -> None:
 def test_columns_are_split_trimmed_and_deduplicated() -> None:
     assert parse_columns(" id , name ,, name ") == ("id", "name")
     assert parse_columns(None) == ()
+
+
+def test_a_crs_is_returned_unchanged_when_pyproj_reads_it() -> None:
+    assert parse_crs("EPSG:3857", parameter="bbox-crs") == "EPSG:3857"
+
+
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_an_absent_crs_is_none(value: str | None) -> None:
+    assert parse_crs(value, parameter="bbox-crs") is None
+
+
+@pytest.mark.parametrize("value", ["not-a-crs", "EPSG:999999", "+proj=nonsense"])
+def test_an_unreadable_crs_is_rejected(value: str) -> None:
+    with pytest.raises(CrsError) as failure:
+        parse_crs(value, parameter="bbox-crs")
+
+    assert "bbox-crs" in failure.value.message
+    assert value in failure.value.message

@@ -27,6 +27,7 @@ classifiers = [
 ]
 dependencies = [
     "fastapi>=0.121",
+    "geojson-pydantic>=2.1",
     "geopandas>=1.1",
     "icechunk>=2.2,<3",
     "numpy>=2.2",

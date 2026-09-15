@@ -7,9 +7,15 @@ from datetime import UTC, datetime
 import pytest
 
 from ocs_storage_exploration.storage.catalog import ObjectCatalog
-from ocs_storage_exploration.storage.errors import DatasetNotFoundError, PublicationConflictError
-from ocs_storage_exploration.storage.models import (
+from ocs_storage_exploration.storage.errors import (
+    DatasetAlreadyExistsError,
+    DatasetNotFoundError,
+    PublicationConflictError,
+)
+from ocs_storage_exploration.storage.protocols import Catalog, StorageBackend
+from ocs_storage_exploration.storage.schemas import (
     BoundingBox,
+    CatalogEntry,
     CoverageDataset,
     FeatureDataset,
     FeatureDetail,
@@ -18,7 +24,6 @@ from ocs_storage_exploration.storage.models import (
     Publication,
     TemporalExtent,
 )
-from ocs_storage_exploration.storage.protocols import Catalog, StorageBackend
 
 BBOX = BoundingBox(minimum_x=-10.0, minimum_y=-5.0, maximum_x=10.0, maximum_y=5.0)
 
@@ -111,42 +116,93 @@ def test_a_second_catalog_over_the_same_backend_sees_the_record(storage_backend:
     assert reader.require("temperature") == writer.require("temperature")
 
 
-def test_a_stale_record_loses_the_compare_and_swap(storage_backend: StorageBackend) -> None:
+def test_get_entry_carries_the_revision_the_record_was_read_at(catalog: ObjectCatalog) -> None:
+    catalog.put(build_coverage(), create=True)
+
+    entry = catalog.get_entry("temperature")
+
+    assert entry is not None
+    assert isinstance(entry, CatalogEntry)
+    assert entry.record == catalog.require("temperature")
+    assert entry.revision
+
+
+def test_get_entry_reports_a_missing_record(catalog: ObjectCatalog) -> None:
+    assert catalog.get_entry("absent") is None
+
+
+def test_two_catalogs_creating_the_same_record_cannot_both_win(storage_backend: StorageBackend) -> None:
     first = ObjectCatalog(storage_backend)
     second = ObjectCatalog(storage_backend)
-    first.put(build_coverage())
-    assert second.get("temperature") is not None
 
-    second.put(build_coverage(title="Written by the second catalog"))
+    first.put(build_coverage(), create=True)
+
+    with pytest.raises(DatasetAlreadyExistsError):
+        second.put(build_coverage(title="Written by the second catalog"), create=True)
+    assert second.require("temperature").title == "Daily temperature"
+
+
+def test_a_stale_revision_loses_the_compare_and_swap(storage_backend: StorageBackend) -> None:
+    first = ObjectCatalog(storage_backend)
+    second = ObjectCatalog(storage_backend)
+    first.put(build_coverage(), create=True)
+    stale = first.get_entry("temperature")
+    assert stale is not None
+    current = second.get_entry("temperature")
+    assert current is not None
+
+    second.put(build_coverage(title="Written by the second catalog"), revision=current.revision)
 
     with pytest.raises(PublicationConflictError):
-        first.put(build_coverage(title="Written by the first catalog"))
+        first.put(build_coverage(title="Written by the first catalog"), revision=stale.revision)
     assert storage_backend.exists(first.record_address("temperature")) is True
     assert first.require("temperature").title == "Written by the second catalog"
+
+
+def test_a_read_in_between_does_not_launder_a_stale_revision(storage_backend: StorageBackend) -> None:
+    first = ObjectCatalog(storage_backend)
+    second = ObjectCatalog(storage_backend)
+    first.put(build_coverage(), create=True)
+    stale = first.get_entry("temperature")
+    assert stale is not None
+    current = second.get_entry("temperature")
+    assert current is not None
+    second.put(build_coverage(title="Written by the second catalog"), revision=current.revision)
+
+    # Reading the fresh record must not turn the revision the caller still holds into a valid one.
+    assert first.require("temperature").title == "Written by the second catalog"
+
+    with pytest.raises(PublicationConflictError):
+        first.put(build_coverage(title="Written by the first catalog"), revision=stale.revision)
 
 
 def test_a_deleted_record_loses_the_compare_and_swap(storage_backend: StorageBackend) -> None:
     first = ObjectCatalog(storage_backend)
     second = ObjectCatalog(storage_backend)
-    first.put(build_coverage())
-    second.get("temperature")
+    first.put(build_coverage(), create=True)
+    entry = first.get_entry("temperature")
+    assert entry is not None
     second.delete("temperature")
 
     with pytest.raises(PublicationConflictError):
-        first.put(build_coverage(title="Written after the delete"))
+        first.put(build_coverage(title="Written after the delete"), revision=entry.revision)
 
 
-def test_forgetting_etags_turns_the_next_write_into_an_overwrite(storage_backend: StorageBackend) -> None:
+def test_a_put_without_a_revision_overwrites_whatever_is_there(storage_backend: StorageBackend) -> None:
     first = ObjectCatalog(storage_backend)
     second = ObjectCatalog(storage_backend)
-    first.put(build_coverage())
-    second.get("temperature")
-    second.put(build_coverage(title="Written by the second catalog"))
+    first.put(build_coverage(), create=True)
+    revision = second.require_entry("temperature").revision
+    second.put(build_coverage(title="Written by the second catalog"), revision=revision)
 
-    first.forget_etags()
     first.put(build_coverage(title="Forced overwrite"))
 
     assert second.require("temperature").title == "Forced overwrite"
+
+
+def test_require_entry_reports_a_missing_record(catalog: ObjectCatalog) -> None:
+    with pytest.raises(DatasetNotFoundError):
+        catalog.require_entry("absent")
 
 
 def test_the_record_address_is_below_the_base_prefix(catalog: ObjectCatalog) -> None:

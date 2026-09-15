@@ -34,18 +34,26 @@ Three handles from one settings block, guaranteed to address the same bytes.
 
 ```python
 class Catalog(Protocol):
-    def put(self, dataset: Dataset) -> None: ...
+    def put(self, dataset: Dataset, *, revision: str | None = None, create: bool = False) -> None: ...
     def get(self, dataset_id: str) -> Dataset | None: ...
+    def get_entry(self, dataset_id: str) -> CatalogEntry | None: ...
     def list(self, item_type: ItemType | None = None) -> list[Dataset]: ...
     def delete(self, dataset_id: str) -> None: ...
 ```
 
-One JSON object per dataset, written through obstore with etag compare-and-swap
-when the record was read first. A record is what makes a dataset exist: there
-is no filesystem discovery anywhere, so a store whose record was never written
-is not a half-registered dataset, it is bytes. That replaces both
-`records.json` under a portalocker lock and the directory scanning that
-single-file index implies.
+One JSON object per dataset, written through obstore. A record is what makes a
+dataset exist: there is no filesystem discovery anywhere, so a store whose
+record was never written is not a half-registered dataset, it is bytes. That
+replaces both `records.json` under a portalocker lock and the directory
+scanning that single-file index implies.
+
+Concurrency is a property of the call, not of the catalog object. `get_entry`
+returns a `CatalogEntry(record, revision)`, and the caller hands that revision
+back to `put` to get a compare-and-swap against the record it actually read;
+`create=True` gets a conditional create, which is how a dataset is registered
+exactly once; passing neither is an unconditional overwrite the caller has
+opted into. The catalog keeps no etag of its own, so nothing another component
+reads can widen the window of a write in flight.
 
 ## Datasets
 
@@ -92,7 +100,9 @@ appears in every listing and fails on open.
 catalog/datasets/{id}.json
 raster/{id}/
 vector/{id}/current.json
+vector/{id}/versions/v00001/reservation.json
 vector/{id}/versions/v00001/data.parquet
+vector/{id}/versions/v00001/metadata.json
 ```
 
 Flat, prefix-addressable, no directory semantics assumed.
@@ -111,7 +121,7 @@ Flat, prefix-addressable, no directory semantics assumed.
 | `recover_interrupted_swap` | deleted; nothing to recover |
 | `ArtifactRecord.path` + `artifact_paths.to_absolute` | `StorageAddress` URI in the record |
 | 16 `ArtifactFormat.ICECHUNK` comparisons | one exhaustive `match` on `item_type` |
-| `records.json` under portalocker | `ObjectCatalog`, one object per dataset, etag CAS |
+| `records.json` under portalocker | `ObjectCatalog`, one object per dataset, create or revision CAS |
 | `gdf.to_parquet(path)` at `openeo/jobs.py:1585` | `VectorCollectionStore.write(...)` |
 
 ## Settled since
@@ -129,6 +139,36 @@ Flat, prefix-addressable, no directory semantics assumed.
   raster side swaps an Icechunk branch and the vector side swaps a pointer
   object, and both are read-then-swap with a real compare-and-swap closing the
   window.
+- The catalogue no longer remembers an etag per instance. That memory was
+  process-wide state guarding a per-record write, so any read of the same record
+  refreshed it and a competing writer could win a compare-and-swap it should
+  have lost, while a brand new record was written unconditionally and two
+  creators could overwrite each other. `CatalogEntry` carries the revision with
+  the record it was read from, and `put` takes that revision or `create=True`,
+  so the guard now belongs to the record being edited.
+- A vector version number is claimed with a `reservation.json` created in
+  `mode="create"` before anything is written, and a version counts as written
+  only once its `metadata.json` sidecar exists. Reads, publications and the
+  pointer take the coordinate reference system, feature count, identifier
+  property and selectable columns of the version they selected from that
+  sidecar, not from the catalog record, which only ever describes the newest
+  write.
+- Both engines write the catalog through the same two conditional forms. The
+  raster engine registers a coverage with `create=True` and every later write,
+  reconciliation and publication with the revision of the entry it read, so a
+  second writer that moved the record on makes the loser answer 409 rather than
+  overwrite it. No engine uses the unconditional overwrite any more.
+- Nothing a client acts on is projected from a record. The STAC collection takes
+  identity, title, licence and attribution from the record and everything else
+  from the version being advertised, so an unpublished append no longer widens
+  the published temporal extent and a draft written in another frame no longer
+  changes the published coordinate reference system.
+- The service is multi-threaded and says so. Every route that reaches the
+  service layer is a plain `def`, which FastAPI runs on the threadpool rather
+  than on the event loop, and the caches several threads now share are guarded:
+  the memory backend's Icechunk storages by a lock, the S3 clients by a lock
+  around their construction, and the vector pointer etags by thread-local
+  storage so one thread's read cannot widen another thread's compare-and-swap.
 
 ## Open questions
 

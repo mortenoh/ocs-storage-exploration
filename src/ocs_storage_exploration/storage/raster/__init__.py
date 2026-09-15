@@ -2,6 +2,7 @@
 
 from ocs_storage_exploration.storage.raster.grid import (
     GRID_MAPPING_ATTRIBUTE,
+    NODATA_ATTRIBUTE,
     PROJECTION_CODE_ATTRIBUTE,
     SPATIAL_BBOX_ATTRIBUTE,
     SPATIAL_REFERENCE_NAME,
@@ -18,21 +19,25 @@ from ocs_storage_exploration.storage.raster.grid import (
 from ocs_storage_exploration.storage.raster.repository import (
     MAIN_BRANCH,
     PUBLISHED_BRANCH,
+    CoverageEntry,
     RasterReadHandle,
     RasterRepository,
+    RasterStoreDescription,
     VersionSelector,
-    oriented_slice,
 )
 
 __all__ = [
     "GRID_MAPPING_ATTRIBUTE",
     "MAIN_BRANCH",
+    "NODATA_ATTRIBUTE",
     "PROJECTION_CODE_ATTRIBUTE",
     "PUBLISHED_BRANCH",
     "SPATIAL_BBOX_ATTRIBUTE",
     "SPATIAL_REFERENCE_NAME",
+    "CoverageEntry",
     "RasterReadHandle",
     "RasterRepository",
+    "RasterStoreDescription",
     "TimeStep",
     "VersionSelector",
     "apply_geozarr_attributes",
@@ -41,7 +46,6 @@ __all__ = [
     "build_coordinates",
     "build_synthetic_cube",
     "build_timestamps",
-    "oriented_slice",
     "projection_code",
     "wrap_longitudes",
 ]

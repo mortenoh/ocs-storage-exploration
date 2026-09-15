@@ -14,16 +14,20 @@ from ocs_storage_exploration.api.parameters import (
     WhereQuery,
     parse_bbox,
     parse_columns,
+    parse_crs,
 )
 from ocs_storage_exploration.api.schemas import (
     CreateVectorRequest,
     FeatureCollectionResponse,
     PublishRequest,
 )
-from ocs_storage_exploration.storage.models import PublicationResult, VectorWriteResult
+from ocs_storage_exploration.storage.schemas import PublicationResult, VectorWriteResult
 from ocs_storage_exploration.storage.vector import DEFAULT_CRS, parse_where
 
 router = APIRouter(prefix="/api/v1/vector", tags=["vector"])
+
+# Plain def, not async def: FastAPI runs these in the threadpool so the blocking storage calls
+# never occupy the event loop. See docs/architecture.md for the threading model.
 
 MAXIMUM_FEATURE_LIMIT: Final[int] = 100_000
 
@@ -34,7 +38,7 @@ VersionQuery = Annotated[int | None, Query(ge=1, description="Version to read in
 
 
 @router.post("/{dataset_identifier}", status_code=status.HTTP_201_CREATED, summary="Write a vector collection")
-async def create_vector(
+def create_vector(
     dataset_identifier: str,
     request: CreateVectorRequest,
     storage: StorageServiceDependency,
@@ -54,7 +58,7 @@ async def create_vector(
 
 
 @router.get("/{dataset_identifier}/features", summary="Read features of a vector collection")
-async def read_features(
+def read_features(
     dataset_identifier: str,
     storage: StorageServiceDependency,
     bbox: BoundingBoxQuery = None,
@@ -69,7 +73,7 @@ async def read_features(
     handle = storage.vector.read(
         dataset_identifier,
         bbox=parse_bbox(bbox),
-        bbox_crs=bbox_crs or DEFAULT_CRS,
+        bbox_crs=parse_crs(bbox_crs, parameter="bbox-crs") or DEFAULT_CRS,
         where=parse_where(where or []),
         columns=selected or None,
         limit=limit,
@@ -79,7 +83,7 @@ async def read_features(
 
 
 @router.post("/{dataset_identifier}/publish", summary="Publish a collection version")
-async def publish_vector(
+def publish_vector(
     dataset_identifier: str,
     storage: StorageServiceDependency,
     request: PublishRequest | None = None,

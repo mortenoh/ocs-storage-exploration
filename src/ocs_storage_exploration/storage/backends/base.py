@@ -11,7 +11,7 @@ from obstore.store import ObjectStore
 
 from ocs_storage_exploration.storage.addresses import StorageAddress, StorageScheme, join_key_parts
 from ocs_storage_exploration.storage.errors import StorageAddressError
-from ocs_storage_exploration.storage.models import BackendDescription
+from ocs_storage_exploration.storage.schemas import BackendDescription
 
 
 class BaseStorageBackend(ABC):

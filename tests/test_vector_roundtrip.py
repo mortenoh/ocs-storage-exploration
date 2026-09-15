@@ -15,7 +15,8 @@ from ocs_storage_exploration.settings import Settings
 from ocs_storage_exploration.storage.catalog import ObjectCatalog
 from ocs_storage_exploration.storage.errors import ItemTypeMismatchError, SelectableColumnError
 from ocs_storage_exploration.storage.keys import vector_data_key
-from ocs_storage_exploration.storage.models import (
+from ocs_storage_exploration.storage.protocols import StorageBackend
+from ocs_storage_exploration.storage.schemas import (
     BoundingBox,
     CoverageDataset,
     FeatureDataset,
@@ -24,7 +25,6 @@ from ocs_storage_exploration.storage.models import (
     StorageFormat,
     TemporalExtent,
 )
-from ocs_storage_exploration.storage.protocols import StorageBackend
 from ocs_storage_exploration.storage.vector.collection import VectorCollectionStore
 
 COLLECTION = "districts"

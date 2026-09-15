@@ -399,6 +399,18 @@ wheels = [
 ]
 
 [[package]]
+name = "geojson-pydantic"
+version = "2.1.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7c/03/8fdfbf626f8ec369cc5a0814f856b883ef2b6afb01e6e594181b7b79fb5d/geojson_pydantic-2.1.2.tar.gz", hash = "sha256:94b9f80f9d8ec8b5cad94de9c8feae93d3e0081bf67a4d3929e0e36fb87479f0", size = 8152, upload-time = "2026-08-25T07:03:18.687Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2e/72/73a3b47b861f786c252d1cbdd40e0c1dcc8b1762f7ee4c8ffd638a4f57fc/geojson_pydantic-2.1.2-py3-none-any.whl", hash = "sha256:49aa772b4f4c4d0612595908294a58510c4291848db805a0c99989836ebe4659", size = 9447, upload-time = "2026-08-25T07:03:17.714Z" },
+]
+
+[[package]]
 name = "geopandas"
 version = "1.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1033,6 +1045,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "geojson-pydantic" },
     { name = "geopandas" },
     { name = "icechunk" },
     { name = "numpy" },
@@ -1074,6 +1087,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.121" },
+    { name = "geojson-pydantic", specifier = ">=2.1" },
     { name = "geopandas", specifier = ">=1.1" },
     { name = "icechunk", specifier = ">=2.2,<3" },
     { name = "numpy", specifier = ">=2.2" },

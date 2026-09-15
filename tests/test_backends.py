@@ -105,6 +105,16 @@ def test_memory_backend_reuses_one_icechunk_storage_per_key() -> None:
     assert backend.icechunk_storage(address) is not backend.icechunk_storage(backend.address("raster/two"))
 
 
+def test_memory_backend_delete_drops_the_icechunk_storages_it_cached() -> None:
+    backend = MemoryStorageBackend()
+    kept = backend.icechunk_storage(backend.address("raster/kept"))
+    deleted = backend.icechunk_storage(backend.address("raster/deleted"))
+
+    assert backend.delete_prefix(backend.address("raster/deleted")) == 1
+    assert backend.icechunk_storage(backend.address("raster/deleted")) is not deleted
+    assert backend.icechunk_storage(backend.address("raster/kept")) is kept
+
+
 def test_memory_backend_has_no_parquet_filesystem() -> None:
     backend = MemoryStorageBackend()
 

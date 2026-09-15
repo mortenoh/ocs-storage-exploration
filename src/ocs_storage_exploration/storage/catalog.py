@@ -9,15 +9,20 @@ import obstore
 from pydantic import TypeAdapter
 
 from ocs_storage_exploration.storage.addresses import StorageAddress
-from ocs_storage_exploration.storage.errors import DatasetNotFoundError
+from ocs_storage_exploration.storage.errors import (
+    BackendNotSupportedError,
+    DatasetAlreadyExistsError,
+    DatasetNotFoundError,
+    PublicationConflictError,
+)
 from ocs_storage_exploration.storage.keys import (
     CATALOG_PREFIX,
     catalog_record_key,
     dataset_identifier_from_catalog_key,
 )
-from ocs_storage_exploration.storage.models import Dataset, ItemType
-from ocs_storage_exploration.storage.objects import replace_object
+from ocs_storage_exploration.storage.objects import create_object, replace_object
 from ocs_storage_exploration.storage.protocols import StorageBackend
+from ocs_storage_exploration.storage.schemas import CatalogEntry, Dataset, ItemType
 
 RECORD_LABEL: Final[str] = "dataset record"
 
@@ -25,12 +30,11 @@ DATASET_ADAPTER: TypeAdapter[Dataset] = TypeAdapter(Dataset)
 
 
 class ObjectCatalog:
-    """Reads and writes dataset records as JSON objects, with compare-and-swap on known records."""
+    """Reads and writes dataset records as JSON objects, remembering nothing between calls."""
 
     def __init__(self, backend: StorageBackend) -> None:
-        """Bind the catalog to one backend and start with no remembered etag."""
+        """Bind the catalog to one backend."""
         self._backend = backend
-        self._known_etags: dict[str, str] = {}
 
     @property
     def backend(self) -> StorageBackend:
@@ -41,40 +45,62 @@ class ObjectCatalog:
         """Return the address of the catalog record of one dataset."""
         return self._backend.address(catalog_record_key(identifier))
 
-    def put(self, dataset: Dataset) -> None:
-        """Write a dataset record, using compare-and-swap when this catalog already read it."""
-        identifier = dataset.dataset_identifier
-        key = self.record_address(identifier).key
+    def put(self, dataset: Dataset, *, revision: str | None = None, create: bool = False) -> None:
+        """Write a dataset record: as a conditional create, as a compare-and-swap, or as a plain overwrite.
+
+        Passing ``create`` refuses a record another writer created first. Passing the ``revision`` of a
+        ``CatalogEntry`` refuses a record that changed since it was read. Passing neither overwrites
+        whatever is stored, which is the caller declaring that it does not care who wrote it last.
+        """
+        if create and revision is not None:
+            raise PublicationConflictError("a catalog write is either a create or a compare-and-swap, not both")
+        key = self.record_address(dataset.dataset_identifier).key
         payload = DATASET_ADAPTER.dump_json(dataset)
         store = self._backend.object_store()
-        known_etag = self._known_etags.get(identifier)
-        if known_etag is None:
-            result = obstore.put(store, key, payload)
-        else:
-            result = replace_object(store, key, payload, known_etag, label=RECORD_LABEL)
-        self._remember_etag(identifier, result.get("e_tag"))
+        if create:
+            try:
+                create_object(store, key, payload, label=RECORD_LABEL)
+            except PublicationConflictError as error:
+                raise DatasetAlreadyExistsError(
+                    f"dataset {dataset.dataset_identifier!r} already has a catalog record",
+                ) from error
+            return
+        if revision is not None:
+            replace_object(store, key, payload, revision, label=RECORD_LABEL)
+            return
+        obstore.put(store, key, payload)
 
     def get(self, identifier: str) -> Dataset | None:
         """Read a dataset record, or None when it does not exist."""
+        entry = self.get_entry(identifier)
+        return None if entry is None else entry.record
+
+    def get_entry(self, identifier: str) -> CatalogEntry | None:
+        """Read a dataset record with the revision it was read at, or None when it does not exist."""
         key = self.record_address(identifier).key
-        store = self._backend.object_store()
         try:
-            result = obstore.get(store, key)
-            etag = result.meta.get("e_tag")
+            result = obstore.get(self._backend.object_store(), key)
+            revision = result.meta.get("e_tag")
             payload = bytes(result.bytes())
         except FileNotFoundError:
             # obstore 0.11 reports a missing object as the builtin FileNotFoundError.
-            self._known_etags.pop(identifier, None)
             return None
-        self._remember_etag(identifier, etag)
-        return DATASET_ADAPTER.validate_json(payload)
+        if revision is None:
+            raise BackendNotSupportedError(
+                f"the object store reports no etag for {RECORD_LABEL} {key!r}, so it cannot be updated safely",
+            )
+        return CatalogEntry(record=DATASET_ADAPTER.validate_json(payload), revision=revision)
 
     def require(self, identifier: str) -> Dataset:
         """Read a dataset record or raise DatasetNotFoundError."""
-        dataset = self.get(identifier)
-        if dataset is None:
+        return self.require_entry(identifier).record
+
+    def require_entry(self, identifier: str) -> CatalogEntry:
+        """Read a dataset record with its revision or raise DatasetNotFoundError."""
+        entry = self.get_entry(identifier)
+        if entry is None:
             raise DatasetNotFoundError(f"no dataset record for {identifier!r}")
-        return dataset
+        return entry
 
     def list_datasets(self, item_type: ItemType | None = None) -> list[Dataset]:
         """List dataset records, optionally filtered by item type."""
@@ -93,21 +119,9 @@ class ObjectCatalog:
         if not self._backend.exists(address):
             raise DatasetNotFoundError(f"no dataset record for {identifier!r}")
         obstore.delete(self._backend.object_store(), address.key)
-        self._known_etags.pop(identifier, None)
 
     def iter_identifiers(self) -> Iterator[str]:
         """Iterate over the identifiers of every known dataset in key order."""
         for key in self._backend.list_keys(self._backend.address(CATALOG_PREFIX)):
             if key.endswith(".json"):
                 yield dataset_identifier_from_catalog_key(key)
-
-    def forget_etags(self) -> None:
-        """Drop every remembered etag so the next write overwrites instead of comparing."""
-        self._known_etags.clear()
-
-    def _remember_etag(self, identifier: str, etag: str | None) -> None:
-        """Record or drop the etag last seen for one dataset record."""
-        if etag is None:
-            self._known_etags.pop(identifier, None)
-        else:
-            self._known_etags[identifier] = etag

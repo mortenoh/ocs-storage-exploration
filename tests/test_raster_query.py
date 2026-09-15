@@ -9,14 +9,15 @@ import xarray
 from ocs_storage_exploration.settings import Settings
 from ocs_storage_exploration.storage.catalog import ObjectCatalog
 from ocs_storage_exploration.storage.errors import QuerySizeGuardError, RasterContractError
-from ocs_storage_exploration.storage.models import BoundingBox, GridSpecification
 from ocs_storage_exploration.storage.protocols import StorageBackend
 from ocs_storage_exploration.storage.raster import (
     RasterRepository,
     TimeStep,
+    VersionSelector,
     build_synthetic_cube,
     build_timestamps,
 )
+from ocs_storage_exploration.storage.schemas import BoundingBox, GridSpecification
 
 IDENTIFIER = "query"
 VARIABLE = "temperature"
@@ -54,6 +55,7 @@ def raster_repository(
 ) -> RasterRepository:
     repository = RasterRepository(storage_backend, catalog, settings)
     repository.create(IDENTIFIER, build_grid(), build_cube(build_grid()))
+    repository.publish(IDENTIFIER)
     return repository
 
 
@@ -155,6 +157,7 @@ def test_query_ignores_the_nodata_value_in_the_statistics(
     cube = build_cube(grid, count=2)
     cube[VARIABLE].values[0, 0, 0] = -9999.0
     repository.create("nodata", grid, cube)
+    repository.publish("nodata")
 
     summary = repository.query("nodata")
 
@@ -172,6 +175,7 @@ def test_query_reports_no_statistics_when_every_cell_is_not_a_number(
     cube = build_cube(grid, count=1)
     cube[VARIABLE].values[:] = numpy.nan
     repository.create("blank", grid, cube)
+    repository.publish("blank")
 
     summary = repository.query("blank")
 
@@ -179,3 +183,74 @@ def test_query_reports_no_statistics_when_every_cell_is_not_a_number(
     assert summary.minimum is None
     assert summary.maximum is None
     assert summary.mean is None
+
+
+def build_antimeridian_grid() -> GridSpecification:
+    return GridSpecification(
+        shape=(2, 4),
+        bbox=BoundingBox(minimum_x=170.0, minimum_y=-10.0, maximum_x=190.0, maximum_y=10.0),
+        crs="EPSG:4326",
+    )
+
+
+def test_a_published_query_reports_the_published_grid_and_not_the_newest_draft(
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+    settings: Settings,
+):
+    repository = RasterRepository(storage_backend, catalog, settings)
+    published_grid = build_grid()
+    repository.create("regrid", published_grid, build_cube(published_grid, count=2))
+    repository.publish("regrid")
+    draft_grid = GridSpecification(
+        shape=(4, 6),
+        bbox=BoundingBox(minimum_x=0.0, minimum_y=0.0, maximum_x=1_200_000.0, maximum_y=800_000.0),
+        crs="EPSG:3857",
+    )
+    repository.create("regrid", draft_grid, build_cube(draft_grid, count=2), overwrite=True)
+
+    published = repository.query("regrid")
+    draft = repository.query("regrid", version=VersionSelector.DRAFT)
+    description = repository.describe("regrid")
+
+    assert published.crs == "EPSG:4326"
+    assert published.bbox.as_tuple() == (0.0, 0.0, 12.0, 8.0)
+    assert draft.crs == "EPSG:3857"
+    assert draft.bbox.as_tuple() == (0.0, 0.0, 1_200_000.0, 800_000.0)
+    assert description.snapshot_identifier == published.snapshot_identifier
+    assert description.crs == "EPSG:4326"
+    assert description.bbox.as_tuple() == (0.0, 0.0, 12.0, 8.0)
+    assert description.shape == (4, 6)
+    assert description.variables == (VARIABLE,)
+    assert description.timestep_count == 2
+    assert description.temporal_start == START
+    assert (description.time_dimension, description.y_dimension, description.x_dimension) == ("t", "y", "x")
+
+
+def test_a_grid_crossing_the_antimeridian_can_be_queried(
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+    settings: Settings,
+):
+    grid = build_antimeridian_grid()
+    repository = RasterRepository(storage_backend, catalog, settings)
+    repository.create("antimeridian", grid, build_cube(grid, count=1))
+    repository.publish("antimeridian")
+
+    whole = repository.query("antimeridian")
+    eastern = repository.query(
+        "antimeridian",
+        bbox=BoundingBox(minimum_x=170.0, minimum_y=-10.0, maximum_x=180.0, maximum_y=10.0),
+    )
+    crossing = repository.query(
+        "antimeridian",
+        bbox=BoundingBox(minimum_x=175.0, minimum_y=-10.0, maximum_x=185.0, maximum_y=10.0),
+    )
+
+    assert whole.cell_count == 2 * 4
+    assert eastern.cell_count == 2 * 2
+    assert eastern.bbox.minimum_x == pytest.approx(170.0)
+    assert eastern.bbox.maximum_x == pytest.approx(180.0)
+    # The window wraps the same way the grid does, so it covers the cells on both sides of the line.
+    assert crossing.cell_count == 2 * 2
+    assert crossing.mean != pytest.approx(eastern.mean)

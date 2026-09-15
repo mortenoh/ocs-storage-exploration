@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import math
 from typing import Annotated
 
 from fastapi import Query
 from pydantic import ValidationError
 
 from ocs_storage_exploration.storage.errors import StorageAddressError
-from ocs_storage_exploration.storage.models import BoundingBox
+from ocs_storage_exploration.storage.schemas import BoundingBox
+from ocs_storage_exploration.storage.vector import require_crs
 
 BoundingBoxQuery = Annotated[
     str | None,
@@ -29,7 +31,7 @@ WhereQuery = Annotated[
 
 
 def parse_bbox(value: str | None) -> BoundingBox | None:
-    """Parse a comma separated bbox query parameter into a bounding box."""
+    """Parse a comma separated bbox query parameter into a finite, correctly ordered bounding box."""
     if value is None or not value.strip():
         return None
     parts = value.split(",")
@@ -39,10 +41,21 @@ def parse_bbox(value: str | None) -> BoundingBox | None:
         numbers = tuple(float(part) for part in parts)
     except ValueError as error:
         raise StorageAddressError(f"bbox must contain only numbers: {value!r}") from error
+    if not all(math.isfinite(number) for number in numbers):
+        raise StorageAddressError(f"bbox must contain only finite numbers: {value!r}")
     try:
+        # The model refuses an envelope whose maximum is not greater than its minimum.
         return BoundingBox.from_sequence((numbers[0], numbers[1], numbers[2], numbers[3]))
     except ValidationError as error:
         raise StorageAddressError(f"bbox is not a valid envelope: {value!r}") from error
+
+
+def parse_crs(value: str | None, *, parameter: str) -> str | None:
+    """Validate a coordinate reference system query parameter, returning None when it is absent."""
+    if value is None or not value.strip():
+        return None
+    require_crs(value, label=parameter)
+    return value
 
 
 def parse_columns(value: str | None) -> tuple[str, ...]:

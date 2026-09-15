@@ -13,8 +13,8 @@ from ocs_storage_exploration.storage.errors import (
     SnapshotNotFoundError,
 )
 from ocs_storage_exploration.storage.keys import vector_data_key, vector_pointer_key, vector_version_prefix
-from ocs_storage_exploration.storage.models import FeatureDataset, ItemType
 from ocs_storage_exploration.storage.protocols import StorageBackend
+from ocs_storage_exploration.storage.schemas import FeatureDataset, ItemType
 from ocs_storage_exploration.storage.vector.collection import VectorCollectionStore
 
 COLLECTION = "districts"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING, Final
 from urllib.parse import urlsplit
 
@@ -53,6 +54,10 @@ class S3StorageBackend(BaseStorageBackend):
         self._anonymous = anonymous
         self._store: S3Store | None = None
         self._filesystem: pyarrow.fs.S3FileSystem | None = None
+        # One application serves several requests on the threadpool, so each client is built once
+        # under this lock. The clients themselves are thread-safe: obstore's S3Store is a Rust
+        # object_store handle and pyarrow's S3FileSystem is documented as safe to share.
+        self._client_lock = threading.Lock()
 
     @classmethod
     def from_settings(cls, settings: Settings) -> S3StorageBackend:
@@ -100,15 +105,21 @@ class S3StorageBackend(BaseStorageBackend):
 
     def object_store(self) -> ObjectStore:
         """Return the obstore store of the whole bucket, built once and keyed by the full object key."""
-        if self._store is None:
-            self._store = S3Store(self.bucket, config=self._obstore_config(), client_options=self._client_options())
-        return self._store
+        with self._client_lock:
+            if self._store is None:
+                self._store = S3Store(
+                    self.bucket,
+                    config=self._obstore_config(),
+                    client_options=self._client_options(),
+                )
+            return self._store
 
     def parquet_filesystem(self) -> pyarrow.fs.FileSystem | None:
         """Return the pyarrow S3 filesystem of the bucket, built once."""
-        if self._filesystem is None:
-            self._filesystem = pyarrow.fs.S3FileSystem(**self._pyarrow_options())
-        return self._filesystem
+        with self._client_lock:
+            if self._filesystem is None:
+                self._filesystem = pyarrow.fs.S3FileSystem(**self._pyarrow_options())
+            return self._filesystem
 
     def parquet_path(self, address: StorageAddress) -> str:
         """Render an address as the bucket-qualified path the pyarrow S3 filesystem expects."""

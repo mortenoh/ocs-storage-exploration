@@ -1,11 +1,19 @@
 # STAC catalog
 
-Every dataset record is already a description of a dataset: a bounding box, a
-temporal extent, the variables, the coordinate reference system, the feature
-detail and the publication pointer. A STAC Collection is the same description in
-a vocabulary other people's clients already read. So the catalog is a
-**projection** of `Dataset` rather than a second copy of it — nothing is written
-when a collection is requested, and there is no index to keep in sync.
+A STAC Collection is a description of a dataset in a vocabulary other people's
+clients already read. So the catalog is a **projection** rather than a second
+copy of anything — nothing is written when a collection is requested, and there
+is no index to keep in sync.
+
+What it projects is the stored dataset, not the catalog record. The record
+contributes identity alone: the identifier, the title, the licence, the
+attribution and the address the links are built from. Everything a client would
+act on — the extents, the variables, the coordinate reference system, the row
+count and the columns — is read from the version being advertised:
+`RasterRepository.describe` for a coverage, the version metadata sidecar and the
+Parquet footer for a collection. The record tracks the newest write, so
+projecting it would advertise a time axis or a row count that the published
+bytes do not have.
 
 `storage/stac.py` holds the projection and `api/stac.py` serves it:
 
@@ -30,8 +38,8 @@ answers 404 from `/stac/collections/{id}` rather than appearing as a collection
 nobody can rely on.
 
 `published_only=false` exists for the operator looking at what is staged. It
-advertises the draft with the same shape, reading the main branch for a coverage
-and the newest written version for a collection.
+advertises the draft with the same shape, describing the `main` branch for a
+coverage and the newest written version for a collection.
 
 ## The base URL
 
@@ -45,13 +53,13 @@ that prefix without any configuration. Nothing is read from a proxy header.
 A coverage is a data cube, so the collection carries the
 [datacube extension](https://stac-extensions.github.io/datacube/v2.2.0/schema.json):
 
-- `cube:dimensions` with one entry per grid dimension — the two spatial axes
+- `cube:dimensions` with one entry per cube dimension — the two spatial axes
   with their native `extent` and a `reference_system` (the EPSG code when the
-  CRS has one, WKT2 otherwise), and the temporal axis with the record's
-  temporal extent. The keys are the grid's own dimension names, `t`, `y` and `x`
-  by default.
+  CRS has one, WKT2 otherwise), and the temporal axis with the time coordinate
+  of the advertised snapshot. The keys are the dimension names the cube was
+  written with, `t`, `y` and `x` by default.
 - `cube:variables`, one `{"dimensions": ["t", "y", "x"], "type": "data"}` entry
-  per variable in the record.
+  per data variable the snapshot holds.
 
 `extent.spatial` is always WGS84, as STAC requires, so a grid written in another
 frame is reprojected with pyproj's `transform_bounds`. `cube:dimensions` keeps
@@ -59,10 +67,11 @@ the native frame, which is what `reference_system` is for: the two never
 disagree because one says where the cube is and the other says what it is
 written on.
 
-The projection reads the store's own root attributes once, for the `proj:code`
-the writer stamped on it, and falls back to the record's grid when the store
-cannot be opened. A locked or corrupt store costs a slightly less authoritative
-CRS, never the collection.
+The projection opens the advertised snapshot once and reads its dimension names,
+its projection code, its coordinates and its time axis from the store itself. A
+store that is locked, missing or corrupt costs the accuracy of those fields and
+nothing else: the collection falls back to what the record holds rather than
+failing.
 
 Assets:
 
@@ -77,8 +86,9 @@ Assets:
 - `api`, pointing at `{base_url}/api/v1/raster/{id}/query` with role `metadata`,
   for a client that wants a summary rather than the bytes.
 
-The published snapshot is on the collection as `ocs:snapshot_identifier`, and
-the item type as `ocs:item_type`.
+The advertised snapshot is on the collection as `ocs:snapshot_identifier` — the
+one the `published` branch points at, or the head of `main` for a draft — and the
+item type as `ocs:item_type`.
 
 ```json
 {
@@ -130,22 +140,24 @@ the item type as `ocs:item_type`.
 A vector collection is a table, so it carries the
 [table extension](https://stac-extensions.github.io/table/v1.2.0/schema.json):
 
-- `table:primary_geometry` from the record's feature detail.
-- `table:row_count` and `table:columns` from the Parquet footer of the version
-  being advertised. Only the footer is read, never a row group, so the cost is
-  one object read per collection. The GeoParquet covering `bbox` struct and the
+- `table:primary_geometry` from the metadata sidecar of the advertised version.
+- `table:row_count` and `table:columns` from the Parquet footer of that version.
+  Only the footer is read, never a row group, so the cost is one sidecar read and
+  one footer read per collection. The GeoParquet covering `bbox` struct and the
   WKB geometry column appear as they are in the file, because the point of the
   field is to describe the file a client is about to open.
 
-The row count comes from that footer rather than from the record on purpose. The
+Both come from the published version rather than from the record on purpose. The
 record's feature detail tracks the newest write, so a collection rolled back to
-an older version would otherwise advertise a count the published file does not
-have. The footer is already open for the columns, so the correct number is free.
+an older version — or one whose newest draft was written in another frame — would
+otherwise advertise a count, a CRS and a geometry list the published file does
+not have.
 
 `extent.temporal` is `[[null, null]]`: a feature collection in this model has no
 time axis, and inventing one from the record's timestamps would advertise
-metadata as data. `extent.spatial` is the record's envelope reprojected to
-WGS84 when the collection was written in another frame.
+metadata as data. `extent.spatial` is the envelope the advertised version's
+sidecar records, reprojected to WGS84 when that version was written in another
+frame.
 
 Assets:
 
@@ -234,15 +246,10 @@ append that does not name them keeps what the earlier record held.
 
 ## What is still record-shaped
 
-A coverage's temporal extent and variable list come from the record, and the
-record tracks the newest write. A coverage rolled back to an older snapshot
-therefore advertises the time axis of everything written, not of the snapshot
-the `published` branch points at. The feature side avoids this because its
-Parquet footer is already open; closing it on the raster side means reading the
-published store's time coordinate, which is more than the one root-attribute
-read the projection is allowed today. It is recorded here rather than papered
-over: the fix belongs with the retention and pyramid work, where the store is
-being read anyway.
+Identity only: the identifier, the title, the licence, the attribution and the
+address the asset and link hrefs are built from. Nothing a client would compute
+against comes from the record while the store can be read, and when it cannot,
+the record is the documented fallback rather than the source.
 
 ## Validation
 

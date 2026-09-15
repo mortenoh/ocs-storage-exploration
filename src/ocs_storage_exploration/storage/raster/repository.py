@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ import numpy
 import xarray
 from icechunk.xarray import to_icechunk
 from numpy.typing import NDArray
+from pyproj import CRS
 from zarr.errors import GroupNotFoundError
 
 from ocs_storage_exploration.storage.addresses import StorageAddress
@@ -27,7 +29,24 @@ from ocs_storage_exploration.storage.errors import (
     SnapshotNotFoundError,
 )
 from ocs_storage_exploration.storage.keys import raster_prefix, validate_dataset_identifier
-from ocs_storage_exploration.storage.models import (
+from ocs_storage_exploration.storage.protocols import Catalog, StorageBackend
+from ocs_storage_exploration.storage.raster.grid import (
+    CRS_WELL_KNOWN_TEXT_ATTRIBUTE,
+    LONGITUDE_SPAN,
+    MAXIMUM_LONGITUDE,
+    NODATA_ATTRIBUTE,
+    PROJECTION_CODE_ATTRIBUTE,
+    SPATIAL_BBOX_ATTRIBUTE,
+    SPATIAL_REFERENCE_NAME,
+    apply_geozarr_attributes,
+    assert_finite_attributes,
+    build_cell_sizes,
+    build_coordinates,
+    projection_code,
+    to_naive_utc,
+    wrap_longitudes,
+)
+from ocs_storage_exploration.storage.schemas import (
     BoundingBox,
     CoverageDataset,
     GridSpecification,
@@ -40,14 +59,6 @@ from ocs_storage_exploration.storage.models import (
     TemporalExtent,
     current_timestamp,
 )
-from ocs_storage_exploration.storage.protocols import Catalog, StorageBackend
-from ocs_storage_exploration.storage.raster.grid import (
-    apply_geozarr_attributes,
-    assert_finite_attributes,
-    build_cell_sizes,
-    build_coordinates,
-    to_naive_utc,
-)
 
 if TYPE_CHECKING:
     from ocs_storage_exploration.settings import Settings
@@ -58,8 +69,11 @@ FALLBACK_GROUP: Final[str] = "0"
 DEFAULT_VERSION_LIMIT: Final[int] = 100
 DEFAULT_CREATE_MESSAGE: Final[str] = "initial write"
 DEFAULT_APPEND_MESSAGE: Final[str] = "append"
+CUBE_DIMENSION_COUNT: Final[int] = 3
+BBOX_VALUE_COUNT: Final[int] = 4
 
 FloatArray = NDArray[numpy.float64]
+IndexArray = NDArray[numpy.intp]
 
 
 class VersionSelector(StrEnum):
@@ -67,6 +81,14 @@ class VersionSelector(StrEnum):
 
     PUBLISHED = "published"
     DRAFT = "draft"
+
+
+@dataclass(frozen=True, slots=True)
+class CoverageEntry:
+    """The catalog record of a coverage together with the revision it was read at."""
+
+    record: CoverageDataset
+    revision: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,11 +100,34 @@ class RasterReadHandle:
     group: str | None = None
 
 
-def oriented_slice(values: FloatArray, minimum: float, maximum: float) -> slice:
-    """Return a label slice ordered to match an ascending or a descending coordinate."""
-    if values.size > 1 and bool(values[0] > values[-1]):
-        return slice(maximum, minimum)
-    return slice(minimum, maximum)
+@dataclass(frozen=True, slots=True)
+class RasterStoreDescription:
+    """Grid, variables and extents of one coverage snapshot as the opened store reports them."""
+
+    snapshot_identifier: str
+    variables: tuple[str, ...]
+    crs: str
+    bbox: BoundingBox
+    temporal_start: datetime | None
+    temporal_end: datetime | None
+    timestep_count: int
+    time_dimension: str
+    y_dimension: str
+    x_dimension: str
+    shape: tuple[int, int]
+
+
+@dataclass(frozen=True, slots=True)
+class _StoreGrid:
+    """Dimension names, projection and cell sizes read back from a store rather than from a record."""
+
+    time_dimension: str
+    y_dimension: str
+    x_dimension: str
+    crs: str
+    geographic: bool
+    y_cell_size: float
+    x_cell_size: float
 
 
 class RasterRepository:
@@ -122,7 +167,8 @@ class RasterRepository:
     ) -> RasterWriteResult:
         """Write a coverage onto the main branch and record it in the catalog."""
         identifier = validate_dataset_identifier(dataset_identifier)
-        existing = self._existing_coverage(identifier, overwrite=overwrite)
+        self._assert_cube_size(identifier, grid.shape, _incoming_timestep_count(dataset, grid.time_dimension))
+        existing = self._existing_entry(identifier, overwrite=overwrite)
         prepared = self._prepare(grid, dataset)
         repository = self._open_repository(identifier)
         session = repository.writable_session(MAIN_BRANCH)
@@ -135,9 +181,14 @@ class RasterRepository:
             title=title,
             license=license,
             attribution=attribution,
-            existing=existing,
+            existing=None if existing is None else existing.record,
         )
-        self._catalog.put(record)
+        # A first write claims the record, an overwrite replaces the one it read: either way a
+        # concurrent writer that got there first is refused rather than overwritten.
+        if existing is None:
+            self._catalog.put(record, create=True)
+        else:
+            self._catalog.put(record, revision=existing.revision)
         return self._write_result(record, snapshot_identifier)
 
     def append(
@@ -147,17 +198,20 @@ class RasterRepository:
         *,
         message: str = DEFAULT_APPEND_MESSAGE,
     ) -> RasterWriteResult:
-        """Append timesteps to a coverage after checking that its spatial coordinates match."""
+        """Append timesteps to a coverage after checking that it matches what is already committed."""
         identifier = validate_dataset_identifier(dataset_identifier)
-        record = self._require_coverage(identifier)
-        prepared = self._prepare(record.grid, dataset)
+        entry = self._require_coverage_entry(identifier)
+        record = entry.record
+        grid = record.grid
+        self._assert_cube_size(identifier, grid.shape, _incoming_timestep_count(dataset, grid.time_dimension))
+        prepared = self._prepare(grid, dataset)
         repository = self._open_repository(identifier)
-        self._assert_committed_coordinates(repository, record, prepared)
+        self._assert_appendable(repository, record, prepared)
         session = repository.writable_session(MAIN_BRANCH)
-        to_icechunk(prepared, session, append_dim=record.grid.time_dimension)
+        to_icechunk(prepared, session, append_dim=grid.time_dimension)
         snapshot_identifier = session.commit(message)
         updated = self._extend_record(record, prepared)
-        self._catalog.put(updated)
+        self._catalog.put(updated, revision=entry.revision)
         return self._write_result(updated, snapshot_identifier)
 
     @contextmanager
@@ -179,6 +233,19 @@ class RasterRepository:
         finally:
             dataset.close()
 
+    def describe(
+        self,
+        dataset_identifier: str,
+        *,
+        version: VersionSelector = VersionSelector.PUBLISHED,
+        snapshot_identifier: str | None = None,
+    ) -> RasterStoreDescription:
+        """Describe one coverage snapshot from the store it was written to rather than from its record."""
+        identifier = validate_dataset_identifier(dataset_identifier)
+        record = self._require_coverage(identifier)
+        with self.read(identifier, version=version, snapshot_identifier=snapshot_identifier) as handle:
+            return self._describe_handle(handle, record)
+
     def query(
         self,
         dataset_identifier: str,
@@ -193,11 +260,14 @@ class RasterRepository:
         """Summarise one variable over a spatial and temporal window, guarding the window size."""
         identifier = validate_dataset_identifier(dataset_identifier)
         record = self._require_coverage(identifier)
-        grid = record.grid
         with self.read(identifier, version=version, snapshot_identifier=snapshot_identifier) as handle:
+            # Every grid fact comes from the snapshot that was opened: the record describes the newest
+            # write, which is not the snapshot a published read follows.
+            store_grid = self._store_grid(handle.dataset, record)
             name = self._select_variable(handle.dataset, variable)
+            array = handle.dataset[name]
             window = self._apply_spatial_window(
-                self._apply_time_window(handle.dataset[name], grid, start, end), grid, bbox
+                self._apply_time_window(array, store_grid, start, end), store_grid, bbox
             )
             cell_count = int(window.size)
             if cell_count == 0:
@@ -207,14 +277,14 @@ class RasterRepository:
                     f"query window of {identifier!r} reads {cell_count} cells, "
                     f"more than the {self._settings.max_query_cell_count} allowed",
                 )
-            minimum, maximum, mean = self._summarise(window.values, grid.nodata_value)
+            minimum, maximum, mean = self._summarise(window.values, self._nodata_value(array, record.grid))
             return RasterQuerySummary(
                 dataset_identifier=identifier,
                 variable=name,
-                bbox=self._window_bbox(grid, window),
-                crs=grid.crs,
+                bbox=self._envelope(store_grid, window),
+                crs=store_grid.crs,
                 snapshot_identifier=handle.snapshot_identifier,
-                timestep_count=int(window.sizes.get(grid.time_dimension, 1)),
+                timestep_count=int(window.sizes.get(store_grid.time_dimension, 1)),
                 cell_count=cell_count,
                 minimum=minimum,
                 maximum=maximum,
@@ -224,22 +294,22 @@ class RasterRepository:
     def publish(self, dataset_identifier: str, *, snapshot_identifier: str | None = None) -> PublicationResult:
         """Move the published branch onto a snapshot of the main branch, creating it on first publication."""
         identifier = validate_dataset_identifier(dataset_identifier)
-        record = self._require_coverage(identifier)
+        entry = self._reconcile_entry(identifier)
+        record = entry.record
         repository = self._open_repository(identifier)
-        ancestry = list(repository.ancestry(branch=MAIN_BRANCH))
+        ancestry = {information.id for information in repository.ancestry(branch=MAIN_BRANCH)}
         target = snapshot_identifier if snapshot_identifier is not None else repository.lookup_branch(MAIN_BRANCH)
-        if target not in {information.id for information in ancestry}:
+        if target not in ancestry:
             raise SnapshotNotFoundError(f"snapshot {target!r} is not in the history of {identifier!r}")
-        if not ancestry or ancestry[0].parent_id is None:
-            raise NothingToPublishError(f"dataset {identifier!r} has no committed content")
+        self._assert_publishable(repository, identifier, target)
         previous = self._published_snapshot(repository)
-        changed = previous != target or not record.publication.published
+        changed = previous != target
         if previous is None:
             repository.create_branch(PUBLISHED_BRANCH, target)
-        elif previous != target:
+        elif changed:
             self._reset_published_branch(repository, identifier, target, previous)
         if changed:
-            self._catalog.put(self._publish_record(record, target, previous))
+            self._catalog.put(self._publish_record(record, target, previous), revision=entry.revision)
         return PublicationResult(
             dataset_identifier=identifier,
             item_type=ItemType.COVERAGE,
@@ -249,10 +319,39 @@ class RasterRepository:
             previous_snapshot_identifier=previous,
         )
 
+    def reconcile_publication(self, dataset_identifier: str) -> CoverageDataset:
+        """Rewrite the publication block of a record from the published branch, which is the only truth."""
+        return self._reconcile_entry(dataset_identifier).record
+
+    def _reconcile_entry(self, dataset_identifier: str) -> CoverageEntry:
+        """Reconcile the publication block of a record and return the entry the caller may write against."""
+        identifier = validate_dataset_identifier(dataset_identifier)
+        entry = self._require_coverage_entry(identifier)
+        record = entry.record
+        published = self._published_snapshot(self._open_repository(identifier))
+        publication = record.publication
+        if published is None:
+            if not publication.published and publication.snapshot_identifier is None:
+                return entry
+            reconciled = Publication(previous_snapshot_identifier=publication.snapshot_identifier)
+        else:
+            if publication.published and publication.snapshot_identifier == published:
+                return entry
+            reconciled = Publication(
+                published=True,
+                published_at=current_timestamp(),
+                snapshot_identifier=published,
+                previous_snapshot_identifier=publication.snapshot_identifier,
+            )
+        updated = record.model_copy(update={"publication": reconciled, "updated_at": current_timestamp()})
+        self._catalog.put(updated, revision=entry.revision)
+        # The write moved the record on, so the revision the caller writes against is the new one.
+        return self._require_coverage_entry(identifier)
+
     def versions(self, dataset_identifier: str, *, limit: int = DEFAULT_VERSION_LIMIT) -> list[RasterVersion]:
         """List the snapshots of the main branch newest first, marking the published one."""
         identifier = validate_dataset_identifier(dataset_identifier)
-        self._require_coverage(identifier)
+        self.reconcile_publication(identifier)
         repository = self._open_repository(identifier)
         published = self._published_snapshot(repository)
         versions: list[RasterVersion] = []
@@ -292,23 +391,37 @@ class RasterRepository:
             self._backend.icechunk_storage(self.repository_address(dataset_identifier))
         )
 
-    def _existing_coverage(self, dataset_identifier: str, *, overwrite: bool) -> CoverageDataset | None:
-        """Return the record being overwritten, refusing an existing dataset unless overwrite is set."""
-        existing = self._catalog.get(dataset_identifier)
-        if existing is None:
+    def _existing_entry(self, dataset_identifier: str, *, overwrite: bool) -> CoverageEntry | None:
+        """Return the entry being overwritten, refusing an existing dataset unless overwrite is set."""
+        entry = self._catalog.get_entry(dataset_identifier)
+        if entry is None:
             return None
-        if not isinstance(existing, CoverageDataset):
+        if not isinstance(entry.record, CoverageDataset):
             raise ItemTypeMismatchError(f"dataset {dataset_identifier!r} is not a coverage")
         if not overwrite:
             raise DatasetAlreadyExistsError(f"dataset {dataset_identifier!r} already exists")
-        return existing
+        return CoverageEntry(record=entry.record, revision=entry.revision)
+
+    def _require_coverage_entry(self, dataset_identifier: str) -> CoverageEntry:
+        """Read the coverage entry of a dataset with the revision it was read at, or raise."""
+        entry = self._catalog.require_entry(dataset_identifier)
+        if not isinstance(entry.record, CoverageDataset):
+            raise ItemTypeMismatchError(f"dataset {dataset_identifier!r} is not a coverage")
+        return CoverageEntry(record=entry.record, revision=entry.revision)
 
     def _require_coverage(self, dataset_identifier: str) -> CoverageDataset:
         """Read the coverage record of a dataset or raise."""
-        record = self._catalog.require(dataset_identifier)
-        if not isinstance(record, CoverageDataset):
-            raise ItemTypeMismatchError(f"dataset {dataset_identifier!r} is not a coverage")
-        return record
+        return self._require_coverage_entry(dataset_identifier).record
+
+    def _assert_cube_size(self, dataset_identifier: str, shape: tuple[int, int], timestep_count: int) -> None:
+        """Refuse a cube larger than the configured guard, before anything allocates it."""
+        rows, columns = shape
+        cell_count = rows * columns * max(timestep_count, 1)
+        allowed = self._settings.max_cube_cells
+        if cell_count > allowed:
+            raise QuerySizeGuardError(
+                f"cube of {dataset_identifier!r} holds {cell_count} cells, more than the {allowed} allowed",
+            )
 
     def _prepare(self, grid: GridSpecification, dataset: xarray.Dataset) -> xarray.Dataset:
         """Validate a cube against its grid and attach the GeoZarr attributes it is written with."""
@@ -337,13 +450,13 @@ class RasterRepository:
                 raise RasterContractError(f"coordinate {name!r} does not match the grid of the dataset")
         return aligned
 
-    def _assert_committed_coordinates(
+    def _assert_appendable(
         self,
         repository: icechunk.Repository,
         record: CoverageDataset,
         dataset: xarray.Dataset,
     ) -> None:
-        """Refuse an append whose spatial coordinates differ from the committed ones."""
+        """Refuse an append whose coordinates or variables differ from the ones already committed."""
         committed, _ = self._open_dataset(repository.readonly_session(MAIN_BRANCH))
         try:
             for name in (record.grid.y_dimension, record.grid.x_dimension):
@@ -356,11 +469,53 @@ class RasterRepository:
                         f"coordinate {name!r} does not match the coordinate committed for "
                         f"{record.dataset_identifier!r}",
                     )
-            missing = sorted({str(name) for name in committed.data_vars} - {str(name) for name in dataset.data_vars})
-            if missing:
-                raise RasterContractError(f"append is missing the committed variables {missing}")
+            self._assert_committed_variables(record.dataset_identifier, committed, dataset)
         finally:
             committed.close()
+
+    def _assert_committed_variables(
+        self,
+        dataset_identifier: str,
+        committed: xarray.Dataset,
+        dataset: xarray.Dataset,
+    ) -> None:
+        """Refuse an append that drops, adds or redefines a variable, which would leave the store unreadable."""
+        stored = {str(name): committed[name] for name in committed.data_vars}
+        incoming = {str(name): dataset[name] for name in dataset.data_vars}
+        missing = sorted(set(stored) - set(incoming))
+        if missing:
+            raise RasterContractError(f"append is missing the committed variables {missing}")
+        # A variable the store does not hold would gain only the appended timesteps, leaving the
+        # cube ragged and every later read of the committed variables broken.
+        extra = sorted(set(incoming) - set(stored))
+        if extra:
+            raise RasterContractError(
+                f"append of {dataset_identifier!r} adds the variables {extra}, "
+                f"which are not committed for this coverage",
+            )
+        for name, array in incoming.items():
+            self._assert_same_layout(dataset_identifier, name, stored[name], array)
+
+    def _assert_same_layout(
+        self,
+        dataset_identifier: str,
+        variable: str,
+        committed: xarray.DataArray,
+        incoming: xarray.DataArray,
+    ) -> None:
+        """Refuse an append that changes the data type or the dimension order of a committed variable."""
+        if numpy.dtype(incoming.dtype) != numpy.dtype(committed.dtype):
+            raise RasterContractError(
+                f"variable {variable!r} of {dataset_identifier!r} is written as {incoming.dtype} "
+                f"but is committed as {committed.dtype}",
+            )
+        stored_dimensions = tuple(str(dimension) for dimension in committed.dims)
+        incoming_dimensions = tuple(str(dimension) for dimension in incoming.dims)
+        if incoming_dimensions != stored_dimensions:
+            raise RasterContractError(
+                f"variable {variable!r} of {dataset_identifier!r} has dimensions {incoming_dimensions} "
+                f"but is committed with {stored_dimensions}",
+            )
 
     def _readonly_session(
         self,
@@ -377,9 +532,12 @@ class RasterRepository:
                     f"snapshot {snapshot_identifier!r} is not in the history of {record.dataset_identifier!r}",
                 )
             return repository.readonly_session(snapshot_id=snapshot_identifier)
-        if version is VersionSelector.PUBLISHED and record.publication.published:
-            if PUBLISHED_BRANCH in repository.list_branches():
-                return repository.readonly_session(PUBLISHED_BRANCH)
+        if version is VersionSelector.PUBLISHED:
+            # The branch is the publication truth. A record that disagrees with it is stale, and
+            # falling back to main would serve a draft as if it had been published.
+            if PUBLISHED_BRANCH not in repository.list_branches():
+                raise SnapshotNotFoundError(f"dataset {record.dataset_identifier!r} has no published version")
+            return repository.readonly_session(PUBLISHED_BRANCH)
         return repository.readonly_session(MAIN_BRANCH)
 
     def _open_dataset(self, session: icechunk.Session) -> tuple[xarray.Dataset, str | None]:
@@ -411,34 +569,163 @@ class RasterRepository:
             raise RasterContractError(f"variable {variable!r} is not one of {names}")
         return variable
 
+    def _describe_handle(self, handle: RasterReadHandle, record: CoverageDataset) -> RasterStoreDescription:
+        """Read the grid, variables and extents of one opened snapshot."""
+        dataset = handle.dataset
+        store_grid = self._store_grid(dataset, record)
+        timestamps = self._timestamps(dataset, store_grid.time_dimension)
+        return RasterStoreDescription(
+            snapshot_identifier=handle.snapshot_identifier,
+            variables=tuple(sorted(str(name) for name in dataset.data_vars)),
+            crs=store_grid.crs,
+            bbox=self._envelope(store_grid, dataset),
+            temporal_start=timestamps[0] if timestamps else None,
+            temporal_end=timestamps[-1] if timestamps else None,
+            timestep_count=int(dataset.sizes.get(store_grid.time_dimension, 0)),
+            time_dimension=store_grid.time_dimension,
+            y_dimension=store_grid.y_dimension,
+            x_dimension=store_grid.x_dimension,
+            shape=(
+                int(dataset.sizes.get(store_grid.y_dimension, 0)),
+                int(dataset.sizes.get(store_grid.x_dimension, 0)),
+            ),
+        )
+
+    def _store_grid(self, dataset: xarray.Dataset, record: CoverageDataset) -> _StoreGrid:
+        """Read the dimension names, projection and cell sizes an opened store carries."""
+        time_dimension, y_dimension, x_dimension = self._store_dimensions(dataset)
+        crs = self._store_crs(dataset, record.grid.crs)
+        geographic = bool(CRS.from_user_input(crs).is_geographic)
+        y_cell_size, x_cell_size = self._store_cell_sizes(
+            dataset,
+            record.grid,
+            y_dimension,
+            x_dimension,
+            geographic=geographic,
+        )
+        return _StoreGrid(
+            time_dimension=time_dimension,
+            y_dimension=y_dimension,
+            x_dimension=x_dimension,
+            crs=crs,
+            geographic=geographic,
+            y_cell_size=y_cell_size,
+            x_cell_size=x_cell_size,
+        )
+
+    def _store_dimensions(self, dataset: xarray.Dataset) -> tuple[str, str, str]:
+        """Return the time, y and x dimension names the data variables of a store were written with."""
+        names = sorted(str(name) for name in dataset.data_vars)
+        if not names:
+            raise RasterContractError("snapshot has no data variables")
+        dimensions = tuple(str(dimension) for dimension in dataset[names[0]].dims)
+        if len(dimensions) != CUBE_DIMENSION_COUNT:
+            raise RasterContractError(f"variable {names[0]!r} is not written on a time, y and x cube: {dimensions}")
+        return dimensions[0], dimensions[1], dimensions[2]
+
+    def _store_crs(self, dataset: xarray.Dataset, fallback: str) -> str:
+        """Return the projection a store records, from its projection code or its grid mapping coordinate."""
+        code = dataset.attrs.get(PROJECTION_CODE_ATTRIBUTE)
+        if isinstance(code, str) and code:
+            return code
+        if SPATIAL_REFERENCE_NAME in dataset.coords:
+            attributes = dataset[SPATIAL_REFERENCE_NAME].attrs
+            for key in (CRS_WELL_KNOWN_TEXT_ATTRIBUTE, SPATIAL_REFERENCE_NAME):
+                well_known_text = attributes.get(key)
+                if isinstance(well_known_text, str) and well_known_text:
+                    return projection_code(well_known_text)
+        return fallback
+
+    def _store_cell_sizes(
+        self,
+        dataset: xarray.Dataset,
+        grid: GridSpecification,
+        y_dimension: str,
+        x_dimension: str,
+        *,
+        geographic: bool,
+    ) -> tuple[float, float]:
+        """Return the y and x cell sizes of a store, measured on its own coordinates."""
+        # An axis of one cell carries no spacing to measure, so its size comes from the bbox the store
+        # declares, and only from the grid of the record when the store declares none either.
+        fallback = self._attribute_cell_sizes(
+            dataset,
+            rows=int(dataset.sizes.get(y_dimension, 0)),
+            columns=int(dataset.sizes.get(x_dimension, 0)),
+        )
+        if fallback is None:
+            fallback = build_cell_sizes(grid)
+        y_cell_size = _coordinate_spacing(dataset, y_dimension, wrap=False) or fallback[0]
+        x_cell_size = _coordinate_spacing(dataset, x_dimension, wrap=geographic) or fallback[1]
+        return y_cell_size, x_cell_size
+
+    def _attribute_cell_sizes(self, dataset: xarray.Dataset, *, rows: int, columns: int) -> tuple[float, float] | None:
+        """Return the cell sizes the bbox attribute of a store implies, or None when it carries no usable one."""
+        values = dataset.attrs.get(SPATIAL_BBOX_ATTRIBUTE)
+        if not isinstance(values, list | tuple | numpy.ndarray) or len(values) != BBOX_VALUE_COUNT:
+            return None
+        if rows < 1 or columns < 1:
+            return None
+        try:
+            numbers = numpy.asarray(values, dtype="float64").ravel()
+        except (TypeError, ValueError):
+            return None
+        y_cell_size = float(numbers[3] - numbers[1]) / rows
+        x_cell_size = float(numbers[2] - numbers[0]) / columns
+        if not math.isfinite(y_cell_size) or not math.isfinite(x_cell_size):
+            return None
+        if y_cell_size <= 0.0 or x_cell_size <= 0.0:
+            return None
+        return y_cell_size, x_cell_size
+
+    def _nodata_value(self, array: xarray.DataArray, grid: GridSpecification) -> float | None:
+        """Return the fill value a variable records, falling back to the one its record declares."""
+        value = array.attrs.get(NODATA_ATTRIBUTE)
+        if isinstance(value, int | float | numpy.integer | numpy.floating) and not isinstance(value, bool):
+            number = float(value)
+            if math.isfinite(number):
+                return number
+        return grid.nodata_value
+
     def _apply_time_window(
         self,
         array: xarray.DataArray,
-        grid: GridSpecification,
+        store_grid: _StoreGrid,
         start: datetime | None,
         end: datetime | None,
     ) -> xarray.DataArray:
         """Restrict an array to a closed time range when one is requested."""
-        if grid.time_dimension not in array.dims or (start is None and end is None):
+        if store_grid.time_dimension not in array.dims or (start is None and end is None):
             return array
         lower = to_naive_utc(start) if start is not None else None
         upper = to_naive_utc(end) if end is not None else None
-        return array.sel({grid.time_dimension: slice(lower, upper)})
+        return array.sel({store_grid.time_dimension: slice(lower, upper)})
 
     def _apply_spatial_window(
         self,
         array: xarray.DataArray,
-        grid: GridSpecification,
+        store_grid: _StoreGrid,
         bbox: BoundingBox | None,
     ) -> xarray.DataArray:
-        """Restrict an array to a bounding box, honouring descending coordinates."""
+        """Restrict an array to a bounding box by masking coordinate values rather than slicing labels."""
         if bbox is None:
             return array
+        # A label slice needs a monotonic coordinate, which a grid wrapped across the antimeridian is not.
         selection = {
-            grid.y_dimension: oriented_slice(_float_values(array[grid.y_dimension]), bbox.minimum_y, bbox.maximum_y),
-            grid.x_dimension: oriented_slice(_float_values(array[grid.x_dimension]), bbox.minimum_x, bbox.maximum_x),
+            store_grid.y_dimension: _coordinate_indices(
+                _float_values(array[store_grid.y_dimension]),
+                bbox.minimum_y,
+                bbox.maximum_y,
+                wrap=False,
+            ),
+            store_grid.x_dimension: _coordinate_indices(
+                _float_values(array[store_grid.x_dimension]),
+                bbox.minimum_x,
+                bbox.maximum_x,
+                wrap=store_grid.geographic,
+            ),
         }
-        return array.sel(selection)
+        return array.isel(selection)
 
     def _summarise(
         self,
@@ -454,16 +741,15 @@ class RasterRepository:
             return None, None, None
         return float(finite.min()), float(finite.max()), float(finite.mean())
 
-    def _window_bbox(self, grid: GridSpecification, array: xarray.DataArray) -> BoundingBox:
+    def _envelope(self, store_grid: _StoreGrid, array: xarray.DataArray | xarray.Dataset) -> BoundingBox:
         """Return the envelope of the selected cells, grown by half a cell to cover their extent."""
-        y_size, x_size = build_cell_sizes(grid)
-        y_values = _float_values(array[grid.y_dimension])
-        x_values = _float_values(array[grid.x_dimension])
+        y_values = _float_values(array[store_grid.y_dimension])
+        x_values = _float_values(array[store_grid.x_dimension])
         return BoundingBox(
-            minimum_x=float(x_values.min()) - x_size / 2,
-            minimum_y=float(y_values.min()) - y_size / 2,
-            maximum_x=float(x_values.max()) + x_size / 2,
-            maximum_y=float(y_values.max()) + y_size / 2,
+            minimum_x=float(x_values.min()) - store_grid.x_cell_size / 2,
+            minimum_y=float(y_values.min()) - store_grid.y_cell_size / 2,
+            maximum_x=float(x_values.max()) + store_grid.x_cell_size / 2,
+            maximum_y=float(y_values.max()) + store_grid.y_cell_size / 2,
         )
 
     def _published_snapshot(self, repository: icechunk.Repository) -> str | None:
@@ -471,6 +757,22 @@ class RasterRepository:
         if PUBLISHED_BRANCH not in repository.list_branches():
             return None
         return repository.lookup_branch(PUBLISHED_BRANCH)
+
+    def _assert_publishable(self, repository: icechunk.Repository, dataset_identifier: str, target: str) -> None:
+        """Refuse to publish a snapshot that holds no data, such as the snapshot a repository starts with."""
+        try:
+            dataset, _ = self._open_dataset(repository.readonly_session(snapshot_id=target))
+        except (GroupNotFoundError, FileNotFoundError, KeyError) as error:
+            raise NothingToPublishError(
+                f"snapshot {target!r} of {dataset_identifier!r} holds no data variables to publish",
+            ) from error
+        try:
+            if not dataset.data_vars:
+                raise NothingToPublishError(
+                    f"snapshot {target!r} of {dataset_identifier!r} holds no data variables to publish",
+                )
+        finally:
+            dataset.close()
 
     def _reset_published_branch(
         self,
@@ -509,7 +811,7 @@ class RasterRepository:
         existing: CoverageDataset | None,
     ) -> CoverageDataset:
         """Build the catalog record of a newly written coverage."""
-        timestamps = self._timestamps(dataset, grid)
+        timestamps = self._timestamps(dataset, grid.time_dimension)
         now = current_timestamp()
         return CoverageDataset(
             dataset_identifier=dataset_identifier,
@@ -529,7 +831,7 @@ class RasterRepository:
 
     def _extend_record(self, record: CoverageDataset, dataset: xarray.Dataset) -> CoverageDataset:
         """Return the record widened by the timesteps and variables of an append."""
-        timestamps = self._timestamps(dataset, record.grid)
+        timestamps = self._timestamps(dataset, record.grid.time_dimension)
         temporal = record.temporal
         if timestamps:
             start = min(timestamps[0], temporal.start) if temporal is not None else timestamps[0]
@@ -545,11 +847,11 @@ class RasterRepository:
             },
         )
 
-    def _timestamps(self, dataset: xarray.Dataset, grid: GridSpecification) -> list[datetime]:
+    def _timestamps(self, dataset: xarray.Dataset, time_dimension: str) -> list[datetime]:
         """Return the time coordinate of a cube as naive Python datetimes."""
-        if grid.time_dimension not in dataset.coords:
+        if time_dimension not in dataset.coords:
             return []
-        values = numpy.asarray(dataset[grid.time_dimension].values)
+        values = numpy.asarray(dataset[time_dimension].values)
         if not numpy.issubdtype(values.dtype, numpy.datetime64):
             return []
         return [_as_datetime(value) for value in values.astype("datetime64[us]")]
@@ -563,6 +865,40 @@ class RasterRepository:
             variables=record.variables,
             published=record.publication.published,
         )
+
+
+def _incoming_timestep_count(dataset: xarray.Dataset, time_dimension: str) -> int:
+    """Return how many timesteps a cube carries, counting a cube without a time axis as one."""
+    return int(dataset.sizes.get(time_dimension, 1))
+
+
+def _coordinate_indices(values: FloatArray, minimum: float, maximum: float, *, wrap: bool) -> IndexArray:
+    """Return the positions of the coordinate values inside a closed range, wrapping longitudes when asked."""
+    if not wrap:
+        return numpy.flatnonzero((values >= minimum) & (values <= maximum))
+    bounds = wrap_longitudes(numpy.asarray([minimum, maximum], dtype="float64"))
+    low, high = float(bounds[0]), float(bounds[1])
+    if low <= high:
+        return numpy.flatnonzero((values >= low) & (values <= high))
+    # The window crosses the antimeridian, so the cells it covers are the union of its two halves.
+    return numpy.flatnonzero((values >= low) | (values <= high))
+
+
+def _coordinate_spacing(dataset: xarray.Dataset, dimension: str, *, wrap: bool) -> float:
+    """Return the median step of a coordinate, or zero when it is absent or holds a single cell."""
+    if dimension not in dataset.coords:
+        return 0.0
+    values = _float_values(dataset[dimension])
+    if values.size < 2:
+        return 0.0
+    steps = numpy.diff(values)
+    if wrap:
+        # One step of a wrapped longitude axis jumps the whole span; folding it back keeps the median honest.
+        steps = (steps + MAXIMUM_LONGITUDE) % LONGITUDE_SPAN - MAXIMUM_LONGITUDE
+    spacing = float(numpy.median(numpy.abs(steps)))
+    if not math.isfinite(spacing) or spacing <= 0.0:
+        return 0.0
+    return spacing
 
 
 def _float_values(array: xarray.DataArray) -> FloatArray:

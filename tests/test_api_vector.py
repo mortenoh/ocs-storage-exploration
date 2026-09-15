@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from httpx import Response
 
 from ocs_storage_exploration.main import create_app
 from ocs_storage_exploration.settings import Settings
@@ -246,3 +247,105 @@ def test_a_free_text_licence_is_refused_on_a_collection(client: TestClient) -> N
     body = {**CREATE_BODY, "license": "Creative Commons Attribution 4.0"}
 
     assert client.post(f"/api/v1/vector/{IDENTIFIER}", json=body).status_code == 422
+
+
+def validation_locations(response: Response) -> list[str]:
+    return [".".join(str(part) for part in error["loc"]) for error in response.json()["detail"]]
+
+
+def post_features(client: TestClient, features: list[Any]) -> Response:
+    collection = {"type": "FeatureCollection", "features": features}
+    response: Response = client.post(
+        f"/api/v1/vector/{IDENTIFIER}", json={**CREATE_BODY, "feature_collection": collection}
+    )
+    return response
+
+
+def test_a_null_feature_is_refused_with_its_position(client: TestClient) -> None:
+    response = post_features(client, [FEATURE_COLLECTION["features"][0], None])
+
+    assert response.status_code == 422
+    assert "body.feature_collection.features.1" in validation_locations(response)
+
+
+def test_a_feature_without_a_geometry_is_refused_with_its_position(client: TestClient) -> None:
+    response = post_features(client, [{"type": "Feature", "properties": {"id": "west", "level": 1}}])
+
+    assert response.status_code == 422
+    assert "body.feature_collection.features.0.geometry" in validation_locations(response)
+
+
+def test_feature_properties_that_are_not_an_object_are_refused(client: TestClient) -> None:
+    broken = {"type": "Feature", "properties": "not an object", "geometry": {"type": "Point", "coordinates": [0, 0]}}
+
+    response = post_features(client, [broken])
+
+    assert response.status_code == 422
+    locations = validation_locations(response)
+    assert any(location.startswith("body.feature_collection.features.0.properties") for location in locations)
+
+
+def test_a_geometry_without_coordinates_is_refused(client: TestClient) -> None:
+    response = post_features(client, [{"type": "Feature", "properties": {"id": "west"}, "geometry": {"type": "Point"}}])
+
+    assert response.status_code == 422
+    assert "body.feature_collection.features.0.geometry.Point.coordinates" in validation_locations(response)
+
+
+def test_a_geometry_with_unreadable_coordinates_is_refused(client: TestClient) -> None:
+    broken = {"type": "Feature", "properties": {"id": "west"}, "geometry": {"type": "Point", "coordinates": "here"}}
+
+    response = post_features(client, [broken])
+
+    assert response.status_code == 422
+    locations = validation_locations(response)
+    assert any(location.startswith("body.feature_collection.features.0.geometry") for location in locations)
+
+
+def test_a_null_geometry_is_refused_by_the_collection_store(client: TestClient) -> None:
+    broken = {"type": "Feature", "properties": {"id": "west"}, "geometry": None}
+
+    response = post_features(client, [broken])
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "VectorInputError"
+    assert "feature 0" in response.json()["detail"]
+
+
+def test_an_empty_feature_collection_is_refused(client: TestClient) -> None:
+    response = post_features(client, [])
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "FeatureIdentityError"
+
+
+def test_an_unknown_bbox_crs_is_refused(client: TestClient) -> None:
+    create_collection(client)
+
+    response = client.get(
+        f"/api/v1/vector/{IDENTIFIER}/features",
+        params={"bbox": "0,0,1,1", "bbox-crs": "not-a-crs"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "CrsError"
+    assert "bbox-crs" in response.json()["detail"]
+
+
+def test_an_out_of_range_bbox_crs_is_refused(client: TestClient) -> None:
+    create_collection(client)
+
+    response = client.get(
+        f"/api/v1/vector/{IDENTIFIER}/features",
+        params={"bbox": "0,0,1,1", "bbox-crs": "EPSG:999999"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "CrsError"
+
+
+def test_an_out_of_range_crs_is_refused_in_the_create_body(client: TestClient) -> None:
+    response = client.post(f"/api/v1/vector/{IDENTIFIER}", json={**CREATE_BODY, "crs": "EPSG:999999"})
+
+    assert response.status_code == 422
+    assert "coordinate reference system" in response.text

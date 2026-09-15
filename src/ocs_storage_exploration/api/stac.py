@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query, Request
 
 from ocs_storage_exploration.api.dependencies import StorageServiceDependency
 from ocs_storage_exploration.storage.errors import DatasetNotFoundError
-from ocs_storage_exploration.storage.models import Dataset
+from ocs_storage_exploration.storage.schemas import Dataset
 from ocs_storage_exploration.storage.service import StorageService
 from ocs_storage_exploration.storage.stac import (
     JSON_MEDIA_TYPE,
@@ -19,6 +19,9 @@ from ocs_storage_exploration.storage.stac import (
 )
 
 router = APIRouter(prefix="/stac", tags=["stac"])
+
+# Plain def, not async def: FastAPI runs these in the threadpool so the blocking storage calls
+# never occupy the event loop. See docs/architecture.md for the threading model.
 
 PublishedOnlyQuery = Annotated[
     bool,
@@ -40,7 +43,7 @@ def advertised_datasets(storage: StorageService, *, published_only: bool) -> lis
 
 
 @router.get("", summary="Read the STAC landing page")
-async def read_landing_page(
+def read_landing_page(
     request: Request,
     storage: StorageServiceDependency,
     published_only: PublishedOnlyQuery = True,
@@ -51,7 +54,7 @@ async def read_landing_page(
 
 
 @router.get("/collections", summary="List the STAC collections")
-async def list_collections(
+def list_collections(
     request: Request,
     storage: StorageServiceDependency,
     published_only: PublishedOnlyQuery = True,
@@ -70,7 +73,7 @@ async def list_collections(
 
 
 @router.get("/collections/{dataset_identifier}", summary="Read one STAC collection")
-async def read_collection(
+def read_collection(
     dataset_identifier: str,
     request: Request,
     storage: StorageServiceDependency,

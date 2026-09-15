@@ -8,8 +8,8 @@ import pytest
 from ocs_storage_exploration.settings import Settings
 from ocs_storage_exploration.storage.catalog import ObjectCatalog
 from ocs_storage_exploration.storage.errors import FeatureCountGuardError
-from ocs_storage_exploration.storage.models import BoundingBox
 from ocs_storage_exploration.storage.protocols import StorageBackend
+from ocs_storage_exploration.storage.schemas import BoundingBox
 from ocs_storage_exploration.storage.vector.collection import VectorCollectionStore
 
 COLLECTION = "districts"

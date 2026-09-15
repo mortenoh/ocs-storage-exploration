@@ -32,10 +32,49 @@ Parquet footer) and a GeoParquet asset at `application/x-parquet`. Licence and
 attribution are record fields, threaded through both create endpoints and
 preserved across an overwrite or an append, and `license` plus `providers` carry
 them into the collection. `published_only` defaults to true so a draft is never
-advertised. It is a projection, not new state: the records already held the
-bounding box, the temporal extent, the variables, the CRS and the feature
-detail, and the only reads it adds are the store's root attributes and the
-published Parquet footer. See [the STAC catalog](concepts/stac-catalog.md).
+advertised. It is a projection, not new state: the record contributes identity,
+title, licence and attribution, and everything else is read back from the
+version being advertised. See [the STAC catalog](concepts/stac-catalog.md).
+
+**Pass 4: hardening.** A review of the three passes above found eleven places
+where the prototype was right in the happy path and wrong under a second writer,
+a second thread or a rollback. All eleven are closed:
+
+- The catalogue's compare-and-swap moved onto revision tokens: `get_entry`
+  returns the record with the revision it was read at, `put` takes that revision
+  or `create=True`, and the per-instance etag memory that let an unrelated read
+  launder a stale write is gone.
+- The `published` branch became the publication truth: a reader follows the
+  branch rather than the record, a coverage with nothing published answers 404
+  instead of serving the newest draft, and `reconcile_publication` repairs a
+  record left behind by an interrupted publication.
+- A coverage now describes the snapshot it serves rather than its record:
+  `RasterRepository.describe` reads the dimensions, projection, envelope, time
+  axis and variables back from the opened store.
+- A vector version now describes itself: a `metadata.json` sidecar records the
+  coordinate reference system, feature count, identifier property and selectable
+  columns of the version as it was written, and reads, guards and publications
+  take those fields from it rather than from the latest write.
+- A vector version number is claimed before anything is written, by creating
+  `reservation.json` in `mode="create"`, so two writers listing at the same
+  moment can no longer pick the same number and overwrite each other.
+- The STAC catalog is built from the version being advertised rather than from
+  the record, so an unpublished append no longer widens the published temporal
+  extent and a draft in another frame no longer changes the published CRS.
+- Blocking storage calls moved off the event loop: every route that reaches the
+  service layer is a plain `def` that FastAPI runs on the threadpool, and the
+  caches that several threads now share are guarded.
+- Cube allocation is guarded by `max_cube_cells` before the array is built,
+  rather than only after a query had already read it.
+- The memory backend drops the Icechunk storages cached under a prefix when the
+  prefix is deleted, so a new dataset of the same name no longer inherits the
+  old history.
+- A raster window is selected by masking coordinate values rather than by
+  slicing labels, so a bounding box that crosses the antimeridian selects the
+  cells on both sides of it.
+- GeoJSON input is validated by geojson-pydantic models that name where a
+  malformed document goes wrong, with an unreadable coordinate reference system
+  answered as 400 and structurally wrong vector input as 422.
 
 ## Next
 
@@ -56,8 +95,8 @@ published Parquet footer. See [the STAC catalog](concepts/stac-catalog.md).
 4. **A derived catalog index for large listings.** One object per dataset is
    right for writes and wrong for listing thousands; an index needs a builder,
    an invalidation rule and etag-guarded listing so a stale page is detectable.
-   `GET /stac/collections` has the same shape of problem: it reads one store and
-   one Parquet footer per collection, so it needs paging before it needs a cache.
+   `GET /stac/collections` has the same shape of problem: it describes one store
+   or one Parquet file per collection, so it needs paging before it needs a cache.
 5. **Pyramids.** Multiscale groups for large grids, mirroring what OCS already
    does, so a coarse read does not pay for the full resolution. That is also
    what would make the Zarr media type worth deriving per store rather than

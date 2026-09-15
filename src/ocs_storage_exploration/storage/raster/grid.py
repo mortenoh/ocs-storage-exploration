@@ -15,13 +15,14 @@ from numpy.typing import NDArray
 from pyproj import CRS
 
 from ocs_storage_exploration.storage.errors import RasterContractError
-from ocs_storage_exploration.storage.models import GridSpecification
+from ocs_storage_exploration.storage.schemas import GridSpecification
 
 SPATIAL_REFERENCE_NAME: Final[str] = "spatial_ref"
 GRID_MAPPING_ATTRIBUTE: Final[str] = "grid_mapping"
 CRS_WELL_KNOWN_TEXT_ATTRIBUTE: Final[str] = "crs_wkt"
 PROJECTION_CODE_ATTRIBUTE: Final[str] = "proj:code"
 SPATIAL_BBOX_ATTRIBUTE: Final[str] = "spatial:bbox"
+NODATA_ATTRIBUTE: Final[str] = "nodata"
 MINIMUM_LONGITUDE: Final[float] = -180.0
 MAXIMUM_LONGITUDE: Final[float] = 180.0
 LONGITUDE_SPAN: Final[float] = 360.0
@@ -186,7 +187,7 @@ def _variable_attributes(grid: GridSpecification, variable: str) -> dict[str, An
     """Return the attributes of a synthetic data variable, including its fill value."""
     attributes: dict[str, Any] = {"long_name": f"synthetic {variable}", "units": "1"}
     if grid.nodata_value is not None:
-        attributes["nodata"] = float(grid.nodata_value)
+        attributes[NODATA_ATTRIBUTE] = float(grid.nodata_value)
     return attributes
 
 

@@ -1,9 +1,10 @@
-"""Catalog record models, the tagged dataset union and operation result models."""
+"""Catalog record schemas, the tagged dataset union and operation result schemas."""
 
 from __future__ import annotations
 
 import math
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Final, Literal, Self
@@ -196,6 +197,54 @@ class FeatureDataset(DatasetBase):
 
 
 Dataset = Annotated[CoverageDataset | FeatureDataset, Field(discriminator="item_type")]
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogEntry:
+    """A dataset record together with the revision of the catalog object it was read from."""
+
+    record: Dataset
+    revision: str
+
+
+class VectorVersionMetadata(BaseModel):
+    """Sidecar describing one immutable version of a vector collection as that version was written."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: int = Field(ge=1)
+    crs: str
+    feature_count: int = Field(default=0, ge=0)
+    identifier_property: str
+    primary_geometry: str = "geometry"
+    geometry_types: tuple[str, ...] = ()
+    selectable_columns: tuple[str, ...] = ()
+    bbox: BoundingBox | None = None
+    written_at: datetime = Field(default_factory=current_timestamp)
+    license: str | None = None
+    attribution: str | None = None
+
+    @field_validator("license")
+    @classmethod
+    def validate_license(cls, value: str | None) -> str | None:
+        """Refuse a licence that is neither an SPDX identifier nor an SPDX expression."""
+        return normalise_license(value)
+
+    @field_validator("attribution")
+    @classmethod
+    def validate_attribution(cls, value: str | None) -> str | None:
+        """Trim the attribution string, treating a blank one as absent."""
+        return normalise_attribution(value)
+
+    def feature_detail(self) -> FeatureDetail:
+        """Render this sidecar as the feature detail block a catalog record carries."""
+        return FeatureDetail(
+            identifier_property=self.identifier_property,
+            feature_count=self.feature_count,
+            primary_geometry=self.primary_geometry,
+            geometry_types=self.geometry_types,
+            selectable_columns=self.selectable_columns,
+        )
 
 
 class RasterVersion(BaseModel):

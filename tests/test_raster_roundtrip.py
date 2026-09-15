@@ -14,9 +14,9 @@ from ocs_storage_exploration.storage.catalog import ObjectCatalog
 from ocs_storage_exploration.storage.errors import (
     DatasetAlreadyExistsError,
     DatasetNotFoundError,
+    QuerySizeGuardError,
     RasterContractError,
 )
-from ocs_storage_exploration.storage.models import BoundingBox, CoverageDataset, GridSpecification
 from ocs_storage_exploration.storage.protocols import StorageBackend
 from ocs_storage_exploration.storage.raster import (
     PROJECTION_CODE_ATTRIBUTE,
@@ -29,6 +29,7 @@ from ocs_storage_exploration.storage.raster import (
     build_synthetic_cube,
     build_timestamps,
 )
+from ocs_storage_exploration.storage.schemas import BoundingBox, CoverageDataset, GridSpecification
 
 IDENTIFIER = "roundtrip"
 VARIABLE = "temperature"
@@ -81,7 +82,7 @@ def test_create_then_read_round_trips_values_and_dimensions(
     assert result.timestep_count == 3
     assert result.variables == (VARIABLE,)
     assert result.snapshot_identifier
-    with raster_repository.read(IDENTIFIER) as handle:
+    with raster_repository.read(IDENTIFIER, version=VersionSelector.DRAFT) as handle:
         assert handle.group is None
         assert handle.snapshot_identifier == result.snapshot_identifier
         assert dict(handle.dataset.sizes) == {"t": 3, "y": 4, "x": 6}
@@ -102,7 +103,7 @@ def test_read_side_carries_the_coordinate_reference_system(
 ):
     raster_repository.create(IDENTIFIER, grid, build_cube(grid))
 
-    with raster_repository.read(IDENTIFIER) as handle:
+    with raster_repository.read(IDENTIFIER, version=VersionSelector.DRAFT) as handle:
         assert SPATIAL_REFERENCE_NAME in handle.dataset.coords
         well_known_text = str(handle.dataset[SPATIAL_REFERENCE_NAME].attrs["crs_wkt"])
         assert CRS.from_wkt(well_known_text) == CRS.from_user_input(grid.crs)
@@ -130,7 +131,7 @@ def test_append_grows_the_time_dimension_and_preserves_earlier_values(
     result = raster_repository.append(IDENTIFIER, second)
 
     assert result.timestep_count == 5
-    with raster_repository.read(IDENTIFIER) as handle:
+    with raster_repository.read(IDENTIFIER, version=VersionSelector.DRAFT) as handle:
         assert dict(handle.dataset.sizes) == {"t": 5, "y": 4, "x": 6}
         assert numpy.allclose(handle.dataset[VARIABLE].values[:3], first[VARIABLE].values)
         assert numpy.allclose(handle.dataset[VARIABLE].values[3:], second[VARIABLE].values)
@@ -196,7 +197,7 @@ def test_create_with_overwrite_replaces_the_values_and_keeps_the_creation_time(
     result = raster_repository.create(IDENTIFIER, grid, replacement, overwrite=True, message="replace")
 
     assert result.timestep_count == 2
-    with raster_repository.read(IDENTIFIER) as handle:
+    with raster_repository.read(IDENTIFIER, version=VersionSelector.DRAFT) as handle:
         assert dict(handle.dataset.sizes) == {"t": 2, "y": 4, "x": 6}
         assert numpy.allclose(handle.dataset[VARIABLE].values, replacement[VARIABLE].values)
     record = catalog.require(IDENTIFIER)
@@ -221,12 +222,12 @@ def test_delete_removes_the_record_before_the_bytes(raster_repository: RasterRep
 
     raster_repository.delete(IDENTIFIER)
 
-    with pytest.raises(DatasetNotFoundError), raster_repository.read(IDENTIFIER):
+    with pytest.raises(DatasetNotFoundError), raster_repository.read(IDENTIFIER, version=VersionSelector.DRAFT):
         pass
 
 
 def test_read_refuses_an_unknown_dataset(raster_repository: RasterRepository):
-    with pytest.raises(DatasetNotFoundError), raster_repository.read("missing"):
+    with pytest.raises(DatasetNotFoundError), raster_repository.read("missing", version=VersionSelector.DRAFT):
         pass
 
 
@@ -237,7 +238,7 @@ def test_rioxarray_reads_the_written_coordinate_reference_system(
     pytest.importorskip("rioxarray")
     raster_repository.create(IDENTIFIER, grid, build_cube(grid))
 
-    with raster_repository.read(IDENTIFIER) as handle:
+    with raster_repository.read(IDENTIFIER, version=VersionSelector.DRAFT) as handle:
         assert handle.dataset.rio.crs is not None
         assert CRS.from_user_input(handle.dataset.rio.crs.to_wkt()) == CRS.from_user_input(grid.crs)
 
@@ -266,7 +267,7 @@ def test_read_falls_back_to_the_first_multiscale_group(
         ),
     )
 
-    with raster_repository.read(identifier) as handle:
+    with raster_repository.read(identifier, version=VersionSelector.DRAFT) as handle:
         assert handle.group == "0"
         assert numpy.allclose(handle.dataset[VARIABLE].values, cube[VARIABLE].values)
 
@@ -317,3 +318,78 @@ def test_an_overwrite_can_replace_the_licence_and_attribution(
     assert isinstance(record, CoverageDataset)
     assert record.license == "CC-BY-NC-4.0"
     assert record.attribution == "Second"
+
+
+def test_append_refuses_a_variable_the_store_does_not_hold_and_stays_readable(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+):
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid, count=3))
+    continuation = build_cube(grid, count=1, start=datetime(2020, 1, 4))
+    humidity = build_synthetic_cube(
+        grid,
+        variable="humidity",
+        timestamps=build_timestamps(datetime(2020, 1, 4), 1, TimeStep.DAY),
+    )
+
+    with pytest.raises(RasterContractError, match="humidity"):
+        raster_repository.append(IDENTIFIER, xarray.merge([continuation, humidity]))
+
+    with raster_repository.read(IDENTIFIER, version=VersionSelector.DRAFT) as handle:
+        assert dict(handle.dataset.sizes) == {"t": 3, "y": 4, "x": 6}
+        assert sorted(str(name) for name in handle.dataset.data_vars) == [VARIABLE]
+
+
+def test_append_refuses_a_different_data_type(raster_repository: RasterRepository, grid: GridSpecification):
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid, count=3))
+    wider = build_cube(grid.model_copy(update={"data_type": "float64"}), count=1, start=datetime(2020, 1, 4))
+
+    with pytest.raises(RasterContractError, match="float64"):
+        raster_repository.append(IDENTIFIER, wider)
+
+    with raster_repository.read(IDENTIFIER, version=VersionSelector.DRAFT) as handle:
+        assert handle.dataset.sizes["t"] == 3
+
+
+def test_create_refuses_a_cube_larger_than_the_guard(
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+    settings: Settings,
+    grid: GridSpecification,
+):
+    guarded = RasterRepository(storage_backend, catalog, settings.model_copy(update={"max_cube_cells": 10}))
+
+    with pytest.raises(QuerySizeGuardError, match="more than the 10 allowed"):
+        guarded.create(IDENTIFIER, grid, build_cube(grid))
+
+    assert catalog.get(IDENTIFIER) is None
+
+
+def test_append_refuses_a_cube_larger_than_the_guard(
+    raster_repository: RasterRepository,
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+    settings: Settings,
+    grid: GridSpecification,
+):
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid, count=3))
+    guarded = RasterRepository(storage_backend, catalog, settings.model_copy(update={"max_cube_cells": 10}))
+
+    with pytest.raises(QuerySizeGuardError, match="more than the 10 allowed"):
+        guarded.append(IDENTIFIER, build_cube(grid, count=1, start=datetime(2020, 1, 4)))
+
+
+def test_recreating_a_deleted_coverage_starts_a_fresh_history(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+):
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid))
+    raster_repository.append(IDENTIFIER, build_cube(grid, count=1, start=datetime(2020, 1, 4)))
+    raster_repository.delete(IDENTIFIER)
+
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid), message="written again")
+
+    versions = raster_repository.versions(IDENTIFIER)
+    # Only the initialisation snapshot and the write above: the deleted history must not come back.
+    assert len(versions) == 2
+    assert versions[0].message == "written again"

@@ -82,8 +82,8 @@ curl -s -X POST $BASE/api/v1/raster/temperature-demo/append \
 ## Query a window
 
 ```bash
-curl -s "$BASE/api/v1/raster/temperature-demo/query?variable=temperature" | jq -c .
-curl -s "$BASE/api/v1/raster/temperature-demo/query?bbox=0,50,30,70&start=2020-02-01T00:00:00&end=2020-04-01T00:00:00" | jq -c .
+curl -s "$BASE/api/v1/raster/temperature-demo/query?variable=temperature&version=draft" | jq -c .
+curl -s "$BASE/api/v1/raster/temperature-demo/query?bbox=0,50,30,70&start=2020-02-01T00:00:00&end=2020-04-01T00:00:00&version=draft" | jq -c .
 ```
 
 ```json
@@ -97,11 +97,21 @@ curl -s "$BASE/api/v1/raster/temperature-demo/query?bbox=0,50,30,70&start=2020-0
  "cell_count":45,"minimum":1.7261766195297241,"maximum":3.916940689086914,"mean":2.8190076298183864}
 ```
 
-The answered `bbox` is the envelope of the cells that were actually read, grown
-by half a cell, which is why it snaps outwards to the grid. A window that reads
-more than `OCS_STORAGE_MAX_QUERY_CELL_COUNT` cells is refused with 413 rather
-than truncated, and a window that selects nothing is refused rather than
-answered with nulls.
+A query defaults to the published version, and nothing is published yet, so
+these two read the draft. Without `version=draft` they would answer 404 `dataset
+has no published version`: the `published` branch is what makes a coverage
+readable as published, so a query never falls back to the newest draft.
+
+The answered `bbox`, `crs` and variables are read from the snapshot that was
+opened rather than from the catalog record, so a draft that rewrites the grid
+does not change what a published query reports. The `bbox` is the envelope of
+the cells that were actually read, grown by half a cell, which is why it snaps
+outwards to the grid. A window that reads more than
+`OCS_STORAGE_MAX_QUERY_CELL_COUNT` cells is refused with 413 rather than
+truncated, and a window that selects nothing is refused rather than answered
+with nulls. A create or an append whose cube would hold more than
+`OCS_STORAGE_MAX_CUBE_CELLS` cells is refused with 413 before the cube is
+built.
 
 ## Publish, list versions, roll back
 
@@ -139,8 +149,10 @@ curl -s "$BASE/api/v1/raster/temperature-demo/query?version=draft" | jq -c '{tim
 {"timestep_count":9}
 ```
 
-`version=published` follows the published pointer and `version=draft` reads the
+`version=published` opens the `published` branch and `version=draft` reads the
 main branch; `snapshot_identifier=...` pins one snapshot regardless of either.
+The snapshot the repository was initialised with holds no data, so publishing it
+is refused with 409 rather than emptying the published coverage.
 
 ## Create a collection
 
@@ -410,7 +422,9 @@ ocs/raster/temperature-demo/transactions/36X40SW4JZCK9PQV43N0
 ocs/raster/temperature-demo/manifests/12JK7D21GHC6HYNM63H0
 ocs/raster/temperature-demo/chunks/QA9BX124QHESED1QEAEG
 ocs/vector/districts-demo/current.json
+ocs/vector/districts-demo/versions/v00001/reservation.json
 ocs/vector/districts-demo/versions/v00001/data.parquet
+ocs/vector/districts-demo/versions/v00001/metadata.json
 ```
 
 That is the layout

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import math
+import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -16,41 +17,49 @@ import pyarrow
 import pyarrow.fs
 import pyarrow.parquet
 import shapely
-from pydantic import BaseModel
+from geojson_pydantic import FeatureCollection
+from pydantic import BaseModel, ValidationError
 from pyproj import CRS
+from pyproj.exceptions import CRSError as PyprojCrsError
 from shapely.geometry.base import BaseGeometry
 
 from ocs_storage_exploration.storage.addresses import StorageAddress
 from ocs_storage_exploration.storage.errors import (
+    CrsError,
     FeatureCountGuardError,
     FeatureIdentityError,
     ItemTypeMismatchError,
     NothingToPublishError,
+    PublicationConflictError,
     SelectableColumnError,
     SnapshotNotFoundError,
     StorageAddressError,
     StorageError,
+    VectorInputError,
 )
 from ocs_storage_exploration.storage.keys import (
+    VECTOR_METADATA_NAME,
     parse_vector_version,
     validate_dataset_identifier,
     vector_data_key,
     vector_pointer_key,
     vector_prefix,
+    vector_reservation_key,
+    vector_version_metadata_key,
     vector_version_prefix,
 )
-from ocs_storage_exploration.storage.models import (
+from ocs_storage_exploration.storage.objects import create_object, create_object_if_absent, replace_object
+from ocs_storage_exploration.storage.protocols import Catalog, StorageBackend
+from ocs_storage_exploration.storage.schemas import (
     BoundingBox,
     FeatureDataset,
-    FeatureDetail,
     ItemType,
     Publication,
     PublicationResult,
+    VectorVersionMetadata,
     VectorWriteResult,
     current_timestamp,
 )
-from ocs_storage_exploration.storage.objects import create_object, replace_object
-from ocs_storage_exploration.storage.protocols import Catalog, StorageBackend
 from ocs_storage_exploration.storage.vector.predicates import WhereClause, build_filters
 
 if TYPE_CHECKING:
@@ -61,8 +70,10 @@ GEOPARQUET_SCHEMA_VERSION: Final[str] = "1.1.0"
 GEOMETRY_ENCODING: Final[str] = "WKB"
 PARQUET_COMPRESSION: Final[str] = "zstd"
 BBOX_DENSIFY_SEGMENTS: Final[int] = 32
-POINTER_ENCODING: Final[str] = "utf-8"
+OBJECT_ENCODING: Final[str] = "utf-8"
 POINTER_LABEL: Final[str] = "pointer"
+METADATA_LABEL: Final[str] = "version metadata"
+MAXIMUM_RESERVATION_ATTEMPTS: Final[int] = 32
 
 
 class VectorCollectionPointer(BaseModel):
@@ -72,6 +83,21 @@ class VectorCollectionPointer(BaseModel):
     key: str
     feature_count: int
     published_at: datetime
+
+
+class VectorVersionReservation(BaseModel):
+    """Reservation object claiming one version number of a collection before its data is written."""
+
+    version: int
+    reserved_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class CollectionEntry:
+    """The catalog record of a vector collection together with the revision it was read at."""
+
+    record: FeatureDataset
+    revision: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,9 +157,17 @@ class ParquetSource:
         return geopandas.read_parquet(self._require_path(), filesystem=self.filesystem, **keywords)
 
 
+def require_crs(value: Any, *, label: str = "crs") -> CRS:
+    """Parse a coordinate reference system, refusing anything pyproj cannot read."""
+    try:
+        return CRS.from_user_input(value)
+    except (PyprojCrsError, TypeError, ValueError) as error:
+        raise CrsError(f"{label} is not a coordinate reference system: {value!r}") from error
+
+
 def crs_identifier(crs: Any) -> str:
     """Render a coordinate reference system as an authority code when it has one."""
-    reference = CRS.from_user_input(crs)
+    reference = require_crs(crs)
     authority = reference.to_authority()
     if authority is None:
         return str(reference.to_string())
@@ -142,7 +176,7 @@ def crs_identifier(crs: Any) -> str:
 
 def same_crs(left: Any, right: Any) -> bool:
     """Report whether two coordinate reference systems describe the same frame."""
-    return bool(CRS.from_user_input(left) == CRS.from_user_input(right))
+    return bool(require_crs(left) == require_crs(right))
 
 
 def frame_bounding_box(frame: geopandas.GeoDataFrame) -> BoundingBox | None:
@@ -157,23 +191,37 @@ def frame_bounding_box(frame: geopandas.GeoDataFrame) -> BoundingBox | None:
     return BoundingBox(minimum_x=bounds[0], minimum_y=bounds[1], maximum_x=bounds[2], maximum_y=bounds[3])
 
 
+def validate_feature_collection(feature_collection: FeatureCollection | Mapping[str, Any]) -> FeatureCollection:
+    """Validate a mapping into a geojson FeatureCollection, naming where a malformed one goes wrong."""
+    if isinstance(feature_collection, FeatureCollection):
+        return feature_collection
+    try:
+        return FeatureCollection.model_validate(feature_collection)
+    except ValidationError as error:
+        first = error.errors(include_url=False)[0]
+        location = ".".join(str(part) for part in first["loc"]) or "the feature collection"
+        raise VectorInputError(f"geojson is malformed at {location}: {first['msg']}") from error
+
+
 def build_frame_from_geojson(
-    feature_collection: Mapping[str, Any],
+    feature_collection: FeatureCollection | Mapping[str, Any],
     *,
     identifier_property: str,
     crs: str = DEFAULT_CRS,
 ) -> geopandas.GeoDataFrame:
     """Build a GeoDataFrame from a GeoJSON FeatureCollection, falling back to the feature id for the identifier."""
-    features = feature_collection.get("features")
-    if not isinstance(features, list) or not features:
+    collection = validate_feature_collection(feature_collection)
+    if not collection.features:
         raise FeatureIdentityError("geojson feature collection must carry a non-empty features array")
     prepared: list[dict[str, Any]] = []
-    for feature in features:
-        properties = dict(feature.get("properties") or {})
-        if properties.get(identifier_property) is None and feature.get("id") is not None:
-            properties[identifier_property] = feature["id"]
-        prepared.append({**feature, "properties": properties})
-    return geopandas.GeoDataFrame.from_features(prepared, crs=crs)
+    for index, feature in enumerate(collection.features):
+        if feature.geometry is None:
+            raise VectorInputError(f"feature {index} has a null geometry, which a collection version cannot store")
+        properties = dict(feature.properties or {})
+        if properties.get(identifier_property) is None and feature.id is not None:
+            properties[identifier_property] = feature.id
+        prepared.append({"type": "Feature", "geometry": feature.geometry.model_dump(), "properties": properties})
+    return geopandas.GeoDataFrame.from_features(prepared, crs=require_crs(crs))
 
 
 def versions_prefix(identifier: str) -> str:
@@ -190,7 +238,20 @@ class VectorCollectionStore:
         self._backend = backend
         self._catalog = catalog
         self._settings = settings
-        self._pointer_etags: dict[str, str] = {}
+        self._pointer_state = threading.local()
+
+    @property
+    def _pointer_etags(self) -> dict[str, str]:
+        """Return the pointer etags this thread last read, so no publication writes against another thread's."""
+        # One store serves several requests on the threadpool. A shared cache would let a publication
+        # replace a pointer using the etag a concurrent reader refreshed, which is the lost update
+        # the compare-and-swap exists to refuse. Every publication reads the pointer before writing
+        # it, so a per-thread cache loses nothing.
+        etags: dict[str, str] | None = getattr(self._pointer_state, "etags", None)
+        if etags is None:
+            etags = {}
+            self._pointer_state.etags = etags
+        return etags
 
     @property
     def backend(self) -> StorageBackend:
@@ -216,33 +277,39 @@ class VectorCollectionStore:
     ) -> VectorWriteResult:
         """Write a frame as the next version of a collection and optionally publish it right away."""
         identifier = validate_dataset_identifier(collection_identifier)
+        existing = self._existing_collection(identifier)
         prepared = self._prepare_frame(frame, identifier_property=identifier_property)
         declared = self._validate_selectable_columns(prepared, selectable_columns)
-        version = self._next_version(identifier)
+        previous = None if existing is None else existing.record
+        version = self.reserve_version(identifier)
         self._write_parquet(self._backend.address(vector_data_key(identifier, version)), prepared)
-        record = self._build_record(
+        metadata = self._write_version_metadata(
             identifier,
+            version,
             prepared,
             identifier_property=identifier_property,
-            title=title,
-            license=license,
-            attribution=attribution,
             selectable_columns=declared,
+            license=license or (previous.license if previous is not None else None),
+            attribution=attribution or (previous.attribution if previous is not None else None),
         )
-        self._catalog.put(record)
+        record = self._build_record(identifier, metadata, title=title, previous=previous)
+        if existing is None:
+            self._catalog.put(record, create=True)
+        else:
+            self._catalog.put(record, revision=existing.revision)
         if publish:
             self.publish(identifier, version=version)
         return VectorWriteResult(
             dataset_identifier=identifier,
             version=version,
-            feature_count=int(len(prepared)),
+            feature_count=metadata.feature_count,
             published=publish,
         )
 
     def write_geojson(
         self,
         collection_identifier: str,
-        feature_collection: Mapping[str, Any],
+        feature_collection: FeatureCollection | Mapping[str, Any],
         *,
         identifier_property: str,
         crs: str = DEFAULT_CRS,
@@ -278,24 +345,27 @@ class VectorCollectionStore:
     ) -> VectorReadHandle:
         """Read one version of a collection, pruning by envelope and clause before the exact intersection test."""
         identifier = validate_dataset_identifier(collection_identifier)
-        record = self._require_feature_record(identifier)
-        self._guard_unqualified_read(identifier, record, bbox=bbox, where=where)
+        # The record proves the collection exists and is a vector dataset; it describes no version.
+        self._require_collection(identifier)
         resolved = self._resolve_version(identifier, version)
+        # Every field below describes the version being read, not whatever the newest write left behind.
+        metadata = self.version_metadata(identifier, resolved)
+        self._guard_unqualified_read(identifier, metadata, bbox=bbox, where=where)
         source = self._parquet_source(self._backend.address(vector_data_key(identifier, resolved)))
         schema = source.schema()
         keywords: dict[str, Any] = {}
         filters = build_filters(
             where or {},
-            selectable_columns=record.features.selectable_columns,
+            selectable_columns=metadata.selectable_columns,
             schema=schema,
         )
         if filters:
             keywords["filters"] = filters
-        window = None if bbox is None else self._resolve_window(bbox, bbox_crs, record.crs)
+        window = None if bbox is None else self._resolve_window(bbox, bbox_crs, metadata.crs)
         if window is not None:
             keywords["bbox"] = window.bounds
         if columns is not None:
-            keywords["columns"] = self._resolve_columns(identifier, columns, record, schema)
+            keywords["columns"] = self._resolve_columns(identifier, columns, metadata, schema)
         frame = source.read(**keywords)
         if window is not None:
             # The covering bbox column prunes by envelope only, so the exact test has to run here.
@@ -307,26 +377,27 @@ class VectorCollectionStore:
     def publish(self, collection_identifier: str, *, version: int | None = None) -> PublicationResult:
         """Move the published pointer of a collection to one version, which is also how a rollback works."""
         identifier = validate_dataset_identifier(collection_identifier)
-        record = self._require_feature_record(identifier)
+        entry = self._require_collection(identifier)
         available = self.versions(identifier)
         if not available:
             raise NothingToPublishError(f"collection {identifier!r} has no written version to publish")
         target = available[-1] if version is None else version
         if target not in available:
             raise SnapshotNotFoundError(f"collection {identifier!r} has no version {target}")
+        metadata = self.version_metadata(identifier, target)
         pointer = self._read_pointer(identifier)
         previous_version = None if pointer is None else pointer.version
         if pointer is None or pointer.version != target:
-            self._write_pointer(identifier, target)
+            self._write_pointer(identifier, metadata)
         published_at = current_timestamp()
-        record.publication = Publication(
+        entry.record.publication = Publication(
             published=True,
             published_at=published_at,
             version=target,
             previous_version=previous_version,
         )
-        record.updated_at = published_at
-        self._catalog.put(record)
+        entry.record.updated_at = published_at
+        self._catalog.put(entry.record, revision=entry.revision)
         return PublicationResult(
             dataset_identifier=identifier,
             item_type=ItemType.FEATURE,
@@ -336,20 +407,51 @@ class VectorCollectionStore:
         )
 
     def versions(self, collection_identifier: str) -> list[int]:
-        """List the version numbers already written for a collection, in ascending order."""
+        """List the version numbers a collection finished writing, in ascending order."""
+        return self._list_versions(collection_identifier, completed_only=True)
+
+    def claimed_versions(self, collection_identifier: str) -> list[int]:
+        """List every version number a collection claimed, including a write that never finished."""
+        return self._list_versions(collection_identifier, completed_only=False)
+
+    def reserve_version(
+        self,
+        collection_identifier: str,
+        *,
+        attempts: int = MAXIMUM_RESERVATION_ATTEMPTS,
+    ) -> int:
+        """Claim the next free version number by creating its reservation object, which no two writers can share."""
         identifier = validate_dataset_identifier(collection_identifier)
-        address = self._backend.address(versions_prefix(identifier))
-        marker = f"{address.key}/"
-        found: set[int] = set()
-        for key in self._backend.list_keys(address):
-            if not key.startswith(marker):
-                continue
-            name = key[len(marker) :].split("/", maxsplit=1)[0]
-            try:
-                found.add(parse_vector_version(name))
-            except StorageAddressError:
-                continue
-        return sorted(found)
+        written = self.versions(identifier)
+        candidate = written[-1] + 1 if written else 1
+        store = self._backend.object_store()
+        for _ in range(attempts):
+            reservation = VectorVersionReservation(version=candidate, reserved_at=current_timestamp())
+            key = self._backend.address(vector_reservation_key(identifier, candidate)).key
+            claimed = create_object_if_absent(store, key, reservation.model_dump_json().encode(OBJECT_ENCODING))
+            # A reservation object that is ours is not enough: an earlier crash may have left data behind.
+            if claimed is not None and not self._data_object_exists(identifier, candidate):
+                return candidate
+            candidate += 1
+        raise PublicationConflictError(
+            f"collection {identifier!r} found no free version number in {attempts} attempts",
+        )
+
+    def version_metadata(self, collection_identifier: str, version: int) -> VectorVersionMetadata:
+        """Read the metadata sidecar describing one version of a collection as it was written."""
+        identifier = validate_dataset_identifier(collection_identifier)
+        key = self._backend.address(vector_version_metadata_key(identifier, version)).key
+        try:
+            payload = bytes(obstore.get(self._backend.object_store(), key).bytes())
+        except FileNotFoundError as error:
+            # obstore 0.11 reports a missing object as the builtin FileNotFoundError.
+            raise SnapshotNotFoundError(f"collection {identifier!r} has no version {version}") from error
+        return VectorVersionMetadata.model_validate_json(payload)
+
+    def published_metadata(self, collection_identifier: str) -> VectorVersionMetadata | None:
+        """Read the metadata sidecar of the published version, or None while nothing is published."""
+        pointer = self.pointer(collection_identifier)
+        return None if pointer is None else self.version_metadata(collection_identifier, pointer.version)
 
     def table_schema(self, collection_identifier: str, *, version: int | None = None) -> VectorTableSchema:
         """Describe one version of a collection from its Parquet footer alone, reading no row group."""
@@ -363,19 +465,44 @@ class VectorCollectionStore:
             column_types={str(field.name): str(field.type) for field in schema},
         )
 
+    def pointer(self, collection_identifier: str) -> VectorCollectionPointer | None:
+        """Read the published-version pointer object of a collection, or None when nothing is published."""
+        return self._read_pointer(validate_dataset_identifier(collection_identifier))
+
     def current_version(self, collection_identifier: str) -> int | None:
         """Return the published version of a collection, or None when nothing is published."""
-        identifier = validate_dataset_identifier(collection_identifier)
-        pointer = self._read_pointer(identifier)
+        pointer = self.pointer(collection_identifier)
         return None if pointer is None else pointer.version
 
     def delete(self, collection_identifier: str) -> int:
         """Delete the catalog record of a collection first, then every object below its prefix."""
         identifier = validate_dataset_identifier(collection_identifier)
-        self._require_feature_record(identifier)
+        self._require_collection(identifier)
         self._catalog.delete(identifier)
         self._pointer_etags.pop(identifier, None)
         return self._backend.delete_prefix(self._backend.address(vector_prefix(identifier)))
+
+    def _list_versions(self, collection_identifier: str, *, completed_only: bool) -> list[int]:
+        """List the version numbers below the versions prefix, optionally only those with a metadata sidecar."""
+        identifier = validate_dataset_identifier(collection_identifier)
+        address = self._backend.address(versions_prefix(identifier))
+        marker = f"{address.key}/"
+        found: set[int] = set()
+        for key in self._backend.list_keys(address):
+            if not key.startswith(marker):
+                continue
+            name, _, remainder = key[len(marker) :].partition("/")
+            if completed_only and remainder != VECTOR_METADATA_NAME:
+                continue
+            try:
+                found.add(parse_vector_version(name))
+            except StorageAddressError:
+                continue
+        return sorted(found)
+
+    def _data_object_exists(self, identifier: str, version: int) -> bool:
+        """Report whether the GeoParquet object of one version is already on the backend."""
+        return self._backend.exists(self._backend.address(vector_data_key(identifier, version)))
 
     def _prepare_frame(self, frame: geopandas.GeoDataFrame, *, identifier_property: str) -> geopandas.GeoDataFrame:
         """Validate feature identity and the coordinate reference system, then Hilbert-sort the frame."""
@@ -424,11 +551,6 @@ class VectorCollectionStore:
             declared.append(column)
         return tuple(declared)
 
-    def _next_version(self, identifier: str) -> int:
-        """Return the version number one past the highest version already written."""
-        existing = self.versions(identifier)
-        return existing[-1] + 1 if existing else 1
-
     def _write_parquet(self, address: StorageAddress, frame: geopandas.GeoDataFrame) -> None:
         """Write a frame as GeoParquet with a covering bbox column, through pyarrow or buffered through obstore."""
         options: dict[str, Any] = {
@@ -463,65 +585,90 @@ class VectorCollectionStore:
             return ParquetSource(payload=payload)
         return ParquetSource(path=self._backend.parquet_path(address), filesystem=filesystem)
 
-    def _build_record(
+    def _write_version_metadata(
         self,
         identifier: str,
+        version: int,
         frame: geopandas.GeoDataFrame,
         *,
         identifier_property: str,
-        title: str | None,
+        selectable_columns: tuple[str, ...],
         license: str | None,
         attribution: str | None,
-        selectable_columns: tuple[str, ...],
-    ) -> FeatureDataset:
-        """Build the catalog record describing the collection after a write, keeping what an earlier record held."""
-        existing = self._catalog.get(identifier)
-        if existing is not None and not isinstance(existing, FeatureDataset):
-            raise ItemTypeMismatchError(f"dataset {identifier!r} is not a vector collection")
-        detail = FeatureDetail(
-            identifier_property=identifier_property,
+    ) -> VectorVersionMetadata:
+        """Write the sidecar that completes a version, as a create so no concurrent writer can replace it."""
+        metadata = VectorVersionMetadata(
+            version=version,
+            crs=crs_identifier(frame.crs),
             feature_count=int(len(frame)),
+            identifier_property=identifier_property,
             primary_geometry=str(frame.active_geometry_name),
             geometry_types=tuple(sorted({str(value) for value in frame.geom_type.dropna().unique()})),
             selectable_columns=selectable_columns,
+            bbox=frame_bounding_box(frame),
+            written_at=current_timestamp(),
+            license=license,
+            attribution=attribution,
         )
-        written_at = current_timestamp()
+        key = self._backend.address(vector_version_metadata_key(identifier, version)).key
+        payload = metadata.model_dump_json().encode(OBJECT_ENCODING)
+        create_object(self._backend.object_store(), key, payload, label=METADATA_LABEL)
+        return metadata
+
+    def _build_record(
+        self,
+        identifier: str,
+        metadata: VectorVersionMetadata,
+        *,
+        title: str | None,
+        previous: FeatureDataset | None,
+    ) -> FeatureDataset:
+        """Build the catalog record describing the latest write, keeping what an earlier record held."""
         return FeatureDataset(
             dataset_identifier=identifier,
-            title=title or (existing.title if existing is not None else identifier),
+            title=title or (previous.title if previous is not None else identifier),
             address=self._backend.address(vector_prefix(identifier)).as_uri(),
-            created_at=existing.created_at if existing is not None else written_at,
-            updated_at=written_at,
-            bbox=frame_bounding_box(frame),
-            license=license or (existing.license if existing is not None else None),
-            attribution=attribution or (existing.attribution if existing is not None else None),
-            publication=existing.publication if existing is not None else Publication(),
-            crs=crs_identifier(frame.crs),
-            features=detail,
+            created_at=previous.created_at if previous is not None else metadata.written_at,
+            updated_at=metadata.written_at,
+            bbox=metadata.bbox,
+            license=metadata.license,
+            attribution=metadata.attribution,
+            publication=previous.publication if previous is not None else Publication(),
+            crs=metadata.crs,
+            features=metadata.feature_detail(),
         )
 
-    def _require_feature_record(self, identifier: str) -> FeatureDataset:
-        """Read the catalog record of a collection and refuse anything that is not a vector dataset."""
-        record = self._catalog.require(identifier)
-        if not isinstance(record, FeatureDataset):
+    def _existing_collection(self, identifier: str) -> CollectionEntry | None:
+        """Read the catalog entry of a collection, or None when this write is the first one."""
+        entry = self._catalog.get_entry(identifier)
+        if entry is None:
+            return None
+        if not isinstance(entry.record, FeatureDataset):
             raise ItemTypeMismatchError(f"dataset {identifier!r} is not a vector collection")
-        return record
+        return CollectionEntry(record=entry.record, revision=entry.revision)
+
+    def _require_collection(self, identifier: str) -> CollectionEntry:
+        """Read the catalog entry of a collection and refuse anything that is not a vector dataset."""
+        entry = self._catalog.require_entry(identifier)
+        if not isinstance(entry.record, FeatureDataset):
+            raise ItemTypeMismatchError(f"dataset {identifier!r} is not a vector collection")
+        return CollectionEntry(record=entry.record, revision=entry.revision)
 
     def _guard_unqualified_read(
         self,
         identifier: str,
-        record: FeatureDataset,
+        metadata: VectorVersionMetadata,
         *,
         bbox: BoundingBox | None,
         where: WhereClause | None,
     ) -> None:
-        """Refuse a read that carries neither an envelope nor a clause when the collection is too large."""
+        """Refuse a read that carries neither an envelope nor a clause when the selected version is too large."""
         if bbox is not None or where:
             return
         threshold = self._settings.max_unqualified_feature_count
-        if record.features.feature_count > threshold:
+        if metadata.feature_count > threshold:
             raise FeatureCountGuardError(
-                f"collection {identifier!r} holds {record.features.feature_count} features; "
+                f"collection {identifier!r} holds {metadata.feature_count} features; "
                 f"an unqualified read is limited to {threshold}",
             )
 
@@ -542,6 +689,7 @@ class VectorCollectionStore:
     def _resolve_window(self, bbox: BoundingBox, bbox_crs: str, collection_crs: str) -> BaseGeometry:
         """Turn a request envelope into a polygon in the collection frame, densified before it is reprojected."""
         window = shapely.box(*bbox.as_tuple())
+        require_crs(bbox_crs, label="bbox-crs")
         if same_crs(bbox_crs, collection_crs):
             return window
         span = max(bbox.maximum_x - bbox.minimum_x, bbox.maximum_y - bbox.minimum_y)
@@ -553,12 +701,12 @@ class VectorCollectionStore:
         self,
         identifier: str,
         columns: Sequence[str],
-        record: FeatureDataset,
+        metadata: VectorVersionMetadata,
         schema: pyarrow.Schema,
     ) -> list[str]:
         """Return the columns to read, always keeping the identifier property and the geometry column."""
         selected: list[str] = []
-        for column in (*columns, record.features.identifier_property, record.features.primary_geometry):
+        for column in (*columns, metadata.identifier_property, metadata.primary_geometry):
             if column in selected:
                 continue
             if column not in schema.names:
@@ -584,18 +732,17 @@ class VectorCollectionStore:
         self._remember_pointer_etag(identifier, etag)
         return VectorCollectionPointer.model_validate_json(payload)
 
-    def _write_pointer(self, identifier: str, version: int) -> VectorCollectionPointer:
+    def _write_pointer(self, identifier: str, metadata: VectorVersionMetadata) -> VectorCollectionPointer:
         """Write the pointer object of a collection under compare-and-swap against the etag last read."""
-        data_address = self._backend.address(vector_data_key(identifier, version))
         pointer = VectorCollectionPointer(
-            version=version,
-            key=data_address.key,
-            feature_count=self._parquet_source(data_address).row_count(),
+            version=metadata.version,
+            key=self._backend.address(vector_data_key(identifier, metadata.version)).key,
+            feature_count=metadata.feature_count,
             published_at=current_timestamp(),
         )
         key = self._pointer_address(identifier).key
         store = self._backend.object_store()
-        payload = pointer.model_dump_json().encode(POINTER_ENCODING)
+        payload = pointer.model_dump_json().encode(OBJECT_ENCODING)
         known_etag = self._pointer_etags.get(identifier)
         if known_etag is None:
             result = create_object(store, key, payload, label=POINTER_LABEL)

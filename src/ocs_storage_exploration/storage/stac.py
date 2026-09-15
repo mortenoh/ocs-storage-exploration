@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Final, assert_never
 
@@ -17,15 +18,20 @@ from pystac.utils import datetime_to_str
 
 from ocs_storage_exploration.storage.addresses import StorageAddress
 from ocs_storage_exploration.storage.keys import VECTOR_DATA_NAME, format_vector_version
-from ocs_storage_exploration.storage.models import (
+from ocs_storage_exploration.storage.raster.repository import (
+    PUBLISHED_BRANCH,
+    RasterRepository,
+    RasterStoreDescription,
+    VersionSelector,
+)
+from ocs_storage_exploration.storage.schemas import (
     BoundingBox,
     CoverageDataset,
     Dataset,
     FeatureDataset,
     TemporalExtent,
+    VectorVersionMetadata,
 )
-from ocs_storage_exploration.storage.raster.grid import PROJECTION_CODE_ATTRIBUTE
-from ocs_storage_exploration.storage.raster.repository import PUBLISHED_BRANCH, RasterRepository, VersionSelector
 from ocs_storage_exploration.storage.vector.collection import VectorCollectionStore, VectorTableSchema
 
 if TYPE_CHECKING:
@@ -82,6 +88,36 @@ __all__ = [
     "reference_system",
     "wgs84_bounds",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class _CoverageFacts:
+    """Grid, variables and extents of the coverage snapshot a collection advertises."""
+
+    snapshot_identifier: str | None
+    variables: tuple[str, ...]
+    crs: str
+    bbox: BoundingBox
+    temporal: TemporalExtent | None
+    timestep_count: int
+    time_dimension: str
+    y_dimension: str
+    x_dimension: str
+    shape: tuple[int, int]
+
+
+@dataclass(frozen=True, slots=True)
+class _FeatureFacts:
+    """Metadata and Parquet footer of the collection version a collection advertises."""
+
+    version: int | None
+    crs: str
+    bbox: BoundingBox | None
+    feature_count: int
+    identifier_property: str
+    primary_geometry: str
+    geometry_types: tuple[str, ...]
+    column_types: dict[str, str]
 
 
 def catalog_href(base_url: str) -> str:
@@ -169,26 +205,24 @@ def _build_coverage_collection(
     repository: RasterRepository,
 ) -> dict[str, Any]:
     """Build the datacube Collection of a coverage, with its Icechunk repository as the data asset."""
-    grid = record.grid
-    envelope = record.bbox if record.bbox is not None else grid.bbox
-    store_crs = _store_projection_code(record, repository)
+    facts = _coverage_facts(record, repository)
     collection = pystac.Collection(
         id=record.dataset_identifier,
         title=record.title,
-        description=_coverage_description(record),
+        description=_coverage_description(facts),
         extent=pystac.Extent(
-            spatial=pystac.SpatialExtent([list(wgs84_bounds(envelope, store_crs))]),
-            temporal=_temporal_extent(record.temporal),
+            spatial=pystac.SpatialExtent([list(wgs84_bounds(facts.bbox, facts.crs))]),
+            temporal=_temporal_extent(facts.temporal),
         ),
         license=record.license or DEFAULT_LICENSE,
         providers=_providers(record),
     )
     datacube = DatacubeExtension.ext(collection, add_if_missing=True)
-    datacube.dimensions = _cube_dimensions(record, store_crs)
-    datacube.variables = _cube_variables(record)
+    datacube.dimensions = _cube_dimensions(facts)
+    datacube.variables = _cube_variables(facts)
     collection.extra_fields[ITEM_TYPE_FIELD] = record.item_type.value
-    if record.publication.snapshot_identifier is not None:
-        collection.extra_fields[SNAPSHOT_FIELD] = record.publication.snapshot_identifier
+    if facts.snapshot_identifier is not None:
+        collection.extra_fields[SNAPSHOT_FIELD] = facts.snapshot_identifier
     collection.add_asset(
         "icechunk",
         pystac.Asset(
@@ -218,36 +252,29 @@ def _build_feature_collection(
     store: VectorCollectionStore,
 ) -> dict[str, Any]:
     """Build the table Collection of a vector collection, with the published GeoParquet as the data asset."""
+    facts = _feature_facts(record, store)
     collection = pystac.Collection(
         id=record.dataset_identifier,
         title=record.title,
-        description=_feature_description(record),
+        description=_feature_description(facts),
         extent=pystac.Extent(
-            spatial=pystac.SpatialExtent([list(_feature_bounds(record))]),
+            spatial=pystac.SpatialExtent([list(_feature_bounds(facts))]),
             temporal=_temporal_extent(None),
         ),
         license=record.license or DEFAULT_LICENSE,
         providers=_providers(record),
     )
-    advertised = _advertised_schema(record, store)
     table = TableExtension.ext(collection, add_if_missing=True)
-    table.primary_geometry = record.features.primary_geometry
+    table.primary_geometry = facts.primary_geometry
+    table.row_count = facts.feature_count
+    table.columns = [Column({"name": name, "type": kind}) for name, kind in facts.column_types.items()]
     collection.extra_fields[ITEM_TYPE_FIELD] = record.item_type.value
-    if advertised is None:
-        # Nothing readable to describe, so the record's own count is all there is to say.
-        table.row_count = record.features.feature_count
-        table.columns = []
-    else:
-        # The row count comes from the advertised Parquet rather than the record, whose feature
-        # detail tracks the newest write and would overstate a collection rolled back to an
-        # older version.
-        table.row_count = advertised.row_count
-        table.columns = [Column({"name": name, "type": kind}) for name, kind in advertised.column_types.items()]
-        collection.extra_fields[VERSION_FIELD] = advertised.version
+    if facts.version is not None:
+        collection.extra_fields[VERSION_FIELD] = facts.version
         collection.add_asset(
             "data",
             pystac.Asset(
-                href=_parquet_href(record, advertised.version),
+                href=_parquet_href(record, facts.version),
                 title="GeoParquet data",
                 media_type=PARQUET_MEDIA_TYPE,
                 roles=["data"],
@@ -299,99 +326,177 @@ def _providers(record: Dataset) -> list[pystac.Provider] | None:
     ]
 
 
-def _coverage_description(record: CoverageDataset) -> str:
-    """Return the generated description of a coverage collection."""
-    rows, columns = record.grid.shape
-    variables = ", ".join(record.variables) if record.variables else "no variables"
-    return (
-        f"Icechunk-backed GeoZarr coverage on a {rows} by {columns} grid in {record.grid.crs}, "
-        f"holding {record.timestep_count} timesteps of {variables}."
+def _coverage_facts(record: CoverageDataset, repository: RasterRepository) -> _CoverageFacts:
+    """Describe the coverage snapshot a collection advertises, degrading to the record when it cannot be read."""
+    description = _describe_store(record, repository)
+    if description is None:
+        grid = record.grid
+        return _CoverageFacts(
+            snapshot_identifier=record.publication.snapshot_identifier,
+            variables=record.variables,
+            crs=grid.crs,
+            bbox=record.bbox if record.bbox is not None else grid.bbox,
+            temporal=record.temporal,
+            timestep_count=record.timestep_count,
+            time_dimension=grid.time_dimension,
+            y_dimension=grid.y_dimension,
+            x_dimension=grid.x_dimension,
+            shape=grid.shape,
+        )
+    return _CoverageFacts(
+        snapshot_identifier=description.snapshot_identifier,
+        variables=description.variables,
+        crs=description.crs,
+        bbox=description.bbox,
+        temporal=_store_temporal(description),
+        timestep_count=description.timestep_count,
+        time_dimension=description.time_dimension,
+        y_dimension=description.y_dimension,
+        x_dimension=description.x_dimension,
+        shape=description.shape,
     )
 
 
-def _feature_description(record: FeatureDataset) -> str:
-    """Return the generated description of a feature collection."""
-    geometry_types = ", ".join(record.features.geometry_types) if record.features.geometry_types else "no geometries"
-    return (
-        f"GeoParquet feature collection of {record.features.feature_count} features in {record.crs}, "
-        f"identified by {record.features.identifier_property} and holding {geometry_types}."
-    )
-
-
-def _cube_dimensions(record: CoverageDataset, store_crs: str) -> dict[str, Dimension]:
-    """Build the datacube dimensions of a coverage from its grid and its temporal extent."""
-    grid = record.grid
-    envelope = record.bbox if record.bbox is not None else grid.bbox
-    system = reference_system(store_crs)
-    dimensions = {
-        grid.x_dimension: Dimension.from_dict(
-            {
-                "type": "spatial",
-                "axis": "x",
-                "extent": [envelope.minimum_x, envelope.maximum_x],
-                "reference_system": system,
-            },
-        ),
-        grid.y_dimension: Dimension.from_dict(
-            {
-                "type": "spatial",
-                "axis": "y",
-                "extent": [envelope.minimum_y, envelope.maximum_y],
-                "reference_system": system,
-            },
-        ),
-    }
-    dimensions[grid.time_dimension] = Dimension.from_dict({"type": "temporal", "extent": _temporal_pair(record)})
-    return dimensions
-
-
-def _temporal_pair(record: CoverageDataset) -> list[str | None]:
-    """Return the open or closed temporal extent of a coverage as the pair of strings STAC wants."""
-    if record.temporal is None:
-        return [None, None]
-    return [datetime_to_str(record.temporal.start), datetime_to_str(record.temporal.end)]
-
-
-def _cube_variables(record: CoverageDataset) -> dict[str, Variable]:
-    """Build one datacube variable per data variable of a coverage, over its three grid dimensions."""
-    grid = record.grid
-    dimensions = [grid.time_dimension, grid.y_dimension, grid.x_dimension]
-    return {name: Variable.from_dict({"dimensions": list(dimensions), "type": "data"}) for name in record.variables}
-
-
-def _feature_bounds(record: FeatureDataset) -> tuple[float, float, float, float]:
-    """Return the WGS84 envelope of a feature collection, falling back to the whole world."""
-    if record.bbox is None:
-        return (-180.0, -90.0, 180.0, 90.0)
-    return wgs84_bounds(record.bbox, record.crs)
-
-
-def _advertised_schema(record: FeatureDataset, store: VectorCollectionStore) -> VectorTableSchema | None:
-    """Describe the version a feature collection advertises: the published one, else the newest written."""
+def _describe_store(record: CoverageDataset, repository: RasterRepository) -> RasterStoreDescription | None:
+    """Describe the snapshot a coverage advertises: the published one, or the draft when nothing is published."""
+    # The advertised snapshot is the one the reader would get, so a coverage rolled back to an older
+    # snapshot advertises that snapshot's time axis rather than everything ever written.
+    selector = VersionSelector.PUBLISHED if record.publication.published else VersionSelector.DRAFT
     try:
-        return store.table_schema(record.dataset_identifier)
+        return repository.describe(record.dataset_identifier, version=selector)
+    except Exception:
+        # A store that is locked, missing or unreadable still has a record worth advertising; the
+        # collection degrades to what the record holds rather than taking the catalog down.
+        return None
+
+
+def _store_temporal(description: RasterStoreDescription) -> TemporalExtent | None:
+    """Return the temporal extent of a described snapshot, or None when it carries no time coordinate."""
+    if description.temporal_start is None or description.temporal_end is None:
+        return None
+    return TemporalExtent(start=description.temporal_start, end=description.temporal_end)
+
+
+def _feature_facts(record: FeatureDataset, store: VectorCollectionStore) -> _FeatureFacts:
+    """Describe the collection version advertised, degrading to the record when no version can be read."""
+    advertised = _advertised_version(record, store)
+    if advertised is None:
+        detail = record.features
+        return _FeatureFacts(
+            version=None,
+            crs=record.crs,
+            bbox=record.bbox,
+            feature_count=detail.feature_count,
+            identifier_property=detail.identifier_property,
+            primary_geometry=detail.primary_geometry,
+            geometry_types=detail.geometry_types,
+            column_types={},
+        )
+    metadata, table = advertised
+    # Every field describes the advertised version rather than the newest write, which the record
+    # tracks and which would overstate a collection rolled back to an older version.
+    return _FeatureFacts(
+        version=metadata.version,
+        crs=metadata.crs,
+        bbox=metadata.bbox,
+        feature_count=table.row_count,
+        identifier_property=metadata.identifier_property,
+        primary_geometry=metadata.primary_geometry,
+        geometry_types=metadata.geometry_types,
+        column_types=table.column_types,
+    )
+
+
+def _advertised_version(
+    record: FeatureDataset,
+    store: VectorCollectionStore,
+) -> tuple[VectorVersionMetadata, VectorTableSchema] | None:
+    """Read the sidecar and the Parquet footer of the version a feature collection advertises."""
+    try:
+        metadata = _advertised_metadata(record, store)
+        if metadata is None:
+            return None
+        return metadata, store.table_schema(record.dataset_identifier, version=metadata.version)
     except Exception:
         # A collection whose pointer, prefix or Parquet cannot be read still has a record worth
         # advertising; it loses the data asset and its columns rather than taking the catalog down.
         return None
 
 
+def _advertised_metadata(record: FeatureDataset, store: VectorCollectionStore) -> VectorVersionMetadata | None:
+    """Return the sidecar of the published version, or of the newest written one for a draft."""
+    if record.publication.published:
+        return store.published_metadata(record.dataset_identifier)
+    written = store.versions(record.dataset_identifier)
+    if not written:
+        return None
+    return store.version_metadata(record.dataset_identifier, written[-1])
+
+
+def _coverage_description(facts: _CoverageFacts) -> str:
+    """Return the generated description of a coverage collection."""
+    rows, columns = facts.shape
+    variables = ", ".join(facts.variables) if facts.variables else "no variables"
+    return (
+        f"Icechunk-backed GeoZarr coverage on a {rows} by {columns} grid in {facts.crs}, "
+        f"holding {facts.timestep_count} timesteps of {variables}."
+    )
+
+
+def _feature_description(facts: _FeatureFacts) -> str:
+    """Return the generated description of a feature collection."""
+    geometry_types = ", ".join(facts.geometry_types) if facts.geometry_types else "no geometries"
+    return (
+        f"GeoParquet feature collection of {facts.feature_count} features in {facts.crs}, "
+        f"identified by {facts.identifier_property} and holding {geometry_types}."
+    )
+
+
+def _cube_dimensions(facts: _CoverageFacts) -> dict[str, Dimension]:
+    """Build the datacube dimensions of a coverage from the snapshot it advertises."""
+    system = reference_system(facts.crs)
+    return {
+        facts.x_dimension: Dimension.from_dict(
+            {
+                "type": "spatial",
+                "axis": "x",
+                "extent": [facts.bbox.minimum_x, facts.bbox.maximum_x],
+                "reference_system": system,
+            },
+        ),
+        facts.y_dimension: Dimension.from_dict(
+            {
+                "type": "spatial",
+                "axis": "y",
+                "extent": [facts.bbox.minimum_y, facts.bbox.maximum_y],
+                "reference_system": system,
+            },
+        ),
+        facts.time_dimension: Dimension.from_dict({"type": "temporal", "extent": _temporal_pair(facts)}),
+    }
+
+
+def _temporal_pair(facts: _CoverageFacts) -> list[str | None]:
+    """Return the open or closed temporal extent of a coverage as the pair of strings STAC wants."""
+    if facts.temporal is None:
+        return [None, None]
+    return [datetime_to_str(facts.temporal.start), datetime_to_str(facts.temporal.end)]
+
+
+def _cube_variables(facts: _CoverageFacts) -> dict[str, Variable]:
+    """Build one datacube variable per data variable of a coverage, over its three cube dimensions."""
+    dimensions = [facts.time_dimension, facts.y_dimension, facts.x_dimension]
+    return {name: Variable.from_dict({"dimensions": list(dimensions), "type": "data"}) for name in facts.variables}
+
+
+def _feature_bounds(facts: _FeatureFacts) -> tuple[float, float, float, float]:
+    """Return the WGS84 envelope of a feature collection, falling back to the whole world."""
+    if facts.bbox is None:
+        return (-180.0, -90.0, 180.0, 90.0)
+    return wgs84_bounds(facts.bbox, facts.crs)
+
+
 def _parquet_href(record: FeatureDataset, version: int) -> str:
     """Return the URI of the GeoParquet object of one version of a feature collection."""
     address = StorageAddress.from_uri(record.address)
     return address.joined("versions", format_vector_version(version), VECTOR_DATA_NAME).as_uri()
-
-
-def _store_projection_code(record: CoverageDataset, repository: RasterRepository) -> str:
-    """Return the projection code the store itself records, falling back to the grid of the record."""
-    selector = VersionSelector.PUBLISHED if record.publication.published else VersionSelector.DRAFT
-    try:
-        attributes = repository.root_attributes(record.dataset_identifier, version=selector)
-    except Exception:
-        # The record already knows the grid it was written on, so a locked, missing or corrupt store
-        # degrades to that rather than failing the projection.
-        return record.grid.crs
-    code = attributes.get(PROJECTION_CODE_ATTRIBUTE)
-    if isinstance(code, str) and code:
-        return code
-    return record.grid.crs

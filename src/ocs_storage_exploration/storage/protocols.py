@@ -10,7 +10,7 @@ import pyarrow.fs
 from obstore.store import ObjectStore
 
 from ocs_storage_exploration.storage.addresses import StorageAddress, StorageScheme
-from ocs_storage_exploration.storage.models import BackendDescription, Dataset, ItemType
+from ocs_storage_exploration.storage.schemas import BackendDescription, CatalogEntry, Dataset, ItemType
 
 
 @runtime_checkable
@@ -73,16 +73,24 @@ class StorageBackend(Protocol):
 class Catalog(Protocol):
     """Stores the record that makes a dataset exist."""
 
-    def put(self, dataset: Dataset) -> None:
-        """Write a dataset record, using compare-and-swap when the record was read first."""
+    def put(self, dataset: Dataset, *, revision: str | None = None, create: bool = False) -> None:
+        """Write a dataset record as a conditional create, as a compare-and-swap, or as a plain overwrite."""
         ...
 
     def get(self, identifier: str) -> Dataset | None:
         """Read a dataset record, or None when it does not exist."""
         ...
 
+    def get_entry(self, identifier: str) -> CatalogEntry | None:
+        """Read a dataset record with the revision it was read at, or None when it does not exist."""
+        ...
+
     def require(self, identifier: str) -> Dataset:
         """Read a dataset record or raise DatasetNotFoundError."""
+        ...
+
+    def require_entry(self, identifier: str) -> CatalogEntry:
+        """Read a dataset record with its revision or raise DatasetNotFoundError."""
         ...
 
     def list_datasets(self, item_type: ItemType | None = None) -> list[Dataset]:

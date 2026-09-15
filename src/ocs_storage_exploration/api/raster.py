@@ -15,10 +15,13 @@ from ocs_storage_exploration.api.schemas import (
     PublishRequest,
     RasterVersionListResponse,
 )
-from ocs_storage_exploration.storage.models import PublicationResult, RasterQuerySummary, RasterWriteResult
 from ocs_storage_exploration.storage.raster import VersionSelector
+from ocs_storage_exploration.storage.schemas import PublicationResult, RasterQuerySummary, RasterWriteResult
 
 router = APIRouter(prefix="/api/v1/raster", tags=["raster"])
+
+# Plain def, not async def: FastAPI runs these in the threadpool so the blocking storage calls
+# never occupy the event loop. See docs/architecture.md for the threading model.
 
 DEFAULT_VERSION_LIMIT: Final[int] = 100
 MAXIMUM_VERSION_LIMIT: Final[int] = 1000
@@ -27,7 +30,7 @@ VersionLimitQuery = Annotated[int, Query(ge=1, le=MAXIMUM_VERSION_LIMIT, descrip
 
 
 @router.post("/{dataset_identifier}", status_code=status.HTTP_201_CREATED, summary="Create a synthetic coverage")
-async def create_raster(
+def create_raster(
     dataset_identifier: str,
     request: CreateRasterRequest,
     storage: StorageServiceDependency,
@@ -50,7 +53,7 @@ async def create_raster(
 
 
 @router.post("/{dataset_identifier}/append", summary="Append timesteps to a coverage")
-async def append_raster(
+def append_raster(
     dataset_identifier: str,
     request: AppendRasterRequest,
     storage: StorageServiceDependency,
@@ -65,7 +68,7 @@ async def append_raster(
 
 
 @router.get("/{dataset_identifier}/query", summary="Summarise a window of a coverage")
-async def query_raster(
+def query_raster(
     dataset_identifier: str,
     storage: StorageServiceDependency,
     bbox: BoundingBoxQuery = None,
@@ -88,7 +91,7 @@ async def query_raster(
 
 
 @router.post("/{dataset_identifier}/publish", summary="Publish a coverage snapshot")
-async def publish_raster(
+def publish_raster(
     dataset_identifier: str,
     storage: StorageServiceDependency,
     request: PublishRequest | None = None,
@@ -99,7 +102,7 @@ async def publish_raster(
 
 
 @router.get("/{dataset_identifier}/versions", summary="List the snapshots of a coverage")
-async def list_raster_versions(
+def list_raster_versions(
     dataset_identifier: str,
     storage: StorageServiceDependency,
     limit: VersionLimitQuery = DEFAULT_VERSION_LIMIT,

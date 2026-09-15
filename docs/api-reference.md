@@ -22,9 +22,9 @@ Generated reference for the application, its settings and the storage package.
 
 ::: ocs_storage_exploration.storage.errors
 
-## Storage models
+## Storage schemas
 
-::: ocs_storage_exploration.storage.models
+::: ocs_storage_exploration.storage.schemas
 
 ## Storage protocols
 
@@ -37,6 +37,10 @@ Generated reference for the application, its settings and the storage package.
 ## Storage catalog
 
 ::: ocs_storage_exploration.storage.catalog
+
+## Conditional object writes
+
+::: ocs_storage_exploration.storage.objects
 
 ## Storage service
 

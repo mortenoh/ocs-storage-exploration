@@ -14,15 +14,15 @@ from ocs_storage_exploration.settings import ObjectStorageSettings, Settings
 from ocs_storage_exploration.storage.addresses import StorageScheme
 from ocs_storage_exploration.storage.errors import DatasetNotFoundError, ItemTypeMismatchError
 from ocs_storage_exploration.storage.keys import raster_prefix, vector_prefix
-from ocs_storage_exploration.storage.models import (
+from ocs_storage_exploration.storage.raster import TimeStep, build_synthetic_cube, build_timestamps
+from ocs_storage_exploration.storage.registry import registered_schemes
+from ocs_storage_exploration.storage.schemas import (
     BoundingBox,
     CoverageDataset,
     FeatureDataset,
     GridSpecification,
     ItemType,
 )
-from ocs_storage_exploration.storage.raster import TimeStep, build_synthetic_cube, build_timestamps
-from ocs_storage_exploration.storage.registry import registered_schemes
 from ocs_storage_exploration.storage.service import INACTIVE_BACKEND_STATUS, StorageService
 
 COVERAGE = "coverage-one"

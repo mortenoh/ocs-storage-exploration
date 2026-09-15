@@ -20,6 +20,7 @@ def test_defaults_use_the_filesystem_backend() -> None:
     assert settings.s3 is None
     assert settings.max_unqualified_feature_count == 50_000
     assert settings.max_query_cell_count == 50_000_000
+    assert settings.max_cube_cells == 50_000_000
     assert settings.parquet_row_group_size == 65_536
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 import icechunk
 import numpy
@@ -9,16 +10,28 @@ import xarray
 
 from ocs_storage_exploration.settings import Settings
 from ocs_storage_exploration.storage.catalog import ObjectCatalog
-from ocs_storage_exploration.storage.errors import SnapshotNotFoundError
-from ocs_storage_exploration.storage.models import BoundingBox, CoverageDataset, GridSpecification, ItemType
+from ocs_storage_exploration.storage.errors import (
+    DatasetAlreadyExistsError,
+    NothingToPublishError,
+    PublicationConflictError,
+    SnapshotNotFoundError,
+)
 from ocs_storage_exploration.storage.protocols import StorageBackend
 from ocs_storage_exploration.storage.raster import (
     PUBLISHED_BRANCH,
+    CoverageEntry,
     RasterRepository,
     TimeStep,
     VersionSelector,
     build_synthetic_cube,
     build_timestamps,
+)
+from ocs_storage_exploration.storage.schemas import (
+    BoundingBox,
+    CoverageDataset,
+    Dataset,
+    GridSpecification,
+    ItemType,
 )
 
 IDENTIFIER = "publish"
@@ -206,3 +219,110 @@ def test_a_read_handle_opened_before_a_publish_still_reads_its_snapshot(
 
         assert handle.dataset.sizes["t"] == 3
         assert numpy.allclose(handle.dataset[VARIABLE].values, original[VARIABLE].values)
+
+
+def test_a_published_read_without_a_published_branch_is_refused(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+):
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid))
+
+    with pytest.raises(SnapshotNotFoundError, match="no published version"), raster_repository.read(IDENTIFIER):
+        pass
+
+
+def test_a_failed_record_write_does_not_expose_the_next_draft(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+    catalog: ObjectCatalog,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    created = raster_repository.create(IDENTIFIER, grid, build_cube(grid, count=3))
+    written = catalog.put
+    failing = {"active": True}
+
+    def put(dataset: Dataset, **keywords: Any) -> None:
+        if failing["active"]:
+            raise RuntimeError("the catalog write failed after the branch had moved")
+        written(dataset, **keywords)
+
+    monkeypatch.setattr(catalog, "put", put)
+    with pytest.raises(RuntimeError):
+        raster_repository.publish(IDENTIFIER)
+    failing["active"] = False
+    stale = catalog.require(IDENTIFIER)
+    assert isinstance(stale, CoverageDataset)
+    assert stale.publication.published is False
+
+    raster_repository.append(IDENTIFIER, build_cube(grid, count=2, start=datetime(2020, 1, 4), seed=1))
+
+    with raster_repository.read(IDENTIFIER, version=VersionSelector.PUBLISHED) as handle:
+        assert handle.snapshot_identifier == created.snapshot_identifier
+        assert handle.dataset.sizes["t"] == 3
+    published = [version for version in raster_repository.versions(IDENTIFIER) if version.is_published]
+    assert [version.snapshot_identifier for version in published] == [created.snapshot_identifier]
+    reconciled = catalog.require(IDENTIFIER)
+    assert isinstance(reconciled, CoverageDataset)
+    assert reconciled.publication.published is True
+    assert reconciled.publication.snapshot_identifier == created.snapshot_identifier
+
+
+def test_publishing_the_initialisation_snapshot_is_refused(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+):
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid, count=3))
+    raster_repository.publish(IDENTIFIER)
+    initialisation = raster_repository.versions(IDENTIFIER)[-1]
+
+    with pytest.raises(NothingToPublishError, match=initialisation.snapshot_identifier):
+        raster_repository.publish(IDENTIFIER, snapshot_identifier=initialisation.snapshot_identifier)
+
+    assert raster_repository.query(IDENTIFIER).timestep_count == 3
+
+
+def test_two_raster_creates_racing_one_record_lose_the_conditional_create(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    racing = RasterRepository(storage_backend, catalog, settings)
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid))
+    # Freeze the empty catalog the racing writer saw before the first create landed.
+    monkeypatch.setattr(racing, "_existing_entry", lambda dataset_identifier, *, overwrite: None)
+
+    with pytest.raises(DatasetAlreadyExistsError):
+        racing.create(IDENTIFIER, grid, build_cube(grid, seed=1))
+
+    record = catalog.require(IDENTIFIER)
+    assert isinstance(record, CoverageDataset)
+    assert record.title == IDENTIFIER
+
+
+def test_a_stale_raster_record_loses_the_compare_and_swap(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    racing = RasterRepository(storage_backend, catalog, settings)
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid, count=3))
+    read = catalog.require_entry(IDENTIFIER)
+    assert isinstance(read.record, CoverageDataset)
+    stale = CoverageEntry(record=read.record, revision=read.revision)
+
+    racing.append(IDENTIFIER, build_cube(grid, count=2, start=datetime(2020, 1, 4), seed=1))
+
+    # Freeze the record the losing writer read before the racing writer moved it on.
+    monkeypatch.setattr(raster_repository, "_require_coverage_entry", lambda dataset_identifier: stale)
+    with pytest.raises(PublicationConflictError):
+        raster_repository.append(IDENTIFIER, build_cube(grid, count=2, start=datetime(2020, 1, 6), seed=2))
+
+    record = catalog.require(IDENTIFIER)
+    assert isinstance(record, CoverageDataset)
+    assert record.timestep_count == 5

@@ -1,4 +1,4 @@
-"""Conditional object writes shared by the dataset catalog and the vector pointer."""
+"""Conditional object writes shared by the dataset catalog and the objects of a vector collection."""
 
 from __future__ import annotations
 
@@ -20,6 +20,18 @@ def create_object(store: ObjectStore, key: str, payload: bytes, *, label: str) -
         return obstore.put(store, key, payload, mode="create")
     except AlreadyExistsError as error:
         raise PublicationConflictError(f"{label} {key!r} was created by a concurrent publication") from error
+
+
+def create_object_if_absent(store: ObjectStore, key: str, payload: bytes) -> PutResult | None:
+    """Create an object and report None rather than raising when a concurrent writer created it first.
+
+    Unlike the conditional replace below, create mode is implemented by every store this service
+    uses, obstore's ``LocalStore`` included, so a claim made this way is atomic on all of them.
+    """
+    try:
+        return obstore.put(store, key, payload, mode="create")
+    except AlreadyExistsError:
+        return None
 
 
 def replace_object(store: ObjectStore, key: str, payload: bytes, etag: str, *, label: str) -> PutResult:

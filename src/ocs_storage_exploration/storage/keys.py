@@ -12,6 +12,8 @@ RASTER_PREFIX: Final[str] = "raster"
 VECTOR_PREFIX: Final[str] = "vector"
 VECTOR_POINTER_NAME: Final[str] = "current.json"
 VECTOR_DATA_NAME: Final[str] = "data.parquet"
+VECTOR_RESERVATION_NAME: Final[str] = "reservation.json"
+VECTOR_METADATA_NAME: Final[str] = "metadata.json"
 VECTOR_VERSION_DIGITS: Final[int] = 5
 MAXIMUM_VECTOR_VERSION: Final[int] = 10**VECTOR_VERSION_DIGITS - 1
 
@@ -82,3 +84,13 @@ def vector_version_prefix(identifier: str, version: int) -> str:
 def vector_data_key(identifier: str, version: int) -> str:
     """Return the GeoParquet object key of one version of a vector collection."""
     return f"{vector_version_prefix(identifier, version)}/{VECTOR_DATA_NAME}"
+
+
+def vector_reservation_key(identifier: str, version: int) -> str:
+    """Return the object key claiming one version number of a vector collection before it is written."""
+    return f"{vector_version_prefix(identifier, version)}/{VECTOR_RESERVATION_NAME}"
+
+
+def vector_version_metadata_key(identifier: str, version: int) -> str:
+    """Return the object key of the metadata sidecar of one version of a vector collection."""
+    return f"{vector_version_prefix(identifier, version)}/{VECTOR_METADATA_NAME}"

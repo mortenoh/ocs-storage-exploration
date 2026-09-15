@@ -8,8 +8,9 @@ from typing import Any
 import geopandas
 import pytest
 
-from ocs_storage_exploration.storage.models import BoundingBox, GridSpecification
+from ocs_storage_exploration.storage.errors import SnapshotNotFoundError
 from ocs_storage_exploration.storage.raster import TimeStep, build_synthetic_cube, build_timestamps
+from ocs_storage_exploration.storage.schemas import BoundingBox, GridSpecification
 from ocs_storage_exploration.storage.service import StorageService
 from ocs_storage_exploration.storage.stac import (
     CATALOG_IDENTIFIER,
@@ -196,7 +197,11 @@ def test_a_projected_grid_is_advertised_in_wgs84(storage_service: StorageService
     assert north == pytest.approx(60.0, abs=0.001)
     # The cube dimensions stay in the frame the cube was written on, which reference_system names.
     assert payload["cube:dimensions"]["x"]["reference_system"] == 3857
-    assert payload["cube:dimensions"]["x"]["extent"] == [MERCATOR_BBOX.minimum_x, MERCATOR_BBOX.maximum_x]
+    # The extent is measured on the coordinates of the opened store, so it lands within a cell
+    # rounding of the envelope the grid was written from rather than on the identical float.
+    assert payload["cube:dimensions"]["x"]["extent"] == pytest.approx(
+        [MERCATOR_BBOX.minimum_x, MERCATOR_BBOX.maximum_x],
+    )
 
 
 def test_wgs84_bounds_leaves_a_geographic_envelope_alone() -> None:
@@ -322,3 +327,90 @@ def test_the_row_count_follows_the_published_version_rather_than_the_newest_writ
     assert record.features.feature_count == 4
     assert payload["ocs:version"] == 1
     assert payload["table:row_count"] == 12
+
+
+def test_an_unpublished_append_leaves_the_published_temporal_extent_alone(
+    storage_service: StorageService,
+) -> None:
+    grid = build_grid()
+    write_coverage(storage_service, grid=grid)
+    published = project(storage_service, COVERAGE)["extent"]["temporal"]["interval"]
+
+    storage_service.raster.append(
+        COVERAGE,
+        build_synthetic_cube(
+            grid,
+            variable=VARIABLE,
+            timestamps=build_timestamps(datetime(2020, 1, 4), 2, TimeStep.DAY),
+            seed=1,
+        ),
+    )
+
+    payload = project(storage_service, COVERAGE)
+    record = storage_service.require_coverage(COVERAGE)
+
+    # The record tracks the newest write; the collection describes the snapshot the published
+    # branch points at, which the append did not move.
+    assert record.timestep_count == 5
+    assert payload["extent"]["temporal"]["interval"] == published == [["2020-01-01T00:00:00Z", "2020-01-03T00:00:00Z"]]
+    assert payload["cube:dimensions"]["t"]["extent"] == ["2020-01-01T00:00:00Z", "2020-01-03T00:00:00Z"]
+
+
+def test_a_draft_written_in_another_frame_leaves_the_published_collection_alone(
+    storage_service: StorageService,
+    sample_features: geopandas.GeoDataFrame,
+) -> None:
+    write_collection(storage_service, sample_features)
+
+    storage_service.vector.write(
+        COLLECTION,
+        sample_features.iloc[:4].to_crs("EPSG:3857"),
+        identifier_property="id",
+    )
+
+    payload = project(storage_service, COLLECTION)
+    record = storage_service.require_collection(COLLECTION)
+
+    assert record.crs == "EPSG:3857"
+    assert payload["ocs:version"] == 1
+    assert payload["table:row_count"] == 12
+    assert payload["extent"]["spatial"]["bbox"] == [[0.0, 0.0, 21.5, 21.5]]
+    assert "EPSG:4326" in payload["description"]
+
+
+def test_a_coverage_whose_store_cannot_be_read_falls_back_to_its_record(
+    storage_service: StorageService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_coverage(storage_service)
+
+    def refuse(*arguments: Any, **keywords: Any) -> None:
+        raise SnapshotNotFoundError("the store cannot be opened")
+
+    monkeypatch.setattr(storage_service.raster, "describe", refuse)
+    payload = project(storage_service, COVERAGE)
+
+    assert payload["extent"]["spatial"]["bbox"] == [[0.0, 0.0, 12.0, 8.0]]
+    assert payload["extent"]["temporal"]["interval"] == [["2020-01-01T00:00:00Z", "2020-01-03T00:00:00Z"]]
+    assert payload["cube:variables"] == {VARIABLE: {"dimensions": ["t", "y", "x"], "type": "data"}}
+    assert payload["ocs:snapshot_identifier"]
+
+
+def test_a_collection_whose_parquet_cannot_be_read_falls_back_to_its_record(
+    storage_service: StorageService,
+    sample_features: geopandas.GeoDataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_collection(storage_service, sample_features)
+
+    def refuse(*arguments: Any, **keywords: Any) -> None:
+        raise SnapshotNotFoundError("the parquet cannot be opened")
+
+    monkeypatch.setattr(storage_service.vector, "table_schema", refuse)
+    payload = project(storage_service, COLLECTION)
+
+    assert payload["table:row_count"] == 12
+    assert payload["table:columns"] == []
+    assert payload["table:primary_geometry"] == "geometry"
+    assert "data" not in payload["assets"]
+    assert "ocs:version" not in payload
