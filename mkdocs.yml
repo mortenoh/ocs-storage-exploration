@@ -1,0 +1,110 @@
+site_name: OCS storage exploration
+site_description: Prototype of a unified raster and vector storage abstraction for the Open Climate Service
+site_url: https://mortenoh.github.io/ocs-storage-exploration
+repo_url: https://github.com/mortenoh/ocs-storage-exploration
+repo_name: mortenoh/ocs-storage-exploration
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.tabs.link
+
+nav:
+  - Home: index.md
+  - Research:
+      - Problem statement: research/problem-statement.md
+      - OCS storage today: research/ocs-storage-today.md
+      - Icechunk backends: research/icechunk-backends.md
+      - GeoParquet: research/geoparquet.md
+      - obstore versus fsspec: research/obstore-vs-fsspec.md
+      - Unified model: research/unified-model.md
+      - Publication without rename: research/publication-without-rename.md
+      - Testing S3 locally: research/testing-s3-locally.md
+  - Concepts:
+      - Versioning: concepts/versioning.md
+      - Backends and key layout: concepts/backends-and-layout.md
+  - Guides:
+      - Inspecting the data: guides/inspecting-the-data.md
+      - API walkthrough: guides/api-walkthrough.md
+  - Architecture: architecture.md
+  - API Reference: api-reference.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - meta
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      repo_url_shorthand: true
+      user: mortenoh
+      repo: ocs-storage-exploration
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            show_object_full_path: false
+            show_category_heading: true
+            members_order: source
+            heading_level: 2
+
+validation:
+  links:
+    not_found: warn
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/mortenoh/ocs-storage-exploration

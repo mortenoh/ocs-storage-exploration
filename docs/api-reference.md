@@ -1,0 +1,83 @@
+# API Reference
+
+Generated reference for the application, its settings and the storage package.
+
+## Application
+
+::: ocs_storage_exploration.main
+
+## Settings
+
+::: ocs_storage_exploration.settings
+
+## Storage addresses
+
+::: ocs_storage_exploration.storage.addresses
+
+## Storage keys
+
+::: ocs_storage_exploration.storage.keys
+
+## Storage errors
+
+::: ocs_storage_exploration.storage.errors
+
+## Storage models
+
+::: ocs_storage_exploration.storage.models
+
+## Storage protocols
+
+::: ocs_storage_exploration.storage.protocols
+
+## Storage registry
+
+::: ocs_storage_exploration.storage.registry
+
+## Storage catalog
+
+::: ocs_storage_exploration.storage.catalog
+
+## Storage service
+
+::: ocs_storage_exploration.storage.service
+
+## Storage backends
+
+::: ocs_storage_exploration.storage.backends.base
+
+::: ocs_storage_exploration.storage.backends.filesystem
+
+::: ocs_storage_exploration.storage.backends.memory
+
+::: ocs_storage_exploration.storage.backends.s3
+
+## Raster engine
+
+::: ocs_storage_exploration.storage.raster.grid
+
+::: ocs_storage_exploration.storage.raster.repository
+
+## Vector engine
+
+::: ocs_storage_exploration.storage.vector.predicates
+
+::: ocs_storage_exploration.storage.vector.collection
+
+## HTTP layer
+
+::: ocs_storage_exploration.api.dependencies
+
+::: ocs_storage_exploration.api.parameters
+
+::: ocs_storage_exploration.api.schemas
+
+::: ocs_storage_exploration.api.health
+
+::: ocs_storage_exploration.api.backends
+
+::: ocs_storage_exploration.api.datasets
+
+::: ocs_storage_exploration.api.raster
+
+::: ocs_storage_exploration.api.vector

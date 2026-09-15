@@ -1,0 +1,232 @@
+"""Tests for the vector router: write, feature reads, publication, rollback and delete."""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+
+from ocs_storage_exploration.main import create_app
+from ocs_storage_exploration.settings import Settings
+
+IDENTIFIER = "collection-api"
+
+
+def build_feature(identifier: str, level: int, x: float, y: float) -> dict[str, Any]:
+    return {
+        "type": "Feature",
+        "properties": {"id": identifier, "level": level},
+        "geometry": {"type": "Polygon", "coordinates": [[[x, y], [x + 1, y], [x + 1, y + 1], [x, y + 1], [x, y]]]},
+    }
+
+
+FEATURE_COLLECTION: dict[str, Any] = {
+    "type": "FeatureCollection",
+    "features": [
+        build_feature("west", 1, 0.0, 0.0),
+        build_feature("middle", 1, 10.0, 0.0),
+        build_feature("east", 2, 20.0, 0.0),
+        build_feature("far-east", 2, 30.0, 0.0),
+    ],
+}
+CREATE_BODY: dict[str, Any] = {
+    "title": "API collection",
+    "identifier_property": "id",
+    "crs": "EPSG:4326",
+    "selectable_columns": ["level"],
+    "publish": True,
+    "feature_collection": FEATURE_COLLECTION,
+}
+
+
+def create_collection(client: TestClient, **overrides: Any) -> dict[str, Any]:
+    response = client.post(f"/api/v1/vector/{IDENTIFIER}", json={**CREATE_BODY, **overrides})
+    assert response.status_code == 201, response.text
+    payload: dict[str, Any] = response.json()
+    return payload
+
+
+@pytest.fixture
+def guarded_client(settings: Settings) -> Iterator[TestClient]:
+    guarded = settings.model_copy(update={"max_unqualified_feature_count": 2})
+    with TestClient(create_app(settings=guarded)) as test_client:
+        yield test_client
+
+
+def test_create_writes_the_first_version_and_publishes_it(client: TestClient) -> None:
+    created = create_collection(client)
+
+    assert created == {
+        "dataset_identifier": IDENTIFIER,
+        "version": 1,
+        "feature_count": 4,
+        "published": True,
+    }
+    record = client.get(f"/api/v1/datasets/{IDENTIFIER}").json()
+    assert record["item_type"] == "feature"
+    assert record["crs"] == "EPSG:4326"
+    assert record["features"]["identifier_property"] == "id"
+    assert record["features"]["selectable_columns"] == ["level"]
+
+
+def test_an_unknown_coordinate_reference_system_is_refused(client: TestClient) -> None:
+    response = client.post(f"/api/v1/vector/{IDENTIFIER}", json={**CREATE_BODY, "crs": "not-a-crs"})
+
+    assert response.status_code == 422
+    assert "coordinate reference system" in response.text
+
+
+def test_features_are_answered_as_geojson_in_the_collection_frame(client: TestClient) -> None:
+    create_collection(client)
+
+    response = client.get(f"/api/v1/vector/{IDENTIFIER}/features")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["type"] == "FeatureCollection"
+    assert payload["number_returned"] == 4
+    assert payload["number_matched"] == 4
+    assert payload["version"] == 1
+    assert payload["crs"] == "EPSG:4326"
+    assert payload["truncated"] is False
+    assert {feature["properties"]["id"] for feature in payload["features"]} == {
+        "west",
+        "middle",
+        "east",
+        "far-east",
+    }
+
+
+def test_a_bbox_narrows_the_feature_read(client: TestClient) -> None:
+    create_collection(client)
+
+    response = client.get(f"/api/v1/vector/{IDENTIFIER}/features", params={"bbox": "-1,-1,2,2"})
+
+    assert [feature["properties"]["id"] for feature in response.json()["features"]] == ["west"]
+
+
+def test_a_reprojected_bbox_narrows_the_feature_read(client: TestClient) -> None:
+    create_collection(client)
+
+    response = client.get(
+        f"/api/v1/vector/{IDENTIFIER}/features",
+        params={"bbox": "-111319,-111319,222639,222639", "bbox-crs": "EPSG:3857"},
+    )
+
+    assert [feature["properties"]["id"] for feature in response.json()["features"]] == ["west"]
+
+
+def test_a_where_clause_narrows_the_feature_read(client: TestClient) -> None:
+    create_collection(client)
+
+    response = client.get(f"/api/v1/vector/{IDENTIFIER}/features", params={"where": "level:2"})
+
+    assert {feature["properties"]["id"] for feature in response.json()["features"]} == {"east", "far-east"}
+
+
+def test_an_undeclared_where_column_is_refused(client: TestClient) -> None:
+    create_collection(client)
+
+    response = client.get(f"/api/v1/vector/{IDENTIFIER}/features", params={"where": "title:west"})
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "SelectableColumnError"
+
+
+def test_columns_keep_the_identifier_and_the_geometry(client: TestClient) -> None:
+    create_collection(client)
+
+    response = client.get(f"/api/v1/vector/{IDENTIFIER}/features", params={"columns": "level"})
+
+    feature = response.json()["features"][0]
+    assert set(feature["properties"]) == {"id", "level"}
+    assert feature["geometry"]["type"] == "Polygon"
+
+
+def test_a_limit_truncates_and_hides_the_match_count(client: TestClient) -> None:
+    create_collection(client)
+
+    response = client.get(f"/api/v1/vector/{IDENTIFIER}/features", params={"limit": 2})
+
+    payload = response.json()
+    assert payload["number_returned"] == 2
+    assert payload["number_matched"] is None
+    assert payload["truncated"] is True
+
+
+def test_publishing_an_older_version_rolls_the_collection_back(client: TestClient) -> None:
+    create_collection(client)
+    smaller = {"type": "FeatureCollection", "features": FEATURE_COLLECTION["features"][:2]}
+    second = create_collection(client, feature_collection=smaller, publish=True)
+    assert second["version"] == 2
+    assert client.get(f"/api/v1/vector/{IDENTIFIER}/features").json()["number_returned"] == 2
+
+    rolled_back = client.post(f"/api/v1/vector/{IDENTIFIER}/publish", json={"version": 1})
+
+    assert rolled_back.status_code == 200, rolled_back.text
+    assert rolled_back.json()["version"] == 1
+    assert rolled_back.json()["previous_version"] == 2
+    assert client.get(f"/api/v1/vector/{IDENTIFIER}/features").json()["number_returned"] == 4
+    assert client.get(f"/api/v1/vector/{IDENTIFIER}/features", params={"version": 2}).json()["version"] == 2
+
+
+def test_publishing_without_a_body_publishes_the_latest_version(client: TestClient) -> None:
+    create_collection(client, publish=False)
+
+    response = client.post(f"/api/v1/vector/{IDENTIFIER}/publish")
+
+    assert response.json()["published"] is True
+    assert response.json()["version"] == 1
+
+
+def test_publishing_a_collection_by_snapshot_is_refused(client: TestClient) -> None:
+    create_collection(client)
+
+    response = client.post(f"/api/v1/vector/{IDENTIFIER}/publish", json={"snapshot_identifier": "SOMESNAPSHOT"})
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "PublicationSelectorError"
+
+
+def test_a_duplicate_identifier_names_the_offending_value(client: TestClient) -> None:
+    duplicated = {
+        "type": "FeatureCollection",
+        "features": [*FEATURE_COLLECTION["features"], build_feature("west", 3, 40.0, 0.0)],
+    }
+
+    response = client.post(f"/api/v1/vector/{IDENTIFIER}", json={**CREATE_BODY, "feature_collection": duplicated})
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "FeatureIdentityError"
+    assert "west" in response.json()["detail"]
+
+
+def test_an_unqualified_read_over_the_threshold_is_refused(guarded_client: TestClient) -> None:
+    create_collection(guarded_client)
+
+    refused = guarded_client.get(f"/api/v1/vector/{IDENTIFIER}/features")
+    qualified = guarded_client.get(f"/api/v1/vector/{IDENTIFIER}/features", params={"where": "level:1"})
+
+    assert refused.status_code == 413
+    assert refused.json()["error"] == "FeatureCountGuardError"
+    assert qualified.status_code == 200
+    assert qualified.json()["number_returned"] == 2
+
+
+def test_delete_removes_the_collection(client: TestClient) -> None:
+    create_collection(client)
+
+    deleted = client.delete(f"/api/v1/datasets/{IDENTIFIER}")
+
+    assert deleted.status_code == 204
+    assert client.get(f"/api/v1/datasets/{IDENTIFIER}").status_code == 404
+    assert client.get(f"/api/v1/vector/{IDENTIFIER}/features").status_code == 404
+
+
+def test_an_unknown_collection_is_reported_as_missing(client: TestClient) -> None:
+    response = client.get("/api/v1/vector/absent/features")
+
+    assert response.status_code == 404
+    assert response.json()["error"] == "DatasetNotFoundError"

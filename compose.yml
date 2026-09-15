@@ -1,0 +1,19 @@
+services:
+  rustfs:
+    image: rustfs/rustfs:1.0.0-rc.6
+    container_name: ocs-storage-exploration-rustfs
+    entrypoint: |
+      /bin/sh -c '
+      mkdir -p /data/${OCS_STORAGE_S3__BUCKET:-ocs-storage-exploration};
+      rustfs --access-key ${RUSTFS_ACCESS_KEY:-rustfsadmin} --secret-key ${RUSTFS_SECRET_KEY:-rustfsadmin} --console-enable /data
+      '
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - ./.rustfs:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "127.0.0.1:9000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
