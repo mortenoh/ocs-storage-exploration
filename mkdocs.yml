@@ -44,6 +44,7 @@ nav:
   - Concepts:
       - Versioning: concepts/versioning.md
       - Backends and key layout: concepts/backends-and-layout.md
+      - STAC catalog: concepts/stac-catalog.md
   - Guides:
       - Inspecting the data: guides/inspecting-the-data.md
       - API walkthrough: guides/api-walkthrough.md

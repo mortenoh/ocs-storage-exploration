@@ -10,9 +10,9 @@ layer.
 
 ```mermaid
 flowchart TD
-    R["HTTP routers<br/>health, backends, datasets, raster, vector"]
+    R["HTTP routers<br/>health, backends, datasets, raster, vector, stac"]
     S["StorageService<br/>composition, exhaustive routing on item_type"]
-    E["RasterRepository<br/>VectorCollectionStore<br/>ObjectCatalog"]
+    E["RasterRepository<br/>VectorCollectionStore<br/>ObjectCatalog<br/>stac projection"]
     A["StorageAddress and key layout<br/>file:/// memory:// s3://"]
     B["FilesystemBackend<br/>MemoryBackend<br/>S3Backend"]
     L["icechunk.Storage<br/>obstore ObjectStore<br/>pyarrow.fs.FileSystem"]
@@ -39,6 +39,12 @@ The engines are concrete. `RasterRepository` wraps an Icechunk repository;
 `ObjectCatalog` stores one JSON record per dataset through obstore. Only
 `ObjectCatalog` satisfies a protocol, because a catalogue backed by a database
 is a plausible second implementation and a second raster repository is not.
+
+`storage/stac.py` sits beside the engines rather than in the router: it is a
+pure projection of a record onto a STAC Collection, with no state of its own and
+no I/O beyond one root-attribute read for a coverage and one Parquet footer read
+for a collection. Keeping it out of `api/` is what lets it be tested without a
+client. See [the STAC catalog](concepts/stac-catalog.md).
 
 `StorageAddress` and the key module sit between the engines and the backend so
 that no engine constructs a path. Every key a backend ever sees came from one
@@ -71,6 +77,8 @@ the settings-to-client translation, and the S3 key layout.
 | `decode_coords="all"` on every read | Without it `spatial_ref` stays a data variable and the CRS is silently lost. |
 | Explicit GeoParquet `schema_version="1.1.0"` | Otherwise the file declares 1.0.0 while carrying a 1.1 covering key. |
 | Memory backend caches `Storage` per address | `in_memory_storage()` returns a new store per call; caching per instance keeps test isolation. |
+| STAC is a projection, not an index | The records already hold the extents, the variables and the feature detail, so a stored catalogue would be a second copy to keep in sync. |
+| Only published versions are advertised | An href whose contents change on the next write is worse than an absent collection. `published_only=false` is the operator's view. |
 
 ## What the API does not do
 

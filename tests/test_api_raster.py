@@ -289,3 +289,19 @@ def test_an_append_request_refuses_a_coverage_without_a_time_axis() -> None:
 
     with pytest.raises(RasterContractError, match="no time axis"):
         AppendRasterRequest().to_cube(record)
+
+
+def test_the_licence_and_attribution_reach_the_record(client: TestClient) -> None:
+    body = {**CREATE_BODY, "license": "CC-BY-4.0", "attribution": "Open Climate Service"}
+
+    assert client.post(f"/api/v1/raster/{IDENTIFIER}", json=body).status_code == 201
+    record = client.get(f"/api/v1/datasets/{IDENTIFIER}").json()
+
+    assert record["license"] == "CC-BY-4.0"
+    assert record["attribution"] == "Open Climate Service"
+
+
+def test_a_free_text_licence_is_refused(client: TestClient) -> None:
+    body = {**CREATE_BODY, "license": "Creative Commons Attribution 4.0"}
+
+    assert client.post(f"/api/v1/raster/{IDENTIFIER}", json=body).status_code == 422

@@ -1,9 +1,10 @@
 # API walkthrough
 
 Every endpoint of the service, exercised with `curl` in the order a dataset
-actually lives: create, append, query, publish, roll back, list, delete. The
-responses below were captured from a real run against a scratch data directory,
-so the snapshot identifiers will differ but nothing else will.
+actually lives: create, append, query, publish, roll back, read as STAC, list,
+delete. The responses below were captured from a real run against a scratch data
+directory, so the snapshot identifiers and the temporary paths will differ but
+nothing else will.
 
 Start the service on a throwaway directory:
 
@@ -45,7 +46,8 @@ the time axis rather than carrying any bytes.
 curl -s -X POST $BASE/api/v1/raster/temperature-demo \
   -H 'content-type: application/json' \
   -d '{"title": "Synthetic temperature", "shape": [32, 64], "variable": "temperature",
-       "timestep_count": 6, "start_time": "2020-01-01T00:00:00Z", "step": "month"}' | jq -c .
+       "timestep_count": 6, "start_time": "2020-01-01T00:00:00Z", "step": "month",
+       "license": "CC-BY-4.0", "attribution": "Open Climate Service"}' | jq -c .
 ```
 
 ```json
@@ -56,7 +58,11 @@ curl -s -X POST $BASE/api/v1/raster/temperature-demo \
 Every field has a default, so `-d '{}'` creates a 16 by 32 global coverage of
 three monthly steps. Add `"publish": true` to publish the snapshot in the same
 request, and `"overwrite": true` to replace an existing dataset; without it a
-second create of the same identifier answers 409.
+second create of the same identifier answers 409. `license` takes an SPDX
+identifier, an SPDX expression or `proprietary` and refuses free text;
+`attribution` is free text. Both land on the record and reach the
+[STAC collection](../concepts/stac-catalog.md), and an overwrite or an append
+that does not name them keeps what the record already held.
 
 ## Append timesteps
 
@@ -145,7 +151,7 @@ later query may filter on have to be declared up front.
 curl -s -X POST $BASE/api/v1/vector/districts-demo \
   -H 'content-type: application/json' \
   -d '{"title": "Demo districts", "identifier_property": "id", "selectable_columns": ["level", "path"],
-       "publish": true,
+       "publish": true, "license": "proprietary", "attribution": "Statistics Norway",
        "feature_collection": {"type": "FeatureCollection", "features": [
          {"type": "Feature", "properties": {"id": "oslo", "level": 2, "path": "/root/no/oslo"},
           "geometry": {"type": "Polygon", "coordinates": [[[10.6,59.8],[10.9,59.8],[10.9,60.0],[10.6,60.0],[10.6,59.8]]]}},
@@ -223,6 +229,96 @@ curl -s "$BASE/api/v1/vector/districts-demo/features?bbox=-180,-90,180,90" | jq 
 `POST /publish` with no body publishes the newest version. A coverage is
 published by `snapshot_identifier` and a collection by `version`; naming both,
 or naming the selector of the other item type, is refused with 422.
+
+## The STAC catalog
+
+Everything above is also readable as STAC, without writing anything: a
+collection is a projection of the record, so there is no second index to keep in
+sync. The landing page names the conformance classes, the collections endpoint
+and one child per advertised dataset.
+
+```bash
+curl -s $BASE/stac | jq -c '{id, title, conformsTo}'
+curl -s $BASE/stac | jq -c '[.links[] | {rel, href}]'
+```
+
+```json
+{"id":"ocs-storage-exploration","title":"OCS storage exploration",
+ "conformsTo":["https://api.stacspec.org/v1.0.0/core","https://api.stacspec.org/v1.0.0/collections"]}
+[{"rel":"self","href":"http://127.0.0.1:8765/stac"},
+ {"rel":"root","href":"http://127.0.0.1:8765/stac"},
+ {"rel":"data","href":"http://127.0.0.1:8765/stac/collections"},
+ {"rel":"child","href":"http://127.0.0.1:8765/stac/collections/districts-demo"},
+ {"rel":"child","href":"http://127.0.0.1:8765/stac/collections/temperature-demo"}]
+```
+
+```bash
+curl -s $BASE/stac/collections | jq -c '[.collections[] | {id, type: ."ocs:item_type", license}]'
+curl -s $BASE/stac/collections/temperature-demo | jq -c '{id, dims: ."cube:dimensions", vars: ."cube:variables"}'
+curl -s $BASE/stac/collections/temperature-demo | jq -c '{assets, providers}'
+```
+
+```json
+[{"id":"districts-demo","type":"feature","license":"proprietary"},
+ {"id":"temperature-demo","type":"coverage","license":"CC-BY-4.0"}]
+{"id":"temperature-demo",
+ "dims":{"x":{"type":"spatial","axis":"x","extent":[-180.0,180.0],"reference_system":4326},
+         "y":{"type":"spatial","axis":"y","extent":[-90.0,90.0],"reference_system":4326},
+         "t":{"type":"temporal","extent":["2020-01-01T00:00:00Z","2020-09-01T00:00:00Z"]}},
+ "vars":{"temperature":{"dimensions":["t","y","x"],"type":"data"}}}
+{"assets":{"icechunk":{"href":"file:///tmp/ocs-demo/ocs/raster/temperature-demo",
+                       "type":"application/vnd.zarr; version=3","title":"Icechunk repository",
+                       "icechunk:branch":"published","roles":["data"]},
+           "api":{"href":"http://127.0.0.1:8765/api/v1/raster/temperature-demo/query",
+                  "type":"application/json","title":"Raster query endpoint","roles":["metadata"]}},
+ "providers":[{"name":"Open Climate Service","roles":["producer","licensor"]}]}
+```
+
+A feature collection describes the Parquet it advertises, read from that file's
+footer rather than from the record: the collection was rolled back to version 1
+above, so it reports the three rows that version holds even though the newest
+write has one.
+
+```bash
+curl -s $BASE/stac/collections/districts-demo \
+  | jq -c '{version: ."ocs:version", rows: ."table:row_count", geometry: ."table:primary_geometry",
+            columns: ."table:columns"}'
+curl -s $BASE/stac/collections/districts-demo | jq -c '.assets.data'
+```
+
+```json
+{"version":1,"rows":3,"geometry":"geometry",
+ "columns":[{"name":"geometry","type":"binary"},{"name":"id","type":"string"},
+            {"name":"level","type":"int64"},{"name":"path","type":"string"},
+            {"name":"bbox","type":"struct<xmin: double, ymin: double, xmax: double, ymax: double>"}]}
+{"href":"file:///tmp/ocs-demo/ocs/vector/districts-demo/versions/v00001/data.parquet",
+ "type":"application/x-parquet","title":"GeoParquet data","roles":["data"]}
+```
+
+Only published datasets are advertised. A dataset created without
+`"publish": true` is absent from the listing and answers 404 until
+`published_only=false` asks for it:
+
+```bash
+curl -s -X POST $BASE/api/v1/raster/draft-demo -H 'content-type: application/json' -d '{}' > /dev/null
+curl -s -o /dev/null -w '%{http_code}\n' $BASE/stac/collections/draft-demo
+curl -s -o /dev/null -w '%{http_code}\n' "$BASE/stac/collections/draft-demo?published_only=false"
+curl -s $BASE/stac/collections/absent | jq -c .
+curl -s -o /dev/null -X DELETE $BASE/api/v1/datasets/draft-demo
+```
+
+```text
+404
+200
+```
+
+```json
+{"error":"DatasetNotFoundError","detail":"no dataset record for 'absent'"}
+```
+
+[The STAC catalog](../concepts/stac-catalog.md) explains what each kind
+advertises, why the media types are the ones they are, and where the coverage
+temporal extent still tracks the record rather than the published snapshot.
 
 ## List and delete
 

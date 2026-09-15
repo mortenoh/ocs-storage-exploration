@@ -42,6 +42,10 @@ Generated reference for the application, its settings and the storage package.
 
 ::: ocs_storage_exploration.storage.service
 
+## STAC projection
+
+::: ocs_storage_exploration.storage.stac
+
 ## Storage backends
 
 ::: ocs_storage_exploration.storage.backends.base
@@ -81,3 +85,5 @@ Generated reference for the application, its settings and the storage package.
 ::: ocs_storage_exploration.api.raster
 
 ::: ocs_storage_exploration.api.vector
+
+::: ocs_storage_exploration.api.stac

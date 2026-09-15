@@ -20,6 +20,8 @@ from ocs_storage_exploration.storage.models import (
     Dataset,
     GridSpecification,
     RasterVersion,
+    normalise_attribution,
+    normalise_license,
 )
 from ocs_storage_exploration.storage.raster import TimeStep, build_synthetic_cube, build_timestamps
 from ocs_storage_exploration.storage.vector import DEFAULT_CRS, VectorReadHandle, crs_identifier
@@ -62,6 +64,8 @@ class CreateRasterRequest(BaseModel):
     """Request describing the synthetic coverage the service generates and writes."""
 
     title: str | None = None
+    license: str | None = None
+    attribution: str | None = None
     shape: tuple[GridSide, GridSide] = (16, 32)
     bbox: BoundingBox = WORLD_BBOX
     crs: str = DEFAULT_CRS
@@ -80,6 +84,18 @@ class CreateRasterRequest(BaseModel):
     def check_crs(cls, value: str) -> str:
         """Refuse a coordinate reference system that pyproj cannot parse."""
         return validate_crs(value)
+
+    @field_validator("license")
+    @classmethod
+    def check_license(cls, value: str | None) -> str | None:
+        """Refuse a licence that is neither an SPDX identifier nor an SPDX expression."""
+        return normalise_license(value)
+
+    @field_validator("attribution")
+    @classmethod
+    def check_attribution(cls, value: str | None) -> str | None:
+        """Trim the attribution string, treating a blank one as absent."""
+        return normalise_attribution(value)
 
     def to_grid(self) -> GridSpecification:
         """Build the grid of this request, recording the time step so an append can continue the axis."""
@@ -150,6 +166,8 @@ class CreateVectorRequest(BaseModel):
     """Request carrying the GeoJSON FeatureCollection a vector collection version is written from."""
 
     title: str | None = None
+    license: str | None = None
+    attribution: str | None = None
     identifier_property: str = Field(default="id", min_length=1)
     crs: str = DEFAULT_CRS
     selectable_columns: tuple[str, ...] = ()
@@ -161,6 +179,18 @@ class CreateVectorRequest(BaseModel):
     def check_crs(cls, value: str) -> str:
         """Refuse a coordinate reference system that pyproj cannot parse."""
         return validate_crs(value)
+
+    @field_validator("license")
+    @classmethod
+    def check_license(cls, value: str | None) -> str | None:
+        """Refuse a licence that is neither an SPDX identifier nor an SPDX expression."""
+        return normalise_license(value)
+
+    @field_validator("attribution")
+    @classmethod
+    def check_attribution(cls, value: str | None) -> str | None:
+        """Trim the attribution string, treating a blank one as absent."""
+        return normalise_attribution(value)
 
 
 class FeatureCollectionResponse(BaseModel):

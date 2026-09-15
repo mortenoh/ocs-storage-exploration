@@ -230,3 +230,19 @@ def test_an_unknown_collection_is_reported_as_missing(client: TestClient) -> Non
 
     assert response.status_code == 404
     assert response.json()["error"] == "DatasetNotFoundError"
+
+
+def test_the_licence_and_attribution_reach_the_collection_record(client: TestClient) -> None:
+    body = {**CREATE_BODY, "license": "proprietary", "attribution": "Statistics Norway"}
+
+    assert client.post(f"/api/v1/vector/{IDENTIFIER}", json=body).status_code == 201
+    record = client.get(f"/api/v1/datasets/{IDENTIFIER}").json()
+
+    assert record["license"] == "proprietary"
+    assert record["attribution"] == "Statistics Norway"
+
+
+def test_a_free_text_licence_is_refused_on_a_collection(client: TestClient) -> None:
+    body = {**CREATE_BODY, "license": "Creative Commons Attribution 4.0"}
+
+    assert client.post(f"/api/v1/vector/{IDENTIFIER}", json=body).status_code == 422

@@ -269,3 +269,51 @@ def test_read_falls_back_to_the_first_multiscale_group(
     with raster_repository.read(identifier) as handle:
         assert handle.group == "0"
         assert numpy.allclose(handle.dataset[VARIABLE].values, cube[VARIABLE].values)
+
+
+def test_the_licence_and_attribution_survive_an_overwrite_and_an_append(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+    catalog: ObjectCatalog,
+):
+    raster_repository.create(
+        IDENTIFIER,
+        grid,
+        build_cube(grid),
+        license="CC-BY-4.0",
+        attribution="Open Climate Service",
+    )
+
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid), overwrite=True)
+    overwritten = catalog.require(IDENTIFIER)
+    raster_repository.append(IDENTIFIER, build_cube(grid, start=datetime(2020, 1, 4)))
+    appended = catalog.require(IDENTIFIER)
+
+    assert isinstance(overwritten, CoverageDataset)
+    assert overwritten.license == "CC-BY-4.0"
+    assert overwritten.attribution == "Open Climate Service"
+    assert isinstance(appended, CoverageDataset)
+    assert appended.license == "CC-BY-4.0"
+    assert appended.attribution == "Open Climate Service"
+
+
+def test_an_overwrite_can_replace_the_licence_and_attribution(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+    catalog: ObjectCatalog,
+):
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid), license="CC-BY-4.0", attribution="First")
+
+    raster_repository.create(
+        IDENTIFIER,
+        grid,
+        build_cube(grid),
+        license="CC-BY-NC-4.0",
+        attribution="Second",
+        overwrite=True,
+    )
+    record = catalog.require(IDENTIFIER)
+
+    assert isinstance(record, CoverageDataset)
+    assert record.license == "CC-BY-NC-4.0"
+    assert record.attribution == "Second"

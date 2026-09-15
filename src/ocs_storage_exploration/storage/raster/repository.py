@@ -115,6 +115,8 @@ class RasterRepository:
         dataset: xarray.Dataset,
         *,
         title: str | None = None,
+        license: str | None = None,
+        attribution: str | None = None,
         overwrite: bool = False,
         message: str = DEFAULT_CREATE_MESSAGE,
     ) -> RasterWriteResult:
@@ -126,7 +128,15 @@ class RasterRepository:
         session = repository.writable_session(MAIN_BRANCH)
         to_icechunk(prepared, session, mode="w")
         snapshot_identifier = session.commit(message)
-        record = self._build_record(identifier, grid, prepared, title=title, existing=existing)
+        record = self._build_record(
+            identifier,
+            grid,
+            prepared,
+            title=title,
+            license=license,
+            attribution=attribution,
+            existing=existing,
+        )
         self._catalog.put(record)
         return self._write_result(record, snapshot_identifier)
 
@@ -494,6 +504,8 @@ class RasterRepository:
         dataset: xarray.Dataset,
         *,
         title: str | None,
+        license: str | None,
+        attribution: str | None,
         existing: CoverageDataset | None,
     ) -> CoverageDataset:
         """Build the catalog record of a newly written coverage."""
@@ -506,6 +518,8 @@ class RasterRepository:
             created_at=existing.created_at if existing is not None else now,
             updated_at=now,
             bbox=grid.bbox,
+            license=license or (existing.license if existing is not None else None),
+            attribution=attribution or (existing.attribution if existing is not None else None),
             publication=existing.publication if existing is not None else Publication(),
             grid=grid,
             variables=tuple(sorted(str(name) for name in dataset.data_vars)),

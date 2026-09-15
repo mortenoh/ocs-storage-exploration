@@ -144,3 +144,36 @@ def test_backend_description_defaults_hold_no_secret() -> None:
 
     assert description.available is True
     assert description.details == {}
+
+
+@pytest.mark.parametrize("value", ["CC-BY-4.0", "proprietary", "Apache-2.0 OR MIT", "GPL-2.0-only WITH Classpath-2.0"])
+def test_an_spdx_licence_is_accepted(value: str) -> None:
+    record = build_coverage().model_copy(update={"license": value})
+
+    assert CoverageDataset.model_validate(record.model_dump()).license == value
+
+
+@pytest.mark.parametrize("value", ["Creative Commons Attribution 4.0", "", "  ", "cc by/4.0"])
+def test_free_text_is_refused_as_a_licence(value: str) -> None:
+    payload = build_coverage().model_dump()
+    payload["license"] = value
+
+    with pytest.raises(ValidationError):
+        CoverageDataset.model_validate(payload)
+
+
+def test_a_blank_attribution_is_recorded_as_absent() -> None:
+    payload = build_coverage().model_dump()
+    payload["attribution"] = "  Open Climate Service  "
+
+    assert CoverageDataset.model_validate(payload).attribution == "Open Climate Service"
+
+    payload["attribution"] = "   "
+    assert CoverageDataset.model_validate(payload).attribution is None
+
+
+def test_the_licence_and_attribution_default_to_absent() -> None:
+    coverage = build_coverage()
+
+    assert coverage.license is None
+    assert coverage.attribution is None

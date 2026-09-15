@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from ocs_storage_exploration import __version__
-from ocs_storage_exploration.api import backends, datasets, health, raster, vector
+from ocs_storage_exploration.api import backends, datasets, health, raster, stac, vector
 from ocs_storage_exploration.settings import Settings, get_settings
 from ocs_storage_exploration.storage.errors import StorageError
 from ocs_storage_exploration.storage.service import StorageService
@@ -56,4 +56,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(datasets.router)
     application.include_router(raster.router)
     application.include_router(vector.router)
+    application.include_router(stac.router)
     return application

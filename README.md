@@ -20,6 +20,21 @@ make run
 curl http://127.0.0.1:8000/health
 ```
 
+The service answers a JSON API under `/api/v1` and a STAC catalog under `/stac`:
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /health` | Report the version and the active backend |
+| `GET /api/v1/backends` | Describe the active backend and every registered scheme, without secrets |
+| `GET /api/v1/datasets` | List catalog records, optionally filtered by item type |
+| `GET`, `DELETE /api/v1/datasets/{id}` | Read or delete one record, whichever engine owns the bytes |
+| `POST /api/v1/raster/{id}`, `/append`, `/publish` | Write, extend and publish a coverage |
+| `GET /api/v1/raster/{id}/query`, `/versions` | Summarise a window; list the snapshots |
+| `POST /api/v1/vector/{id}`, `/publish` | Write and publish a version of a collection |
+| `GET /api/v1/vector/{id}/features` | Read features by envelope, clause and column |
+| `GET /stac` | STAC landing page with `conformsTo` and one child link per dataset |
+| `GET /stac/collections`, `/stac/collections/{id}` | Every record, or one, projected onto a STAC Collection |
+
 Copy `.env.example` to `.env` to change the backend, the data directory or the guard thresholds. Every setting is
 read from an `OCS_STORAGE_` environment variable, and nested object storage settings use a double underscore, for
 example `OCS_STORAGE_S3__ENDPOINT_URL`.

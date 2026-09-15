@@ -193,3 +193,43 @@ def test_write_refuses_to_take_over_a_raster_record(
 
     with pytest.raises(ItemTypeMismatchError):
         store.write(COLLECTION, sample_features, identifier_property="id")
+
+
+def test_the_licence_and_attribution_survive_a_second_write(
+    storage_backend: StorageBackend, catalog: ObjectCatalog, settings: Settings, sample_features: geopandas.GeoDataFrame
+) -> None:
+    store = VectorCollectionStore(storage_backend, catalog, settings)
+    store.write(
+        COLLECTION,
+        sample_features,
+        identifier_property="id",
+        license="CC-BY-4.0",
+        attribution="Statistics Norway",
+    )
+
+    store.write(COLLECTION, sample_features.iloc[:4], identifier_property="id")
+    record = catalog.require(COLLECTION)
+
+    assert isinstance(record, FeatureDataset)
+    assert record.license == "CC-BY-4.0"
+    assert record.attribution == "Statistics Norway"
+
+
+def test_a_later_write_can_replace_the_licence_and_attribution(
+    storage_backend: StorageBackend, catalog: ObjectCatalog, settings: Settings, sample_features: geopandas.GeoDataFrame
+) -> None:
+    store = VectorCollectionStore(storage_backend, catalog, settings)
+    store.write(COLLECTION, sample_features, identifier_property="id", license="CC-BY-4.0", attribution="First")
+
+    store.write(
+        COLLECTION,
+        sample_features.iloc[:4],
+        identifier_property="id",
+        license="proprietary",
+        attribution="Second",
+    )
+    record = catalog.require(COLLECTION)
+
+    assert isinstance(record, FeatureDataset)
+    assert record.license == "proprietary"
+    assert record.attribution == "Second"

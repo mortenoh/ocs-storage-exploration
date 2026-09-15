@@ -83,6 +83,15 @@ class VectorReadHandle:
 
 
 @dataclass(frozen=True, slots=True)
+class VectorTableSchema:
+    """Row count and column types of one version of a collection, as its Parquet footer records them."""
+
+    version: int
+    row_count: int
+    column_types: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
 class ParquetSource:
     """Resolved Parquet location: either a filesystem path or the object bytes buffered in memory."""
 
@@ -109,6 +118,11 @@ class ParquetSource:
     def row_count(self) -> int:
         """Return how many rows the Parquet source holds."""
         return int(self._parquet_file().metadata.num_rows)
+
+    def schema_and_row_count(self) -> tuple[pyarrow.Schema, int]:
+        """Return the Arrow schema and the row count of the Parquet source from one footer read."""
+        parquet_file = self._parquet_file()
+        return parquet_file.schema_arrow, int(parquet_file.metadata.num_rows)
 
     def read(self, **keywords: Any) -> geopandas.GeoDataFrame:
         """Read the Parquet source into a GeoDataFrame."""
@@ -195,6 +209,8 @@ class VectorCollectionStore:
         *,
         identifier_property: str,
         title: str | None = None,
+        license: str | None = None,
+        attribution: str | None = None,
         selectable_columns: Sequence[str] = (),
         publish: bool = False,
     ) -> VectorWriteResult:
@@ -209,6 +225,8 @@ class VectorCollectionStore:
             prepared,
             identifier_property=identifier_property,
             title=title,
+            license=license,
+            attribution=attribution,
             selectable_columns=declared,
         )
         self._catalog.put(record)
@@ -229,6 +247,8 @@ class VectorCollectionStore:
         identifier_property: str,
         crs: str = DEFAULT_CRS,
         title: str | None = None,
+        license: str | None = None,
+        attribution: str | None = None,
         selectable_columns: Sequence[str] = (),
         publish: bool = False,
     ) -> VectorWriteResult:
@@ -239,6 +259,8 @@ class VectorCollectionStore:
             frame,
             identifier_property=identifier_property,
             title=title,
+            license=license,
+            attribution=attribution,
             selectable_columns=selectable_columns,
             publish=publish,
         )
@@ -328,6 +350,18 @@ class VectorCollectionStore:
             except StorageAddressError:
                 continue
         return sorted(found)
+
+    def table_schema(self, collection_identifier: str, *, version: int | None = None) -> VectorTableSchema:
+        """Describe one version of a collection from its Parquet footer alone, reading no row group."""
+        identifier = validate_dataset_identifier(collection_identifier)
+        resolved = self._resolve_version(identifier, version)
+        source = self._parquet_source(self._backend.address(vector_data_key(identifier, resolved)))
+        schema, row_count = source.schema_and_row_count()
+        return VectorTableSchema(
+            version=resolved,
+            row_count=row_count,
+            column_types={str(field.name): str(field.type) for field in schema},
+        )
 
     def current_version(self, collection_identifier: str) -> int | None:
         """Return the published version of a collection, or None when nothing is published."""
@@ -436,6 +470,8 @@ class VectorCollectionStore:
         *,
         identifier_property: str,
         title: str | None,
+        license: str | None,
+        attribution: str | None,
         selectable_columns: tuple[str, ...],
     ) -> FeatureDataset:
         """Build the catalog record describing the collection after a write, keeping what an earlier record held."""
@@ -457,6 +493,8 @@ class VectorCollectionStore:
             created_at=existing.created_at if existing is not None else written_at,
             updated_at=written_at,
             bbox=frame_bounding_box(frame),
+            license=license or (existing.license if existing is not None else None),
+            attribution=attribution or (existing.attribution if existing is not None else None),
             publication=existing.publication if existing is not None else Publication(),
             crs=crs_identifier(frame.crs),
             features=detail,

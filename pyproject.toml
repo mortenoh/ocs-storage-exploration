@@ -36,6 +36,7 @@ dependencies = [
     "pydantic>=2.12",
     "pydantic-settings>=2.15",
     "pyproj>=3.7",
+    "pystac>=1.10",
     "shapely>=2.1",
     "uvicorn[standard]>=0.41",
     "xarray>=2026.7",

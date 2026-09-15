@@ -40,6 +40,9 @@ took. Start with the [problem statement](research/problem-statement.md).
   rollback is the same call with an older target.
 - A synthetic raster and vector round trip over HTTP, so the model can be
   exercised without any OCS data.
+- A STAC catalog at `/stac` that is a projection of the same records rather than
+  a second index: coverages with the datacube extension, feature collections
+  with the table extension, and only what is published.
 
 ## Running it
 
@@ -62,15 +65,18 @@ backend is active — the backend description never contains a secret. The raste
 lifecycle is create, append, query with a bounding box, publish, list versions,
 roll back. The vector lifecycle is create from a GeoJSON feature collection,
 query by bounding box and attribute, publish. Both are deleted through
-`DELETE /api/v1/datasets/{id}`.
+`DELETE /api/v1/datasets/{id}` and both are readable as STAC at `/stac`,
+`/stac/collections` and `/stac/collections/{id}`.
 
 ## Concepts and guides
 
-Two pages explain the model as built rather than as designed:
+Three pages explain the model as built rather than as designed:
 [versioning](concepts/versioning.md) covers Icechunk snapshots, GeoParquet
-version directories and the one publish vocabulary over both, and
+version directories and the one publish vocabulary over both,
 [backends and key layout](concepts/backends-and-layout.md) covers the three
-handles a backend yields, the `OCS_STORAGE_` settings and the key layout on S3.
+handles a backend yields, the `OCS_STORAGE_` settings and the key layout on S3,
+and [the STAC catalog](concepts/stac-catalog.md) covers the projection of a
+record onto a Collection and why only published versions are advertised.
 
 Two more are meant to be followed with a terminal open: the
 [API walkthrough](guides/api-walkthrough.md) exercises every endpoint with

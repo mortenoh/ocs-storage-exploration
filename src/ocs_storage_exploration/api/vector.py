@@ -46,6 +46,8 @@ async def create_vector(
         identifier_property=request.identifier_property,
         crs=request.crs,
         title=request.title,
+        license=request.license,
+        attribution=request.attribution,
         selectable_columns=request.selectable_columns,
         publish=request.publish,
     )

@@ -3,18 +3,43 @@
 from __future__ import annotations
 
 import math
+import re
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated, Literal, Self
+from typing import Annotated, Final, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ocs_storage_exploration.storage.addresses import StorageScheme
+
+# A loose shape check rather than a registry lookup: one SPDX-style identifier, or several joined
+# by the SPDX operators. It accepts "CC-BY-4.0" and "proprietary" and refuses a sentence of prose,
+# which is the only mistake worth catching before the value reaches a STAC client.
+LICENSE_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9.+-]*(?: (?:AND|OR|WITH) [A-Za-z0-9][A-Za-z0-9.+-]*)*$",
+)
 
 
 def current_timestamp() -> datetime:
     """Return the current timezone-aware UTC timestamp."""
     return datetime.now(UTC)
+
+
+def normalise_license(value: str | None) -> str | None:
+    """Trim a licence identifier and refuse anything that is not an SPDX identifier or expression."""
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if not LICENSE_PATTERN.match(cleaned):
+        raise ValueError(f"license must be an SPDX identifier or expression, or 'proprietary': {value!r}")
+    return cleaned
+
+
+def normalise_attribution(value: str | None) -> str | None:
+    """Trim an attribution string, treating a blank one as absent."""
+    if value is None:
+        return None
+    return value.strip() or None
 
 
 class ItemType(StrEnum):
@@ -133,7 +158,21 @@ class DatasetBase(BaseModel):
     created_at: datetime = Field(default_factory=current_timestamp)
     updated_at: datetime = Field(default_factory=current_timestamp)
     bbox: BoundingBox | None = None
+    license: str | None = None
+    attribution: str | None = None
     publication: Publication = Field(default_factory=Publication)
+
+    @field_validator("license")
+    @classmethod
+    def validate_license(cls, value: str | None) -> str | None:
+        """Refuse a licence that is neither an SPDX identifier nor an SPDX expression."""
+        return normalise_license(value)
+
+    @field_validator("attribution")
+    @classmethod
+    def validate_attribution(cls, value: str | None) -> str | None:
+        """Trim the attribution string, treating a blank one as absent."""
+        return normalise_attribution(value)
 
 
 class CoverageDataset(DatasetBase):

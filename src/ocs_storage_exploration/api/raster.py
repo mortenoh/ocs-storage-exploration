@@ -39,6 +39,8 @@ async def create_raster(
         grid,
         request.to_cube(grid),
         title=request.title,
+        license=request.license,
+        attribution=request.attribution,
         overwrite=request.overwrite,
     )
     if not request.publish:
