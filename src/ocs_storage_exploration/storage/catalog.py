@@ -3,25 +3,23 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import TYPE_CHECKING
+from typing import Final
 
 import obstore
-from obstore.exceptions import PreconditionError
-from obstore.store import ObjectStore
 from pydantic import TypeAdapter
 
 from ocs_storage_exploration.storage.addresses import StorageAddress
-from ocs_storage_exploration.storage.errors import DatasetNotFoundError, PublicationConflictError
+from ocs_storage_exploration.storage.errors import DatasetNotFoundError
 from ocs_storage_exploration.storage.keys import (
     CATALOG_PREFIX,
     catalog_record_key,
     dataset_identifier_from_catalog_key,
 )
 from ocs_storage_exploration.storage.models import Dataset, ItemType
+from ocs_storage_exploration.storage.objects import replace_object
 from ocs_storage_exploration.storage.protocols import StorageBackend
 
-if TYPE_CHECKING:
-    from obstore import PutResult
+RECORD_LABEL: Final[str] = "dataset record"
 
 DATASET_ADAPTER: TypeAdapter[Dataset] = TypeAdapter(Dataset)
 
@@ -53,7 +51,7 @@ class ObjectCatalog:
         if known_etag is None:
             result = obstore.put(store, key, payload)
         else:
-            result = self._conditional_put(store, key, payload, known_etag)
+            result = replace_object(store, key, payload, known_etag, label=RECORD_LABEL)
         self._remember_etag(identifier, result.get("e_tag"))
 
     def get(self, identifier: str) -> Dataset | None:
@@ -113,24 +111,3 @@ class ObjectCatalog:
             self._known_etags.pop(identifier, None)
         else:
             self._known_etags[identifier] = etag
-
-    def _conditional_put(self, store: ObjectStore, key: str, payload: bytes, etag: str) -> PutResult:
-        """Write a record only while it still carries the etag this catalog last saw."""
-        try:
-            return obstore.put(store, key, payload, mode={"e_tag": etag})
-        except PreconditionError as error:
-            raise PublicationConflictError(f"dataset record {key!r} changed since it was read") from error
-        except FileNotFoundError as error:
-            raise PublicationConflictError(f"dataset record {key!r} was deleted since it was read") from error
-        except NotImplementedError:
-            self._assert_unchanged(store, key, etag)
-            return obstore.put(store, key, payload)
-
-    def _assert_unchanged(self, store: ObjectStore, key: str, etag: str) -> None:
-        """Emulate compare-and-swap for stores without conditional writes, which is not atomic."""
-        try:
-            current = obstore.head(store, key)
-        except FileNotFoundError as error:
-            raise PublicationConflictError(f"dataset record {key!r} was deleted since it was read") from error
-        if current.get("e_tag") != etag:
-            raise PublicationConflictError(f"dataset record {key!r} changed since it was read")

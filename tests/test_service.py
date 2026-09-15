@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 from datetime import datetime
+from pathlib import Path
 
 import geopandas
 import pytest
@@ -74,15 +75,16 @@ def test_describe_backends_reports_the_active_backend_first(storage_service: Sto
     assert all(description.details["status"] == INACTIVE_BACKEND_STATUS for description in descriptions[1:])
 
 
-def test_describe_backends_never_touches_the_credentials_of_an_inactive_scheme(settings: Settings) -> None:
-    configured = settings.model_copy(
-        update={
-            "s3": ObjectStorageSettings(
-                bucket="ocs-exploration",
-                access_key_id="rustfsadmin",
-                secret_access_key=SecretStr(SECRET_VALUE),
-            ),
-        },
+def test_describe_backends_never_touches_the_credentials_of_an_inactive_scheme(tmp_path: Path) -> None:
+    # The filesystem backend is named explicitly so that s3 is always the inactive scheme here.
+    configured = Settings(
+        backend=StorageScheme.FILE,
+        data_directory=tmp_path / "data",
+        s3=ObjectStorageSettings(
+            bucket="ocs-exploration",
+            access_key_id="rustfsadmin",
+            secret_access_key=SecretStr(SECRET_VALUE),
+        ),
     )
     service = StorageService.from_settings(configured)
 

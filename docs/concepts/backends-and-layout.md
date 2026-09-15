@@ -11,7 +11,7 @@ Changing `OCS_STORAGE_BACKEND` is the whole migration.
 | --- | --- | --- |
 | `file` | `FilesystemStorageBackend` | Complete; everything below one local directory |
 | `memory` | `MemoryStorageBackend` | Complete; objects and repositories live in the process |
-| `s3` | `S3StorageBackend` | Stub in this pass: full constructor, honest refusal |
+| `s3` | `S3StorageBackend` | Complete; one bucket, one base prefix, verified against rustfs |
 
 `BaseStorageBackend` implements the parts that do not depend on the scheme:
 building an address below the base prefix, `exists`, `list_keys`, and
@@ -19,11 +19,27 @@ building an address below the base prefix, `exists`, `list_keys`, and
 maps a scheme to a factory, so a backend is selected by configuration and never
 by an import in an engine.
 
-The S3 backend holds a complete configuration and answers `describe()` with
-`available: false`; every operation that would touch S3 raises
-`BackendNotSupportedError`, which the API reports as 501. It is listed by
-`GET /api/v1/backends` so a deployment can see that the scheme is registered
-without discovering the gap at write time.
+The S3 backend builds all three handles from one settings block and caches the
+two that are per-bucket rather than per-address. `list_keys` and `delete_prefix`
+are inherited from `BaseStorageBackend` unchanged, which is the point of keying
+the obstore store on the bucket with no prefix of its own: an object key is the
+same string for all three libraries and for all three backends.
+
+One settings block, three translations:
+
+| Setting | Icechunk | obstore | pyarrow |
+| --- | --- | --- | --- |
+| `endpoint_url` | `endpoint_url` | `config["endpoint"]` | `endpoint_override` plus `scheme` |
+| `allow_http` | `allow_http` | `client_options={"allow_http": ...}` | `scheme="http"` |
+| `force_path_style` | `force_path_style` | `virtual_hosted_style_request=False` | automatic once `endpoint_override` is set |
+| `anonymous` | `anonymous` | `config["skip_signature"]` | `anonymous=True` |
+| `access_key_id`, `secret_access_key`, `session_token` | same names | `config` keys | `access_key`, `secret_key`, `session_token` |
+
+`icechunk_storage(address)` returns `icechunk.s3_storage(bucket=..., prefix=address.key, ...)`,
+so every repository gets its own non-empty prefix, and `parquet_path(address)`
+is `"{bucket}/{key}"`, which is the only shape `pyarrow.fs.S3FileSystem`
+accepts. `describe()` reports the bucket, the region, the endpoint, the
+addressing style and whether credentials were configured, and never a secret.
 
 ## Three handles, one address
 
@@ -48,9 +64,25 @@ Each part of the storage package uses exactly what it needs:
 | `VectorCollectionStore` | `parquet_filesystem` and `parquet_path` to write and read Parquet, falling back to obstore plus a `pyarrow.BufferReader` when the filesystem is `None`; obstore for the `current.json` pointer and for listing versions |
 | `ObjectCatalog` | obstore only: `put` with etag compare-and-swap, `get`, `delete`, `list` |
 
+The catalogue record and the vector pointer are both written through
+`storage/objects.py`, which is the one place that knows how a conditional PUT
+fails: `AlreadyExistsError` and `PreconditionError` become
+`PublicationConflictError`, and the non-atomic head-then-put emulation is
+reached only on obstore's `LocalStore`. Any other store that reports
+`NotImplementedError` for a conditional write raises `BackendNotSupportedError`
+rather than quietly losing the guarantee.
+
 The memory backend returns `None` from `parquet_filesystem()`, which is why the
 vector engine has the buffered path at all. That path is not a test-only
 branch: it is also what an object store without a pyarrow filesystem would use.
+
+One asymmetry between the filesystem and the two object stores is worth naming,
+because it cost a debugging session. `GeoDataFrame.to_parquet` will not create
+the version directory on a local filesystem, so the vector engine creates it
+first — but only when the Parquet filesystem is a `LocalFileSystem`. On S3 the
+same `create_dir` call materialises a listable entry per path segment that a
+list-then-delete prefix sweep cannot remove, which left deleted collections
+half-alive. An object store has no directories, so it is not asked to make one.
 
 ## Settings
 
@@ -120,14 +152,15 @@ two sets of repositories and two sets of collections apart with no key ever
 colliding, because the base prefix is the first segment of every key the service
 builds. The same trick separates a test run from real data.
 
-`make s3-up` starts the rustfs endpoint from `compose.yml`, which pre-creates
-the default bucket (`OCS_STORAGE_S3__BUCKET`, `ocs-storage-exploration` unless
-overridden) before starting the server, so there is no bucket creation step in
-the service itself. The S3 API is on port 9000 and the console on port 9001.
+`compose.yml` carries the rustfs endpoint, which pre-creates the default bucket
+(`OCS_STORAGE_S3__BUCKET`, `ocs-storage-exploration` unless overridden) before
+starting the server, so there is no bucket creation step in the service itself.
+The S3 API is on port 9000 and the console on port 9001.
 
-Because the S3 backend still refuses every operation in this pass, the endpoint
-is there for the `s3`-marked tests and for the second pass rather than for
-running the service against S3 today. obstore and Icechunk reach S3 through Rust
-and bypass botocore, so `moto` cannot intercept those requests and a real
-endpoint is the only honest test; see
-[testing S3 locally](../research/testing-s3-locally.md).
+`make test-s3` starts it, runs the `s3`-marked tests against it and stops it
+again; `make docker-run-s3` runs the service itself on the S3 backend next to
+rustfs, in the foreground, so Ctrl-C stops both. obstore and Icechunk reach S3
+through Rust and bypass botocore, so `moto` cannot intercept those requests and
+a real endpoint is the only honest test; see
+[testing S3 locally](../research/testing-s3-locally.md) for what rustfs was
+observed to do.

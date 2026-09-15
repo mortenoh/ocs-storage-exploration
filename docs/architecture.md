@@ -44,12 +44,12 @@ is a plausible second implementation and a second raster repository is not.
 that no engine constructs a path. Every key a backend ever sees came from one
 module that validates identifiers and rejects traversal.
 
-Backends resolve one address into three handles. The filesystem and memory
-backends are complete; the S3 backend has its constructor and an honest
-`describe(available=False)`, and every other method raises
-`BackendNotSupportedError` until the second pass fills it in.
+Backends resolve one address into three handles. All three are complete: the
+filesystem and memory backends, and the S3 backend, which builds the Icechunk
+storage, the obstore store and the pyarrow filesystem from one settings block
+and is exercised by the whole test suite against rustfs.
 [Backends and key layout](concepts/backends-and-layout.md) has the handle table,
-the settings and the S3 key layout.
+the settings-to-client translation, and the S3 key layout.
 
 ## Decisions
 

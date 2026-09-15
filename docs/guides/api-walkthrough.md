@@ -259,6 +259,71 @@ curl -s -o /dev/null -w '%{http_code}\n' $BASE/api/v1/datasets/temperature-demo
 The record is deleted before the bytes, so a failure halfway leaves orphan
 objects that a prefix listing finds rather than a record that points at nothing.
 
+## The same walkthrough against rustfs
+
+Nothing above changes on S3. The only difference is which backend the service
+was started with, which is the point of the whole design.
+
+```bash
+make docker-run-s3      # rustfs plus the service on the s3 backend, in the foreground
+export BASE=http://127.0.0.1:8001
+```
+
+`docker-run-s3` runs the `s3` compose profile in the foreground, so Ctrl-C stops
+both containers; `make docker-down` cleans up a stack that was interrupted. The
+service is published on 8001 so it never collides with a local `make run` or
+with the filesystem profile on 8000. To run it outside Docker instead, point the
+same settings at the endpoint by hand:
+
+```bash
+docker compose up -d --wait rustfs
+OCS_STORAGE_BACKEND=s3 \
+OCS_STORAGE_S3__BUCKET=ocs-storage-exploration \
+OCS_STORAGE_S3__ENDPOINT_URL=http://127.0.0.1:9000 \
+OCS_STORAGE_S3__REGION=us-east-1 \
+OCS_STORAGE_S3__ACCESS_KEY_ID=rustfsadmin \
+OCS_STORAGE_S3__SECRET_ACCESS_KEY=rustfsadmin \
+OCS_STORAGE_S3__ALLOW_HTTP=true \
+OCS_STORAGE_S3__FORCE_PATH_STYLE=true \
+  uv run uvicorn ocs_storage_exploration.main:create_app --factory --port 8765
+```
+
+`GET /health` and `GET /api/v1/backends` report the active scheme, and the
+backend description names the endpoint but never a secret:
+
+```json
+{"status":"ok","version":"0.1.0","backend":"s3"}
+{"scheme":"s3","root":"ocs-storage-exploration","base_prefix":"ocs","available":true,
+ "supports_parquet_filesystem":true,
+ "details":{"bucket":"ocs-storage-exploration","region":"us-east-1",
+            "endpoint_url":"http://rustfs:9000","addressing_style":"path",
+            "allow_http":"true","anonymous":"false","has_credentials":"true"}}
+```
+
+Creating and publishing one coverage and one collection through exactly the
+calls above leaves this in the bucket:
+
+```text
+ocs/catalog/datasets/districts-demo.json
+ocs/catalog/datasets/temperature-demo.json
+ocs/raster/temperature-demo/repo
+ocs/raster/temperature-demo/snapshots/1CECHNKREP0F1RSTCMT0
+ocs/raster/temperature-demo/snapshots/36X40SW4JZCK9PQV43N0
+ocs/raster/temperature-demo/transactions/1CECHNKREP0F1RSTCMT0
+ocs/raster/temperature-demo/transactions/36X40SW4JZCK9PQV43N0
+ocs/raster/temperature-demo/manifests/12JK7D21GHC6HYNM63H0
+ocs/raster/temperature-demo/chunks/QA9BX124QHESED1QEAEG
+ocs/vector/districts-demo/current.json
+ocs/vector/districts-demo/versions/v00001/data.parquet
+```
+
+That is the layout
+[backends and key layout](../concepts/backends-and-layout.md) specifies, keys
+rather than directories, with the Icechunk repository laid out by Icechunk
+itself below its own prefix. The record addresses come back as
+`s3://ocs-storage-exploration/ocs/vector/districts-demo` rather than a path, so
+a record read on another host still points at the same bytes.
+
 ## Error shape
 
 Every failure is answered by one exception handler in the same shape, with the
@@ -274,5 +339,5 @@ curl -s $BASE/api/v1/datasets/absent | jq -c .
 
 400 is a malformed address, bounding box or clause, 404 a missing dataset or
 snapshot, 409 an existing identifier or a lost compare-and-swap, 413 a guard
-refusing an oversized read, 422 a contract or identity violation, and 501 the
-S3 backend saying it is not implemented yet.
+refusing an oversized read, 422 a contract or identity violation, and 501 a
+backend refusing an operation it cannot support.

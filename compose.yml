@@ -1,5 +1,53 @@
 services:
+  # The service on the filesystem backend. Started by `make docker-run-file`, which runs it in
+  # the foreground so Ctrl-C stops the stack.
+  api:
+    profiles: ["file"]
+    build: .
+    container_name: ocs-storage-exploration-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      OCS_STORAGE_BACKEND: ${OCS_STORAGE_BACKEND:-file}
+      OCS_STORAGE_DATA_DIRECTORY: /app/data
+      OCS_STORAGE_BASE_PREFIX: ${OCS_STORAGE_BASE_PREFIX:-ocs}
+    volumes:
+      - ./data:/app/data
+
+  # The same image on the S3 backend, pointed at the rustfs service by its network alias.
+  # It is published on 8001 so it never collides with `api` or with a local `make run`.
+  api-s3:
+    profiles: ["s3"]
+    build: .
+    container_name: ocs-storage-exploration-api-s3
+    ports:
+      - "8001:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      OCS_STORAGE_BACKEND: s3
+      OCS_STORAGE_BASE_PREFIX: ${OCS_STORAGE_BASE_PREFIX:-ocs}
+      OCS_STORAGE_S3__BUCKET: ${OCS_STORAGE_S3__BUCKET:-ocs-storage-exploration}
+      OCS_STORAGE_S3__PREFIX: ${OCS_STORAGE_BASE_PREFIX:-ocs}
+      OCS_STORAGE_S3__REGION: ${OCS_STORAGE_S3__REGION:-us-east-1}
+      OCS_STORAGE_S3__ENDPOINT_URL: http://rustfs:9000
+      OCS_STORAGE_S3__ALLOW_HTTP: "true"
+      OCS_STORAGE_S3__FORCE_PATH_STYLE: "true"
+      OCS_STORAGE_S3__ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY:-rustfsadmin}
+      OCS_STORAGE_S3__SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY:-rustfsadmin}
+    depends_on:
+      rustfs:
+        condition: service_healthy
+
+  # The local S3-compatible endpoint. It is in the s3 and test profiles, and naming it on the
+  # command line (`docker compose up -d --wait rustfs`, which is what `make test-s3` does)
+  # enables its profile automatically, so the API containers stay down.
   rustfs:
+    profiles: ["s3", "test"]
     image: rustfs/rustfs:1.0.0-rc.6
     container_name: ocs-storage-exploration-rustfs
     entrypoint: |

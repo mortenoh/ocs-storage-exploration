@@ -152,5 +152,5 @@ def test_forgetting_etags_turns_the_next_write_into_an_overwrite(storage_backend
 def test_the_record_address_is_below_the_base_prefix(catalog: ObjectCatalog) -> None:
     address = catalog.record_address("temperature")
 
-    assert address.key == "ocs/catalog/datasets/temperature.json"
+    assert address.key == f"{catalog.backend.base_prefix}/catalog/datasets/temperature.json"
     assert catalog.backend is not None

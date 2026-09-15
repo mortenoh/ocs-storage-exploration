@@ -48,6 +48,7 @@ nav:
       - Inspecting the data: guides/inspecting-the-data.md
       - API walkthrough: guides/api-walkthrough.md
   - Architecture: architecture.md
+  - Roadmap: roadmap.md
   - API Reference: api-reference.md
 
 markdown_extensions:

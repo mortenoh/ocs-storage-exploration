@@ -76,18 +76,25 @@ src/ocs_storage_exploration/
     protocols.py      StorageBackend and Catalog protocols
     registry.py       scheme to backend factory registry
     catalog.py        ObjectCatalog over the backend object store
+    objects.py        conditional object writes shared by the catalog and the pointer
     backends/         filesystem, memory and S3 backends
     raster/           Icechunk and GeoZarr engine
     vector/           GeoParquet engine
-tests/                pytest suite, parametrised over the filesystem and memory backends
+tests/                pytest suite, parametrised over the filesystem, memory and s3 backends
 docs/                 mkdocs sources
 ```
 
 ## Testing
 
 - `make test` runs everything except the tests marked `s3`.
-- Run the S3 tests with `uv run pytest -m s3` against a live endpoint, for example
-  `make s3-up`.
+- `make test-s3` starts rustfs, runs everything marked `s3` against it and stops
+  rustfs again, including when a test fails.
+- The `s3` marker is not only on `tests/test_s3_*.py`: the `backend_scheme`
+  fixture is parametrised over the filesystem, memory and S3 backends, and the
+  S3 parameter carries the marker, so `pytest -m s3` runs the whole suite
+  against the live endpoint.
+- Never leave a container running. `make docker-run-file` and `make docker-run-s3`
+  run in the foreground; `make docker-down` cleans up after an interrupted run.
 - obstore and Icechunk talk to S3 through Rust, bypassing botocore, so moto and
   `mock_aws` cannot intercept their requests. Use the local rustfs endpoint instead.
 - Never disable Icechunk conditional writes to make a test pass.

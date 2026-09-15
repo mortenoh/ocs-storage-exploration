@@ -114,10 +114,28 @@ Flat, prefix-addressable, no directory semantics assumed.
 | `records.json` under portalocker | `ObjectCatalog`, one object per dataset, etag CAS |
 | `gdf.to_parquet(path)` at `openeo/jobs.py:1585` | `VectorCollectionStore.write(...)` |
 
+## Settled since
+
+- The S3 backend is implemented and the whole suite runs on it against rustfs,
+  not only a handful of backend tests. Conditional PUT works on both clients:
+  obstore answers `AlreadyExistsError` and `PreconditionError`, Icechunk answers
+  `ConflictError` on a stale `from_snapshot_id`, and nothing falls back to the
+  non-atomic emulation, which is now reachable only on obstore's `LocalStore`.
+- The compare-and-swap asymmetry between the catalogue record and the vector
+  pointer is gone. Both go through one module, `storage/objects.py`, with the
+  same create-if-absent and etag-replace pair and the same conflict mapping;
+  the duplicated private helpers on `ObjectCatalog` and `VectorCollectionStore`
+  were deleted. The remaining difference is inherent rather than structural: the
+  raster side swaps an Icechunk branch and the vector side swaps a pointer
+  object, and both are read-then-swap with a real compare-and-swap closing the
+  window.
+
 ## Open questions
 
-- moto is unproven against Icechunk; a local rustfs endpoint is the S3 test target,
-  with MinIO as the fallback if rustfs shows a conformance gap.
+- moto is still unproven against Icechunk. rustfs showed no conformance gap, so
+  nothing forced the question, and MinIO stayed unused as the fallback. moto's
+  server mode remains the only variant that could work at all, and nobody has
+  run Icechunk against it.
 - Snapshot expiry bounds rollback depth. `expire_snapshots` must be constrained
   to keep every published snapshot reachable, and that policy is unwritten.
 - The catalogue is one object per dataset. At what collection size a derived

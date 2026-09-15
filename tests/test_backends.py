@@ -8,6 +8,7 @@ import icechunk
 import obstore
 import pyarrow.fs
 import pytest
+from obstore.store import S3Store
 from pydantic import SecretStr
 
 from ocs_storage_exploration.settings import ObjectStorageSettings, Settings
@@ -47,7 +48,7 @@ def test_backends_satisfy_the_protocol(storage_backend: StorageBackend) -> None:
 def test_addresses_start_at_the_base_prefix(storage_backend: StorageBackend) -> None:
     address = storage_backend.address("catalog/datasets", "one.json")
 
-    assert address.key == "ocs/catalog/datasets/one.json"
+    assert address.key == f"{storage_backend.base_prefix}/catalog/datasets/one.json"
     assert address.scheme is storage_backend.scheme
     assert address.as_uri().startswith(f"{storage_backend.scheme.value}://")
 
@@ -92,7 +93,7 @@ def test_describe_reports_the_backend(storage_backend: StorageBackend) -> None:
 
     assert description.scheme is storage_backend.scheme
     assert description.root == storage_backend.root
-    assert description.base_prefix == "ocs"
+    assert description.base_prefix == storage_backend.base_prefix
     assert description.available is True
 
 
@@ -122,35 +123,32 @@ def test_filesystem_backend_uses_the_local_parquet_filesystem(tmp_path: Path) ->
     assert Path(backend.root).is_dir()
 
 
-def test_s3_backend_describes_itself_as_unavailable_without_secrets() -> None:
+def test_s3_backend_describes_itself_without_secrets() -> None:
     description = build_s3_backend().describe()
 
     assert description.scheme is StorageScheme.S3
     assert description.root == "ocs-exploration"
-    assert description.available is False
+    assert description.available is True
+    assert description.supports_parquet_filesystem is True
+    assert description.details["bucket"] == "ocs-exploration"
+    assert description.details["region"] == "eu-north-1"
+    assert description.details["endpoint_url"] == "http://localhost:9000"
+    assert description.details["addressing_style"] == "path"
+    assert description.details["allow_http"] == "true"
     assert description.details["has_credentials"] == "true"
-    assert description.details["status"] == "not implemented"
     assert SECRET_VALUE not in description.model_dump_json()
 
 
-def test_s3_backend_refuses_every_operation() -> None:
+def test_s3_backend_builds_and_caches_its_handles_without_reaching_the_endpoint() -> None:
     backend = build_s3_backend()
-    address = backend.address("raster/one")
+    address = backend.address("vector/one", "data.parquet")
 
-    with pytest.raises(BackendNotSupportedError):
-        backend.icechunk_storage(address)
-    with pytest.raises(BackendNotSupportedError):
-        backend.object_store()
-    with pytest.raises(BackendNotSupportedError):
-        backend.parquet_filesystem()
-    with pytest.raises(BackendNotSupportedError):
-        backend.parquet_path(address)
-    with pytest.raises(BackendNotSupportedError):
-        backend.exists(address)
-    with pytest.raises(BackendNotSupportedError):
-        backend.list_keys(address)
-    with pytest.raises(BackendNotSupportedError):
-        backend.delete_prefix(address)
+    assert isinstance(backend.icechunk_storage(backend.address("raster/one")), icechunk.Storage)
+    assert isinstance(backend.object_store(), S3Store)
+    assert backend.object_store() is backend.object_store()
+    assert isinstance(backend.parquet_filesystem(), pyarrow.fs.S3FileSystem)
+    assert backend.parquet_filesystem() is backend.parquet_filesystem()
+    assert backend.parquet_path(address) == "ocs-exploration/ocs/vector/one/data.parquet"
 
 
 def test_s3_backend_needs_an_object_storage_block() -> None:

@@ -31,13 +31,36 @@ example `OCS_STORAGE_S3__ENDPOINT_URL`.
 | `make install` | Install every dependency including the optional extras |
 | `make lint` | Run ruff format, ruff check, mypy and pyright |
 | `make test` | Run the test suite, excluding the tests marked `s3` |
+| `make test-s3` | Start rustfs, run the `s3`-marked tests against it, then stop it again |
 | `make coverage` | Run the test suite with coverage reporting |
 | `make run` | Run the service with reload on `PORT` (default 8000) |
 | `make docs-serve` | Serve the documentation on `DOCS_PORT` (default 8001) |
 | `make docs-build` | Build the documentation site in strict mode |
-| `make s3-up` | Start the local rustfs S3-compatible object storage |
-| `make s3-down` | Stop the local rustfs S3-compatible object storage |
+| `make docker-build` | Build the service image for both compose profiles |
+| `make docker-run` | Alias for `make docker-run-file` |
+| `make docker-run-file` | Run the service on the filesystem backend on port 8000, in the foreground; Ctrl-C stops it |
+| `make docker-run-s3` | Run the service on the S3 backend with rustfs on port 8001, in the foreground; Ctrl-C stops it |
+| `make docker-down` | Stop and remove the containers of both profiles, after an interrupted run |
 | `make clean` | Remove caches and build output |
+
+No target leaves anything running. `make docker-run-file` and `make docker-run-s3`
+run `docker compose up` in the foreground, so Ctrl-C stops the stack, and
+`make docker-down` is the cleanup for a run that was interrupted some other way.
+`make test-s3` starts rustfs, runs the tests and stops rustfs again even when a
+test fails, and it reports pytest's exit code.
+
+## Running it in Docker
+
+```bash
+make docker-run-file    # http://127.0.0.1:8000, data in ./data
+make docker-run-s3      # http://127.0.0.1:8001, data in rustfs on http://127.0.0.1:9000
+```
+
+The image is built from `Dockerfile` with `uv sync --frozen --no-dev` and runs
+as a non-root user. `compose.yml` has two profiles: `file` runs the service on
+the filesystem backend with `./data` bind-mounted, and `s3` runs the same image
+on the S3 backend next to a rustfs endpoint. The two API services use different
+host ports so they never collide.
 
 ## Documentation
 

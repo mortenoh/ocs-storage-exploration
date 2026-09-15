@@ -7,9 +7,9 @@ rather than a redesign?
 This is a from-scratch FastAPI and pydantic service, not a fork of OCS. It
 implements one storage model covering both halves of the problem — raster
 datasets as Icechunk-backed GeoZarr and vector collections as versioned
-GeoParquet — over pluggable backends. Filesystem and memory backends work
-today; the S3 backend has its constructor and reports itself unavailable until
-the second pass.
+GeoParquet — over pluggable backends. All three backends work today: filesystem,
+memory and S3, the last of them verified against a local rustfs endpoint by the
+whole test suite rather than by a handful of backend tests.
 
 ## The question
 
@@ -47,12 +47,15 @@ took. Start with the [problem statement](research/problem-statement.md).
 make install      # uv sync --all-extras
 make run          # uvicorn on http://localhost:8000
 make test         # pytest, S3 tests skipped by default
+make test-s3      # start rustfs, run the S3-marked tests, stop rustfs again
 make docs         # build and serve these docs
 ```
 
-`make help` lists every target. `make lint` runs ruff, mypy and pyright;
-`make coverage` produces a coverage report; `make s3-up` starts a local rustfs
-endpoint for the S3-marked tests, which run with `pytest -m s3`.
+`make help` lists every target. `make lint` runs ruff, mypy and pyright and
+`make coverage` produces a coverage report. `make test-s3` is self-contained: it
+starts rustfs, runs everything marked `s3` against it and stops it again even
+when a test fails. `make docker-run-file` and `make docker-run-s3` run the
+service itself in a container, in the foreground, so Ctrl-C stops the stack.
 
 Once the service is up, `GET /health` and `GET /api/v1/backends` confirm which
 backend is active — the backend description never contains a secret. The raster
@@ -90,7 +93,8 @@ repo. It covers, in order:
 | [Publication without a rename](research/publication-without-rename.md) | Three publication mechanisms on five criteria |
 | [Testing S3 locally](research/testing-s3-locally.md) | rustfs, in-memory, and why moto cannot help |
 
-[Architecture](architecture.md) has the layer diagram and the decision table.
+[Architecture](architecture.md) has the layer diagram and the decision table,
+and [the roadmap](roadmap.md) has what is delivered and what is next.
 Every claim about OCS in these pages cites a `file:line` in
 `dhis2/open-climate-service` and was verified against the checkout rather than
 recalled. Where a number should be measured rather than asserted, the page says
@@ -98,7 +102,8 @@ so instead of guessing.
 
 ## Status
 
-First pass. The storage model, both engines, the filesystem and memory backends
-and the HTTP surface are implemented and tested. The S3 backend is a
-constructor and an honest refusal. Nothing here is a migration; it is the
-argument for one.
+Second pass. The storage model, both engines, all three backends and the HTTP
+surface are implemented and tested, and the whole suite also runs against a
+local rustfs endpoint. [The roadmap](roadmap.md) lists what is delivered and
+what would come next, starting with a STAC catalog over the same records.
+Nothing here is a migration; it is the argument for one.

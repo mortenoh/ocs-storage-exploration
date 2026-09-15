@@ -265,19 +265,39 @@ needed and will be refused as a type error.
 
 ## The S3 backend
 
-`make s3-up` starts the rustfs endpoint from `compose.yml`: the S3 API is on
-port 9000 and the browser console is on <http://127.0.0.1:9001>, where the same
-`ocs/catalog`, `ocs/raster` and `ocs/vector` prefixes appear as objects in the
-bucket. The credentials come from `RUSTFS_ACCESS_KEY` and `RUSTFS_SECRET_KEY`
-and default to `rustfsadmin`; `.env.example` has the matching
-`OCS_STORAGE_S3__` block.
+`make docker-run-s3` starts the rustfs endpoint from `compose.yml` next to the
+service: the S3 API is on port 9000 and the browser console is on
+<http://127.0.0.1:9001>, where the same `ocs/catalog`, `ocs/raster` and
+`ocs/vector` prefixes appear as objects in the bucket. The credentials come from
+`RUSTFS_ACCESS_KEY` and `RUSTFS_SECRET_KEY` and default to `rustfsadmin`;
+`.env.example` has the matching `OCS_STORAGE_S3__` block. `make test-s3` starts
+rustfs on its own, for the marked tests, and stops it again.
 
-The S3 backend of this service still refuses every operation with a 501 until
-the second pass, so today the console is useful for confirming the layout of
-objects written by other tools rather than by this service. The key layout is
-identical, because it comes from one module regardless of scheme, and
+The service writes to S3 for real, so the console shows the objects this service
+wrote. The key layout is identical, because it comes from one module regardless
+of scheme, and
 [backends and key layout](../concepts/backends-and-layout.md) explains why a
-dataset is isolated by prefix rather than by bucket.
+dataset is isolated by prefix rather than by bucket. The same objects can be
+listed from Python:
+
+```python
+import obstore
+from obstore.store import S3Store
+
+store = S3Store(
+    "ocs-storage-exploration",
+    config={
+        "endpoint": "http://127.0.0.1:9000",
+        "region": "us-east-1",
+        "access_key_id": "rustfsadmin",
+        "secret_access_key": "rustfsadmin",
+        "virtual_hosted_style_request": False,
+    },
+    client_options={"allow_http": True},
+)
+for item in obstore.list(store, "ocs").collect():
+    print(item["path"])
+```
 
 One filesystem detail: deleting a dataset deletes every object below its prefix,
 but obstore deletes objects rather than directories, so the empty

@@ -16,8 +16,6 @@ import pyarrow
 import pyarrow.fs
 import pyarrow.parquet
 import shapely
-from obstore.exceptions import AlreadyExistsError, PreconditionError
-from obstore.store import ObjectStore
 from pydantic import BaseModel
 from pyproj import CRS
 from shapely.geometry.base import BaseGeometry
@@ -28,7 +26,6 @@ from ocs_storage_exploration.storage.errors import (
     FeatureIdentityError,
     ItemTypeMismatchError,
     NothingToPublishError,
-    PublicationConflictError,
     SelectableColumnError,
     SnapshotNotFoundError,
     StorageAddressError,
@@ -52,12 +49,11 @@ from ocs_storage_exploration.storage.models import (
     VectorWriteResult,
     current_timestamp,
 )
+from ocs_storage_exploration.storage.objects import create_object, replace_object
 from ocs_storage_exploration.storage.protocols import Catalog, StorageBackend
 from ocs_storage_exploration.storage.vector.predicates import WhereClause, build_filters
 
 if TYPE_CHECKING:
-    from obstore import PutResult
-
     from ocs_storage_exploration.settings import Settings
 
 DEFAULT_CRS: Final[str] = "EPSG:4326"
@@ -66,6 +62,7 @@ GEOMETRY_ENCODING: Final[str] = "WKB"
 PARQUET_COMPRESSION: Final[str] = "zstd"
 BBOX_DENSIFY_SEGMENTS: Final[int] = 32
 POINTER_ENCODING: Final[str] = "utf-8"
+POINTER_LABEL: Final[str] = "pointer"
 
 
 class VectorCollectionPointer(BaseModel):
@@ -413,8 +410,11 @@ class VectorCollectionStore:
             frame.to_parquet(buffer, **options)
             obstore.put(self._backend.object_store(), address.key, buffer.getvalue())
             return
-        # to_parquet will not create the version directory itself on a local filesystem.
-        filesystem.create_dir(self._backend.parquet_path(address.parent()), recursive=True)
+        if isinstance(filesystem, pyarrow.fs.LocalFileSystem):
+            # to_parquet will not create the version directory itself on a local filesystem. An object
+            # store has no directories, and create_dir would leave a marker object behind that a prefix
+            # sweep cannot delete, so the call is made only where it is needed.
+            filesystem.create_dir(self._backend.parquet_path(address.parent()), recursive=True)
         frame.to_parquet(self._backend.parquet_path(address), filesystem=filesystem, **options)
 
     def _parquet_source(self, address: StorageAddress) -> ParquetSource:
@@ -560,39 +560,11 @@ class VectorCollectionStore:
         payload = pointer.model_dump_json().encode(POINTER_ENCODING)
         known_etag = self._pointer_etags.get(identifier)
         if known_etag is None:
-            result = self._create_pointer(store, key, payload)
+            result = create_object(store, key, payload, label=POINTER_LABEL)
         else:
-            result = self._replace_pointer(store, key, payload, known_etag)
+            result = replace_object(store, key, payload, known_etag, label=POINTER_LABEL)
         self._remember_pointer_etag(identifier, result.get("e_tag"))
         return pointer
-
-    def _create_pointer(self, store: ObjectStore, key: str, payload: bytes) -> PutResult:
-        """Create the pointer object, refusing to overwrite one a concurrent publication wrote first."""
-        try:
-            return obstore.put(store, key, payload, mode="create")
-        except AlreadyExistsError as error:
-            raise PublicationConflictError(f"pointer {key!r} was created by a concurrent publication") from error
-
-    def _replace_pointer(self, store: ObjectStore, key: str, payload: bytes, etag: str) -> PutResult:
-        """Replace the pointer object only while it still carries the etag this store last saw."""
-        try:
-            return obstore.put(store, key, payload, mode={"e_tag": etag})
-        except PreconditionError as error:
-            raise PublicationConflictError(f"pointer {key!r} changed since it was read") from error
-        except FileNotFoundError as error:
-            raise PublicationConflictError(f"pointer {key!r} was deleted since it was read") from error
-        except NotImplementedError:
-            self._assert_pointer_unchanged(store, key, etag)
-            return obstore.put(store, key, payload)
-
-    def _assert_pointer_unchanged(self, store: ObjectStore, key: str, etag: str) -> None:
-        """Emulate compare-and-swap for stores without conditional writes, which is not atomic."""
-        try:
-            current = obstore.head(store, key)
-        except FileNotFoundError as error:
-            raise PublicationConflictError(f"pointer {key!r} was deleted since it was read") from error
-        if current.get("e_tag") != etag:
-            raise PublicationConflictError(f"pointer {key!r} changed since it was read")
 
     def _remember_pointer_etag(self, identifier: str, etag: str | None) -> None:
         """Record or drop the etag last seen for the pointer object of one collection."""
