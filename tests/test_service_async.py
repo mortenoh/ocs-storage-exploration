@@ -256,4 +256,4 @@ def test_the_memory_backend_is_the_default_of_the_helper_settings() -> None:
     service = AsyncStorageService.from_settings(Settings(backend=StorageScheme.MEMORY))
 
     assert service.runner.limiter.total_tokens == 16
-    assert service.runner.timeout_seconds == 120.0
+    assert service.runner.timeout_seconds == 180.0
