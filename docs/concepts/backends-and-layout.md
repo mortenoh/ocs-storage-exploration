@@ -15,9 +15,9 @@ Changing `OCS_STORAGE_BACKEND` is the whole migration.
 
 `BaseStorageBackend` implements the parts that do not depend on the scheme:
 building an address below the base prefix, `exists`, `list_keys`, and
-`delete_prefix` as an obstore listing followed by a bulk delete. The registry
-maps a scheme to a factory, so a backend is selected by configuration and never
-by an import in an engine.
+`delete_prefix` as an obstore listing followed by a bulk delete. A plugin maps a
+scheme to a backend, so a backend is selected by configuration and never by an
+import in an engine.
 
 The S3 backend builds all three handles from one settings block and caches the
 two that are per-bucket rather than per-address. `list_keys` and `delete_prefix`
@@ -40,6 +40,80 @@ so every repository gets its own non-empty prefix, and `parquet_path(address)`
 is `"{bucket}/{key}"`, which is the only shape `pyarrow.fs.S3FileSystem`
 accepts. `describe()` reports the bucket, the region, the endpoint, the
 addressing style and whether credentials were configured, and never a secret.
+
+## Writing a backend plugin
+
+Backends are [pluginkit](https://winterop-com.github.io/pluginkit) plugins. The
+service declares three extension points on `StorageBackendSpecs` in
+`storage/plugins.py`, and a plugin is any object whose methods are marked with
+the matching `@extension`:
+
+| Extension point | Dispatch | Answer |
+| --- | --- | --- |
+| `storage_backend(settings, scheme)` | `firstresult` | The backend serving that scheme, or `None` |
+| `storage_backend_description(settings, scheme)` | `firstresult` | A `BackendDescription` built without touching a credential, or `None` |
+| `storage_schemes()` | collecting | The schemes this plugin provides |
+
+A plugin answers `None` for every scheme it does not own, so the three built-in
+plugins (`FilesystemBackendPlugin`, `MemoryBackendPlugin`, `S3BackendPlugin`)
+are three small classes next to the backends they build:
+
+```python
+from ocs_storage_exploration.storage.plugins import extension
+
+
+class GcsBackendPlugin:
+    """Provides the gs scheme."""
+
+    @extension
+    def storage_schemes(self) -> list[str]:
+        """Report the gs scheme."""
+        return ["gs"]
+
+    @extension
+    def storage_backend(self, settings: Settings, scheme: str) -> StorageBackend | None:
+        """Build the GCS backend, or None for another scheme."""
+        if scheme != "gs":
+            return None
+        return GcsStorageBackend.from_settings(settings)
+```
+
+`build_plugin_manager()` registers the built-ins and then calls
+`load_entrypoints("ocs_storage_exploration.plugins")`, so an installed
+distribution joins in by advertising itself:
+
+```toml
+[project.entry-points."ocs_storage_exploration.plugins"]
+gs = "ocs_storage_gcs:plugin"
+```
+
+The entry-point value resolves to the plugin object itself, and the entry-point
+name becomes the plugin name the manager registers it under. `examples/plugins/ocs-storage-null/`
+is a complete worked example: a separate package providing a `null` scheme that
+describes itself and refuses every operation. It is deliberately not installed
+by `make install`, because installing it would add `null` to every
+`GET /api/v1/backends` response of a development checkout;
+`tests/test_plugins.py` registers it in process and stubs
+`importlib.metadata.entry_points` instead.
+
+Three rules follow from the dispatch modes:
+
+- **First registered wins.** `storage_backend` is a `firstresult` extension
+  point, and the built-ins are registered before the entry points are loaded, so
+  a plugin claiming `file`, `memory` or `s3` never displaces the built-in. Two
+  external plugins claiming the same scheme are resolved by entry-point order.
+- **A scheme is a name, not an enum member.** `StorageScheme` still lists the
+  three built-in schemes, but a scheme is carried as a string matching
+  `[a-z][a-z0-9+.-]*`, so an external plugin can name its own. `build_backend`
+  is the single place that refuses a scheme no plugin provides, with
+  `BackendNotSupportedError`.
+- **Describing costs nothing.** `describe_backends` asks the plugin of every
+  inactive scheme to describe it, so listing the backends never creates a
+  directory, builds a client or reads a credential.
+
+The manager is built once per process by `default_plugin_manager()` and lives on
+the storage service as `service.plugin_manager`; `StorageService.from_settings`
+takes another one when a test needs an isolated set of plugins.
 
 ## Three handles, one address
 
@@ -102,7 +176,7 @@ bytes land:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `OCS_STORAGE_BACKEND` | `file` | Which scheme to build: `file`, `memory` or `s3` |
+| `OCS_STORAGE_BACKEND` | `file` | Which scheme to build: `file`, `memory`, `s3`, or any scheme a plugin provides |
 | `OCS_STORAGE_DATA_DIRECTORY` | `data` | Root directory of the filesystem backend |
 | `OCS_STORAGE_BASE_PREFIX` | `ocs` | Key prefix every address starts with |
 | `OCS_STORAGE_S3__*` | unset | The object storage block: `BUCKET`, `PREFIX`, `REGION`, `ENDPOINT_URL`, `ALLOW_HTTP`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, `SESSION_TOKEN`, `FORCE_PATH_STYLE`, `ANONYMOUS` |

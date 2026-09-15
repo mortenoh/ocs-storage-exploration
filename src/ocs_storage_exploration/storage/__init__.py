@@ -1,10 +1,13 @@
 """Unified storage abstraction covering raster and vector datasets over pluggable backends."""
 
-from ocs_storage_exploration.storage.addresses import StorageAddress, StorageScheme
+from ocs_storage_exploration.storage.addresses import SchemeName, StorageAddress, StorageScheme
 from ocs_storage_exploration.storage.backends import (
     BaseStorageBackend,
+    FilesystemBackendPlugin,
     FilesystemStorageBackend,
+    MemoryBackendPlugin,
     MemoryStorageBackend,
+    S3BackendPlugin,
     S3StorageBackend,
 )
 from ocs_storage_exploration.storage.catalog import ObjectCatalog
@@ -26,6 +29,13 @@ from ocs_storage_exploration.storage.errors import (
     StorageAddressError,
     StorageError,
     VectorInputError,
+)
+from ocs_storage_exploration.storage.plugins import (
+    ENTRY_POINT_GROUP,
+    INACTIVE_BACKEND_STATUS,
+    StorageBackendSpecs,
+    extension,
+    extension_point,
 )
 from ocs_storage_exploration.storage.protocols import Catalog, StorageBackend
 from ocs_storage_exploration.storage.raster import (
@@ -52,8 +62,8 @@ from ocs_storage_exploration.storage.raster import (
 )
 from ocs_storage_exploration.storage.registry import (
     build_backend,
-    build_backend_from_dotted_path,
-    register_backend,
+    build_plugin_manager,
+    default_plugin_manager,
     registered_schemes,
 )
 from ocs_storage_exploration.storage.schemas import (
@@ -116,6 +126,7 @@ __all__ = [
     "CoverageEntry",
     "CrsError",
     "DEFAULT_CRS",
+    "ENTRY_POINT_GROUP",
     "Dataset",
     "DatasetAlreadyExistsError",
     "DatasetBase",
@@ -124,14 +135,17 @@ __all__ = [
     "FeatureDataset",
     "FeatureDetail",
     "FeatureIdentityError",
+    "FilesystemBackendPlugin",
     "FilesystemStorageBackend",
     "GEOPARQUET_SCHEMA_VERSION",
     "GRID_MAPPING_ATTRIBUTE",
     "GridSpecification",
+    "INACTIVE_BACKEND_STATUS",
     "ItemType",
     "ItemTypeMismatchError",
     "MAIN_BRANCH",
     "MAXIMUM_RESERVATION_ATTEMPTS",
+    "MemoryBackendPlugin",
     "MemoryStorageBackend",
     "NothingToPublishError",
     "ObjectCatalog",
@@ -150,13 +164,16 @@ __all__ = [
     "RasterStoreDescription",
     "RasterVersion",
     "RasterWriteResult",
+    "S3BackendPlugin",
     "S3StorageBackend",
     "SPATIAL_BBOX_ATTRIBUTE",
     "SPATIAL_REFERENCE_NAME",
+    "SchemeName",
     "SelectableColumnError",
     "SnapshotNotFoundError",
     "StorageAddress",
     "StorageAddressError",
+    "StorageBackendSpecs",
     "StorageBackend",
     "StorageError",
     "StorageFormat",
@@ -177,7 +194,7 @@ __all__ = [
     "apply_geozarr_attributes",
     "assert_finite_attributes",
     "build_backend",
-    "build_backend_from_dotted_path",
+    "build_plugin_manager",
     "build_cell_sizes",
     "build_coordinates",
     "build_filters",
@@ -187,11 +204,13 @@ __all__ = [
     "build_timestamps",
     "coerce_clause_value",
     "crs_identifier",
+    "default_plugin_manager",
+    "extension",
+    "extension_point",
     "frame_bounding_box",
     "is_prefix_value",
     "parse_where",
     "projection_code",
-    "register_backend",
     "registered_schemes",
     "require_crs",
     "same_crs",

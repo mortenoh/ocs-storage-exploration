@@ -32,6 +32,7 @@ theme:
 
 nav:
   - Home: index.md
+  - Findings: findings.md
   - Research:
       - Problem statement: research/problem-statement.md
       - OCS storage today: research/ocs-storage-today.md

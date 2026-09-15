@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final, assert_never
+from typing import TYPE_CHECKING, assert_never
+
+from pluginkit import PluginManager
 
 from ocs_storage_exploration.storage.catalog import ObjectCatalog
 from ocs_storage_exploration.storage.errors import ItemTypeMismatchError
+from ocs_storage_exploration.storage.plugins import (
+    backend_for_scheme,
+    description_for_scheme,
+    provided_schemes,
+)
 from ocs_storage_exploration.storage.protocols import Catalog, StorageBackend
 from ocs_storage_exploration.storage.raster.repository import RasterRepository
-from ocs_storage_exploration.storage.registry import build_backend, registered_schemes
+from ocs_storage_exploration.storage.registry import default_plugin_manager
 from ocs_storage_exploration.storage.schemas import (
     BackendDescription,
     CoverageDataset,
@@ -22,26 +29,27 @@ from ocs_storage_exploration.storage.vector.collection import VectorCollectionSt
 if TYPE_CHECKING:
     from ocs_storage_exploration.settings import Settings
 
-INACTIVE_BACKEND_STATUS: Final[str] = "registered, not the active backend"
-
 
 @dataclass(frozen=True, slots=True)
 class StorageService:
-    """Holds the settings, the backend, the catalog and both storage engines of one application."""
+    """Holds the settings, the plugins, the backend, the catalog and both storage engines of one application."""
 
     settings: Settings
+    plugin_manager: PluginManager
     backend: StorageBackend
     catalog: Catalog
     raster: RasterRepository
     vector: VectorCollectionStore
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> StorageService:
-        """Build the backend, the catalog and both engines from one settings block."""
-        backend = build_backend(settings)
+    def from_settings(cls, settings: Settings, plugin_manager: PluginManager | None = None) -> StorageService:
+        """Build the plugin manager, the backend, the catalog and both engines from one settings block."""
+        plugins = plugin_manager if plugin_manager is not None else default_plugin_manager()
+        backend = backend_for_scheme(plugins, settings, settings.backend)
         catalog = ObjectCatalog(backend)
         return cls(
             settings=settings,
+            plugin_manager=plugins,
             backend=backend,
             catalog=catalog,
             raster=RasterRepository(backend, catalog, settings),
@@ -49,23 +57,14 @@ class StorageService:
         )
 
     def describe_backends(self) -> list[BackendDescription]:
-        """Describe the active backend, then every other registered scheme as inactive."""
+        """Describe the active backend, then every other scheme the plugins provide as inactive."""
         descriptions = [self.backend.describe()]
-        for scheme in registered_schemes():
-            if scheme is self.backend.scheme:
+        for scheme in provided_schemes(self.plugin_manager):
+            if scheme == self.backend.scheme:
                 continue
-            # An inactive scheme is described from the registry alone, so no directory is created,
+            # An inactive scheme is described by its own plugin, so no directory is created,
             # no client is built and no credential is read to answer the request.
-            descriptions.append(
-                BackendDescription(
-                    scheme=scheme,
-                    root="",
-                    base_prefix=self.settings.base_prefix,
-                    available=False,
-                    supports_parquet_filesystem=False,
-                    details={"status": INACTIVE_BACKEND_STATUS},
-                ),
-            )
+            descriptions.append(description_for_scheme(self.plugin_manager, self.settings, scheme))
         return descriptions
 
     def list_datasets(self, item_type: ItemType | None = None) -> list[Dataset]:

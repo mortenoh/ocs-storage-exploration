@@ -2,31 +2,51 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import Final
+from typing import Annotated, Final
 from urllib.parse import urlsplit
+
+from pydantic import AfterValidator
 
 from ocs_storage_exploration.storage.errors import StorageAddressError
 
 FORBIDDEN_KEY_SEGMENTS: Final[frozenset[str]] = frozenset({"", ".", ".."})
 LOCAL_AUTHORITIES: Final[frozenset[str]] = frozenset({"", "localhost"})
+STORAGE_SCHEME_PATTERN: Final[re.Pattern[str]] = re.compile(r"[a-z][a-z0-9+.-]*")
 
 
 class StorageScheme(StrEnum):
-    """URI scheme identifying which backend family owns an address."""
+    """URI scheme of a backend built into the service."""
 
     FILE = "file"
     MEMORY = "memory"
     S3 = "s3"
 
 
-def parse_storage_scheme(value: str) -> StorageScheme:
-    """Parse a scheme name, raising StorageAddressError for anything unsupported."""
+def validate_storage_scheme(value: str) -> str:
+    """Validate the shape of a scheme name and return the StorageScheme member when it is built in."""
+    if not STORAGE_SCHEME_PATTERN.fullmatch(value):
+        raise ValueError(f"storage scheme must match {STORAGE_SCHEME_PATTERN.pattern!r}: {value!r}")
     try:
         return StorageScheme(value)
+    except ValueError:
+        # A scheme the service does not build itself is still a scheme: a plugin may provide it.
+        # build_backend is the one place that refuses a scheme no plugin claims.
+        return value
+
+
+def parse_storage_scheme(value: str) -> str:
+    """Parse a scheme name, raising StorageAddressError when it is not a well formed URI scheme."""
+    try:
+        return validate_storage_scheme(value)
     except ValueError as error:
-        raise StorageAddressError(f"unsupported storage scheme: {value!r}") from error
+        raise StorageAddressError(f"malformed storage scheme: {value!r}") from error
+
+
+SchemeName = Annotated[str, AfterValidator(validate_storage_scheme)]
+"""Scheme name on a pydantic model: validated, and normalised to StorageScheme when built in."""
 
 
 def validate_object_key(key: str) -> str:
@@ -51,19 +71,20 @@ def join_key_parts(*parts: str) -> str:
 class StorageAddress:
     """Immutable address of a single object: a scheme, a backend root and an object key."""
 
-    scheme: StorageScheme
+    scheme: str
     root: str
     key: str
 
     def __post_init__(self) -> None:
-        """Validate the root and the key as soon as the address is built."""
+        """Normalise the scheme and validate the root and the key as soon as the address is built."""
+        object.__setattr__(self, "scheme", parse_storage_scheme(self.scheme))
         if not self.root:
             raise StorageAddressError("storage root must not be empty")
         if "\\" in self.root:
             raise StorageAddressError(f"storage root must not contain a backslash: {self.root!r}")
         if "@" in self.root:
             raise StorageAddressError("storage root must not carry credentials")
-        if self.scheme is StorageScheme.FILE:
+        if self.scheme == StorageScheme.FILE:
             if not self.root.startswith("/"):
                 raise StorageAddressError(f"file storage root must be absolute: {self.root!r}")
         elif "/" in self.root or ":" in self.root:
@@ -83,7 +104,7 @@ class StorageAddress:
         scheme = parse_storage_scheme(parts.scheme)
         if not parts.path.startswith("/"):
             raise StorageAddressError(f"storage uri must have an absolute path: {uri!r}")
-        if scheme is StorageScheme.FILE:
+        if scheme == StorageScheme.FILE:
             if parts.netloc not in LOCAL_AUTHORITIES:
                 raise StorageAddressError(f"file uri must not have a remote authority: {uri!r}")
             return cls(scheme=scheme, root="/", key=parts.path[1:])
@@ -93,9 +114,9 @@ class StorageAddress:
 
     def as_uri(self) -> str:
         """Render the address as a URI that never contains credentials."""
-        if self.scheme is StorageScheme.FILE:
+        if self.scheme == StorageScheme.FILE:
             return f"file://{self.root.rstrip('/')}/{self.key}"
-        return f"{self.scheme.value}://{self.root}/{self.key}"
+        return f"{self.scheme}://{self.root}/{self.key}"
 
     def joined(self, *parts: str) -> StorageAddress:
         """Return a new address with the given parts appended to the key."""

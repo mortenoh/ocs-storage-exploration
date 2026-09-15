@@ -29,9 +29,9 @@ raise no `HTTPException`; a single exception handler maps `StorageError`
 subclasses to their `status_code`, so the status code lives with the error that
 knows why it happened.
 
-`StorageService` is a frozen dataclass holding the settings, the backend, the
-catalogue and the two engines. It is built once in the lifespan and put on
-`app.state`. Operations that span item types — deleting a dataset, listing
+`StorageService` is a frozen dataclass holding the settings, the plugin
+manager, the backend, the catalogue and the two engines. It is built once in
+the lifespan and put on `app.state`. Operations that span item types — deleting a dataset, listing
 everything — route with an exhaustive `match` on `item_type`.
 
 The engines are concrete. `RasterRepository` wraps an Icechunk repository;
@@ -94,6 +94,7 @@ write rather than in memory.
 | One backend yields all three handles | Icechunk, obstore and pyarrow must address the same bytes. Building them separately makes a mismatch invisible. |
 | obstore for object ops, `pyarrow.fs` for Parquet | There is no obstore-to-pyarrow adapter, and `obstore.fsspec` is best effort. |
 | fsspec rejected | Icechunk does its own I/O through Arrow `object_store` and never sees an fsspec filesystem (CLIM-555). |
+| Backends are pluginkit plugins, not a hand-rolled registry | One typed extension point per question, external schemes arrive through an entry-point group, and nothing imports a backend to make it exist. |
 | Only `StorageBackend` and `Catalog` are protocols | Those are the seams with a real second implementation. Protocols elsewhere would cost exhaustiveness for no gain. |
 | `item_type` discriminated union | Replaces 16 scattered `ArtifactFormat.ICECHUNK` comparisons with one exhaustive `match` the type checker enforces. |
 | OGC API Features vocabulary | `coverage` and `feature` are already the terms the API surface will use. |

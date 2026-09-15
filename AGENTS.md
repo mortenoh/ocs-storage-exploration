@@ -79,15 +79,30 @@ src/ocs_storage_exploration/
     errors.py         StorageError hierarchy with HTTP status codes
     schemas.py        catalog records, the tagged dataset union and result models
     protocols.py      StorageBackend and Catalog protocols
-    registry.py       scheme to backend factory registry
+    plugins.py        pluginkit extension points a backend plugin implements
+    registry.py       plugin manager facade: build_backend and registered_schemes
     catalog.py        ObjectCatalog over the backend object store
     objects.py        conditional object writes shared by the catalog and the pointer
-    backends/         filesystem, memory and S3 backends
+    backends/         filesystem, memory and S3 backends, and their plugins
     raster/           Icechunk and GeoZarr engine
     vector/           GeoParquet engine
 tests/                pytest suite, parametrised over the filesystem, memory and s3 backends
 docs/                 mkdocs sources
+examples/plugins/     external plugin packages, deliberately not installed
 ```
+
+## Backend plugins
+
+- A backend is a pluginkit plugin, not a registry entry. Add one by implementing
+  the extensions declared on `StorageBackendSpecs` in `storage/plugins.py`, and
+  register it in `build_plugin_manager` (built in) or through the
+  `ocs_storage_exploration.plugins` entry-point group (external).
+- The built-in plugins are registered first and `storage_backend` is a
+  `firstresult` extension point, so a plugin cannot displace `file`, `memory` or
+  `s3`.
+- Never install `examples/plugins/ocs-storage-null`: its entry point would add a
+  `null` scheme to every `GET /api/v1/backends` response in a development
+  checkout. The tests import it from its source tree instead.
 
 ## Testing
 

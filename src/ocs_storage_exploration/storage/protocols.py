@@ -9,7 +9,7 @@ import icechunk
 import pyarrow.fs
 from obstore.store import ObjectStore
 
-from ocs_storage_exploration.storage.addresses import StorageAddress, StorageScheme
+from ocs_storage_exploration.storage.addresses import StorageAddress
 from ocs_storage_exploration.storage.schemas import BackendDescription, CatalogEntry, Dataset, ItemType
 
 
@@ -18,7 +18,7 @@ class StorageBackend(Protocol):
     """Resolves one settings block into Icechunk, obstore and pyarrow handles."""
 
     @property
-    def scheme(self) -> StorageScheme:
+    def scheme(self) -> str:
         """URI scheme this backend serves."""
         ...
 

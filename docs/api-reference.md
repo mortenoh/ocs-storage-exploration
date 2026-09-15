@@ -30,6 +30,10 @@ Generated reference for the application, its settings and the storage package.
 
 ::: ocs_storage_exploration.storage.protocols
 
+## Storage plugins
+
+::: ocs_storage_exploration.storage.plugins
+
 ## Storage registry
 
 ::: ocs_storage_exploration.storage.registry
@@ -59,6 +63,8 @@ Generated reference for the application, its settings and the storage package.
 ::: ocs_storage_exploration.storage.backends.memory
 
 ::: ocs_storage_exploration.storage.backends.s3
+
+::: ocs_storage_exploration.storage.backends.plugins
 
 ## Raster engine
 

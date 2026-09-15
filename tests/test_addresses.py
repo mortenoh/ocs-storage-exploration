@@ -19,9 +19,16 @@ def test_scheme_values_are_uri_schemes() -> None:
     assert parse_storage_scheme("s3") is StorageScheme.S3
 
 
-def test_unknown_scheme_is_rejected() -> None:
-    with pytest.raises(StorageAddressError):
-        parse_storage_scheme("gs")
+def test_malformed_scheme_is_rejected() -> None:
+    for value in ["", "9gs", "GS", "g s", "gs:"]:
+        with pytest.raises(StorageAddressError):
+            parse_storage_scheme(value)
+
+
+def test_a_well_formed_unknown_scheme_is_accepted_for_a_plugin_to_claim() -> None:
+    # A scheme the service does not build itself may still be provided by a plugin;
+    # build_backend is where an unprovided scheme is refused.
+    assert parse_storage_scheme("gs") == "gs"
 
 
 @pytest.mark.parametrize(
@@ -75,7 +82,6 @@ def test_credentials_in_a_uri_are_rejected() -> None:
         "s3://bucket/ocs/../escape.json",
         "s3://bucket/",
         "s3:///ocs/one.json",
-        "gs://bucket/ocs/one.json",
         "s3://bucket/ocs/one.json?versionId=2",
         "s3://bucket/ocs/one.json#fragment",
         "file://remote-host/ocs/one.json",

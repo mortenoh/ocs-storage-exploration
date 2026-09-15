@@ -169,6 +169,17 @@ Flat, prefix-addressable, no directory semantics assumed.
   the memory backend's Icechunk storages by a lock, the S3 clients by a lock
   around their construction, and the vector pointer etags by thread-local
   storage so one thread's read cannot widen another thread's compare-and-swap.
+- The backend seam is a plugin framework rather than a hand-rolled registry.
+  pluginkit declares three typed extension points, the filesystem, memory and
+  S3 backends are three plugins registered by name, and an external package
+  adds a scheme by advertising itself under the
+  `ocs_storage_exploration.plugins` entry-point group. The dictionary of
+  factories, the `register_backend` call each backend module made at import
+  time and the dotted-path loader are gone: a scheme is no longer an enum
+  member the service must know in advance, and `build_backend` is the one
+  place that refuses a scheme no plugin provides. `examples/plugins/ocs-storage-null/`
+  is the worked external plugin, kept out of the install so a development
+  checkout does not grow a scheme it did not ask for.
 
 ## Open questions
 

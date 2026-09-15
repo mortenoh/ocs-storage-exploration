@@ -1,0 +1,21 @@
+[project]
+name = "ocs-storage-null"
+version = "0.1.0"
+description = "Example external plugin adding a null storage scheme to the storage exploration service"
+readme = "README.md"
+requires-python = ">=3.13"
+# The host package is needed for its backend base class and its BackendDescription model;
+# pluginkit alone is enough for a plugin that only implements extensions.
+dependencies = [
+    "ocs-storage-exploration",
+    "pluginkit>=0.5.1",
+]
+
+# The host discovers this distribution with load_entrypoints("ocs_storage_exploration.plugins")
+# and never edits its own code to do so.
+[project.entry-points."ocs_storage_exploration.plugins"]
+null = "ocs_storage_null:plugin"
+
+[build-system]
+requires = ["uv_build>=0.12.0,<0.13.0"]
+build-backend = "uv_build"

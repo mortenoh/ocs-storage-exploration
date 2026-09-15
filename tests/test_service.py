@@ -14,6 +14,7 @@ from ocs_storage_exploration.settings import ObjectStorageSettings, Settings
 from ocs_storage_exploration.storage.addresses import StorageScheme
 from ocs_storage_exploration.storage.errors import DatasetNotFoundError, ItemTypeMismatchError
 from ocs_storage_exploration.storage.keys import raster_prefix, vector_prefix
+from ocs_storage_exploration.storage.plugins import INACTIVE_BACKEND_STATUS
 from ocs_storage_exploration.storage.raster import TimeStep, build_synthetic_cube, build_timestamps
 from ocs_storage_exploration.storage.registry import registered_schemes
 from ocs_storage_exploration.storage.schemas import (
@@ -23,7 +24,7 @@ from ocs_storage_exploration.storage.schemas import (
     GridSpecification,
     ItemType,
 )
-from ocs_storage_exploration.storage.service import INACTIVE_BACKEND_STATUS, StorageService
+from ocs_storage_exploration.storage.service import StorageService
 
 COVERAGE = "coverage-one"
 COLLECTION = "collection-one"

@@ -16,7 +16,7 @@ def test_health_reports_version_and_backend(client: TestClient, settings: Settin
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "version": __version__, "backend": settings.backend.value}
+    assert response.json() == {"status": "ok", "version": __version__, "backend": settings.backend}
 
 
 def test_lifespan_builds_backend_and_catalog(settings: Settings) -> None:

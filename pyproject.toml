@@ -33,6 +33,7 @@ dependencies = [
     "numpy>=2.2",
     "obstore>=0.11",
     "pandas>=2.3,<3",
+    "pluginkit>=0.5.1",
     "pyarrow>=19",
     "pydantic>=2.12",
     "pydantic-settings>=2.15",
@@ -140,7 +141,9 @@ check_untyped_defs = true
 no_implicit_optional = true
 warn_unused_ignores = true
 strict_equality = true
-mypy_path = ["src"]
+# The example plugin under examples/ is not installed on purpose; its source tree is on the
+# path so that the tests importing it still type check.
+mypy_path = ["src", "examples/plugins/ocs-storage-null/src"]
 
 [[tool.mypy.overrides]]
 module = "tests.*"
@@ -153,6 +156,7 @@ ignore_missing_imports = true
 
 [tool.pyright]
 include = ["src", "tests"]
+extraPaths = ["examples/plugins/ocs-storage-null/src"]
 exclude = ["**/.venv"]
 pythonVersion = "3.13"
 typeCheckingMode = "strict"

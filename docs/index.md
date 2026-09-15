@@ -25,6 +25,9 @@ yet, so any abstraction built for raster alone would be rebuilt within the year.
 This repo answers the question by building the thing, then writing down what it
 took. Start with the [problem statement](research/problem-statement.md).
 
+The short answer is on the [findings](findings.md) page: what was proved, what
+it costs, and what to do about it.
+
 ## What it demonstrates
 
 - URI addressing (`file:///`, `memory://`, `s3://bucket/...`) with credentials

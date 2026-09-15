@@ -11,7 +11,7 @@ from geojson_pydantic import FeatureCollection
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ocs_storage_exploration.settings import get_settings
-from ocs_storage_exploration.storage.addresses import StorageScheme
+from ocs_storage_exploration.storage.addresses import SchemeName
 from ocs_storage_exploration.storage.errors import (
     CrsError,
     PublicationSelectorError,
@@ -74,7 +74,7 @@ class HealthResponse(BaseModel):
 
     status: Literal["ok"] = "ok"
     version: str
-    backend: StorageScheme
+    backend: SchemeName
 
 
 class CreateRasterRequest(BaseModel):

@@ -1,4 +1,4 @@
-"""Tests for the storage backends and the backend registry."""
+"""Tests for the storage backends and the plugin facade that builds them."""
 
 from __future__ import annotations
 
@@ -18,13 +18,9 @@ from ocs_storage_exploration.storage.backends import (
     MemoryStorageBackend,
     S3StorageBackend,
 )
-from ocs_storage_exploration.storage.errors import BackendNotSupportedError, StorageError
+from ocs_storage_exploration.storage.errors import BackendNotSupportedError
 from ocs_storage_exploration.storage.protocols import StorageBackend
-from ocs_storage_exploration.storage.registry import (
-    build_backend,
-    build_backend_from_dotted_path,
-    registered_schemes,
-)
+from ocs_storage_exploration.storage.registry import build_backend, registered_schemes
 
 SECRET_VALUE = "supersecretvalue"
 
@@ -50,7 +46,7 @@ def test_addresses_start_at_the_base_prefix(storage_backend: StorageBackend) -> 
 
     assert address.key == f"{storage_backend.base_prefix}/catalog/datasets/one.json"
     assert address.scheme is storage_backend.scheme
-    assert address.as_uri().startswith(f"{storage_backend.scheme.value}://")
+    assert address.as_uri().startswith(f"{storage_backend.scheme}://")
 
 
 def test_objects_can_be_written_listed_and_deleted(storage_backend: StorageBackend) -> None:
@@ -179,35 +175,11 @@ def test_s3_backend_is_built_from_settings() -> None:
     assert backend.base_prefix == "exploration"
 
 
-def test_every_scheme_has_a_registered_factory() -> None:
+def test_every_built_in_scheme_is_provided_by_a_plugin() -> None:
     assert registered_schemes() == (StorageScheme.FILE, StorageScheme.MEMORY, StorageScheme.S3)
 
 
-def test_registry_builds_the_backend_named_by_the_settings(settings: Settings) -> None:
+def test_the_facade_builds_the_backend_named_by_the_settings(settings: Settings) -> None:
     backend = build_backend(settings)
 
     assert backend.scheme is settings.backend
-
-
-def test_dotted_path_loading_filters_unknown_parameters() -> None:
-    backend = build_backend_from_dotted_path(
-        "ocs_storage_exploration.storage.backends.memory.MemoryStorageBackend",
-        {"base_prefix": "exploration", "unknown_parameter": 1},
-    )
-
-    assert isinstance(backend, MemoryStorageBackend)
-    assert backend.base_prefix == "exploration"
-
-
-def test_dotted_path_loading_rejects_other_classes() -> None:
-    with pytest.raises(StorageError):
-        build_backend_from_dotted_path("ocs_storage_exploration.settings.Settings", {})
-
-
-def test_dotted_path_loading_reports_bad_paths() -> None:
-    with pytest.raises(StorageError):
-        build_backend_from_dotted_path("memory", {})
-    with pytest.raises(StorageError):
-        build_backend_from_dotted_path("ocs_storage_exploration.storage.backends.memory.Missing", {})
-    with pytest.raises(StorageError):
-        build_backend_from_dotted_path("ocs_storage_exploration.absent.Thing", {})

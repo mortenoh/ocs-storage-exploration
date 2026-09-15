@@ -41,7 +41,7 @@ def test_the_active_backend_is_listed_first(client: TestClient, settings: Settin
     assert response.status_code == 200
     items = response.json()["items"]
     assert len(items) == len(registered_schemes())
-    assert items[0]["scheme"] == settings.backend.value
+    assert items[0]["scheme"] == settings.backend
     assert items[0]["available"] is True
     assert items[0]["base_prefix"] == settings.base_prefix
 
@@ -49,9 +49,9 @@ def test_the_active_backend_is_listed_first(client: TestClient, settings: Settin
 def test_the_other_registered_schemes_are_reported_as_inactive(client: TestClient, settings: Settings) -> None:
     items = client.get("/api/v1/backends").json()["items"]
 
-    inactive = [item for item in items if item["scheme"] != settings.backend.value]
+    inactive = [item for item in items if item["scheme"] != settings.backend]
     assert {item["scheme"] for item in inactive} == {
-        scheme.value for scheme in registered_schemes() if scheme is not settings.backend
+        str(scheme) for scheme in registered_schemes() if scheme != settings.backend
     }
     assert all(item["available"] is False for item in inactive)
 

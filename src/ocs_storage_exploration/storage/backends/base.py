@@ -9,7 +9,7 @@ import obstore
 import pyarrow.fs
 from obstore.store import ObjectStore
 
-from ocs_storage_exploration.storage.addresses import StorageAddress, StorageScheme, join_key_parts
+from ocs_storage_exploration.storage.addresses import StorageAddress, join_key_parts, parse_storage_scheme
 from ocs_storage_exploration.storage.errors import StorageAddressError
 from ocs_storage_exploration.storage.schemas import BackendDescription
 
@@ -17,17 +17,17 @@ from ocs_storage_exploration.storage.schemas import BackendDescription
 class BaseStorageBackend(ABC):
     """Base class implementing the address, existence and deletion parts of a backend."""
 
-    def __init__(self, *, scheme: StorageScheme, root: str, base_prefix: str) -> None:
+    def __init__(self, *, scheme: str, root: str, base_prefix: str) -> None:
         """Store the scheme, root and base prefix shared by every address of this backend."""
         cleaned_prefix = base_prefix.strip("/")
         if not cleaned_prefix:
             raise StorageAddressError("base prefix must not be empty")
-        self._scheme = scheme
+        self._scheme = parse_storage_scheme(scheme)
         self._root = root
         self._base_prefix = cleaned_prefix
 
     @property
-    def scheme(self) -> StorageScheme:
+    def scheme(self) -> str:
         """URI scheme this backend serves."""
         return self._scheme
 

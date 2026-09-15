@@ -8,7 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from ocs_storage_exploration.storage.addresses import StorageScheme
+from ocs_storage_exploration.storage.addresses import SchemeName, StorageScheme
 
 
 class ObjectStorageSettings(BaseModel):
@@ -37,7 +37,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    backend: StorageScheme = StorageScheme.FILE
+    backend: SchemeName = StorageScheme.FILE
     data_directory: Path = Path("data")
     base_prefix: str = "ocs"
     s3: ObjectStorageSettings | None = None

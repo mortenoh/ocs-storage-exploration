@@ -11,7 +11,7 @@ from typing import Annotated, Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from ocs_storage_exploration.storage.addresses import StorageScheme
+from ocs_storage_exploration.storage.addresses import SchemeName
 
 # A loose shape check rather than a registry lookup: one SPDX-style identifier, or several joined
 # by the SPDX operators. It accepts "CC-BY-4.0" and "proprietary" and refuses a sentence of prose,
@@ -306,7 +306,7 @@ class VectorWriteResult(BaseModel):
 class BackendDescription(BaseModel):
     """Public description of a storage backend that never carries secrets."""
 
-    scheme: StorageScheme
+    scheme: SchemeName
     root: str
     base_prefix: str
     available: bool = True
