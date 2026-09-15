@@ -58,6 +58,16 @@ before starting the server, so there is no separate bucket-creation step.
 Ports 9000 (S3) and 9001 (console) are published on the host, and the bucket
 lives in the `./.rustfs` bind mount.
 
+That bind mount is why `make test-s3` runs `mkdir -p .rustfs && chmod a+rwx
+.rustfs` before it starts the container. The image runs as uid 10001, and on
+Linux Docker creates a missing bind-mount source as root with mode 755, so the
+entrypoint's `mkdir -p /data/<bucket>` is denied and the container exits with
+code 1 before rustfs starts. Docker Desktop on macOS maps bind mounts
+permissively, which hides the problem locally, and is why it first showed up on
+the GitHub Actions runner. Creating the directory up front, owned by the calling
+user and world-writable, fixes it on both while keeping the bucket readable on
+the host. `make docker-run-s3` does the same.
+
 S3 tests are marked and skipped by default:
 
 ```toml

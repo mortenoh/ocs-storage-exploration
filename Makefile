@@ -59,8 +59,10 @@ test:
 	@$(UV) run pytest -q
 
 # rustfs is always stopped again, including when pytest fails, and the pytest exit code is kept.
+# rustfs runs as uid 10001; Linux Docker creates the ./.rustfs bind mount as root 755, so make it writable first.
 test-s3:
 	@echo ">>> Running the s3-marked tests against rustfs"
+	@mkdir -p .rustfs && chmod a+rwx .rustfs
 	@docker compose up -d --wait rustfs
 	@set -e; \
 	trap 'docker compose down rustfs' EXIT; \
@@ -105,8 +107,10 @@ docker-run-file:
 	@echo ">>> Running the service on the filesystem backend at http://127.0.0.1:8000"
 	@docker compose --profile file up --build --abort-on-container-exit
 
+# rustfs runs as uid 10001; Linux Docker creates the ./.rustfs bind mount as root 755, so make it writable first.
 docker-run-s3:
 	@echo ">>> Running the service on the s3 backend at http://127.0.0.1:8001"
+	@mkdir -p .rustfs && chmod a+rwx .rustfs
 	@docker compose --profile s3 up --build --abort-on-container-exit
 
 docker-down:

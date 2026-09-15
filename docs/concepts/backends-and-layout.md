@@ -175,6 +175,10 @@ builds. The same trick separates a test run from real data.
 (`OCS_STORAGE_S3__BUCKET`, `ocs-storage-exploration` unless overridden) before
 starting the server, so there is no bucket creation step in the service itself.
 The S3 API is on port 9000 and the console on port 9001.
+Its objects live in the `./.rustfs` bind mount, which `make test-s3` and
+`make docker-run-s3` create and make world-writable before starting the
+container: rustfs runs as uid 10001, and on Linux Docker would otherwise create
+that directory as root, leaving the entrypoint unable to pre-create the bucket.
 
 `make test-s3` starts it, runs the `s3`-marked tests against it and stops it
 again; `make docker-run-s3` runs the service itself on the S3 backend next to
