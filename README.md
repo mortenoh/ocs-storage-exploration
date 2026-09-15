@@ -35,9 +35,10 @@ The service answers a JSON API under `/api/v1` and a STAC catalog under `/stac`:
 | `GET /stac` | STAC landing page with `conformsTo` and one child link per dataset |
 | `GET /stac/collections`, `/stac/collections/{id}` | Every record, or one, projected onto a STAC Collection |
 
-Copy `.env.example` to `.env` to change the backend, the data directory or the guard thresholds. Every setting is
-read from an `OCS_STORAGE_` environment variable, and nested object storage settings use a double underscore, for
-example `OCS_STORAGE_S3__ENDPOINT_URL`.
+Copy `.env.example` to `.env` to change the backend, the data directory, the guard thresholds, the concurrency
+and timeout bounds of the storage calls, or the timeouts and retries of the S3 clients. Every setting is read from
+an `OCS_STORAGE_` environment variable, and nested object storage settings use a double underscore, for example
+`OCS_STORAGE_S3__ENDPOINT_URL`.
 
 ## Make targets
 

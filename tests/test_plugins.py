@@ -14,7 +14,12 @@ from pluginkit import PluginManager
 from ocs_storage_exploration.main import create_app
 from ocs_storage_exploration.settings import Settings
 from ocs_storage_exploration.storage.addresses import StorageScheme
-from ocs_storage_exploration.storage.backends import FilesystemStorageBackend, MemoryStorageBackend
+from ocs_storage_exploration.storage.backends import (
+    FilesystemStorageBackend,
+    MemoryStorageBackend,
+    build_plugin_manager,
+    default_plugin_manager,
+)
 from ocs_storage_exploration.storage.errors import BackendNotSupportedError
 from ocs_storage_exploration.storage.plugins import (
     ENTRY_POINT_GROUP,
@@ -25,7 +30,6 @@ from ocs_storage_exploration.storage.plugins import (
     provided_schemes,
 )
 from ocs_storage_exploration.storage.protocols import StorageBackend
-from ocs_storage_exploration.storage.registry import build_plugin_manager, default_plugin_manager
 from ocs_storage_exploration.storage.service import StorageService
 
 # The example plugin is a separate package that is deliberately not installed, so that its

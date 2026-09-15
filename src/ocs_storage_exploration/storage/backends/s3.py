@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from datetime import timedelta
 from typing import TYPE_CHECKING, Final
 from urllib.parse import urlsplit
 
@@ -16,7 +17,7 @@ from ocs_storage_exploration.storage.backends.base import BaseStorageBackend
 from ocs_storage_exploration.storage.errors import BackendNotSupportedError
 
 if TYPE_CHECKING:
-    from obstore.store import ClientConfig, S3Config
+    from obstore.store import ClientConfig, RetryConfig, S3Config
 
     from ocs_storage_exploration.settings import Settings
 
@@ -41,6 +42,10 @@ class S3StorageBackend(BaseStorageBackend):
         session_token: SecretStr | None = None,
         force_path_style: bool = True,
         anonymous: bool = False,
+        connect_timeout_seconds: float = 5.0,
+        request_timeout_seconds: float = 30.0,
+        max_retries: int = 3,
+        retry_backoff_seconds: float = 0.5,
     ) -> None:
         """Record the S3 configuration and prepare the lazily built obstore and pyarrow handles."""
         super().__init__(scheme=StorageScheme.S3, root=bucket, base_prefix=base_prefix)
@@ -52,6 +57,10 @@ class S3StorageBackend(BaseStorageBackend):
         self._session_token = session_token
         self._force_path_style = force_path_style
         self._anonymous = anonymous
+        self._connect_timeout_seconds = connect_timeout_seconds
+        self._request_timeout_seconds = request_timeout_seconds
+        self._max_retries = max_retries
+        self._retry_backoff_seconds = retry_backoff_seconds
         self._store: S3Store | None = None
         self._filesystem: pyarrow.fs.S3FileSystem | None = None
         # One application serves several requests on the threadpool, so each client is built once
@@ -76,6 +85,10 @@ class S3StorageBackend(BaseStorageBackend):
             session_token=options.session_token,
             force_path_style=options.force_path_style,
             anonymous=options.anonymous,
+            connect_timeout_seconds=options.connect_timeout_seconds,
+            request_timeout_seconds=options.request_timeout_seconds,
+            max_retries=options.max_retries,
+            retry_backoff_seconds=options.retry_backoff_seconds,
         )
 
     @property
@@ -87,6 +100,11 @@ class S3StorageBackend(BaseStorageBackend):
     def has_credentials(self) -> bool:
         """Report whether static credentials were configured, without revealing them."""
         return self._access_key_id is not None and self._secret_access_key is not None
+
+    @property
+    def retry_budget_seconds(self) -> float:
+        """Wall time a single request may spend across its attempts and the backoff between them."""
+        return self._request_timeout_seconds * (self._max_retries + 1) + self._retry_backoff_seconds * self._max_retries
 
     def icechunk_storage(self, address: StorageAddress) -> icechunk.Storage:
         """Resolve an address into S3 Icechunk storage prefixed by the key of the repository."""
@@ -101,6 +119,27 @@ class S3StorageBackend(BaseStorageBackend):
             session_token=_revealed_secret(self._session_token),
             anonymous=self._anonymous or None,
             force_path_style=self._force_path_style,
+            # Icechunk takes whole seconds here; the millisecond bounds are in repository_config.
+            network_stream_timeout_seconds=max(1, round(self._request_timeout_seconds)),
+        )
+
+    def repository_config(self) -> icechunk.RepositoryConfig:
+        """Bound the Icechunk S3 client with the same timeouts and retries as the other two handles."""
+        return icechunk.RepositoryConfig(
+            storage=icechunk.StorageSettings(
+                timeouts=icechunk.StorageTimeoutSettings(
+                    connect_timeout_ms=_milliseconds(self._connect_timeout_seconds),
+                    read_timeout_ms=_milliseconds(self._request_timeout_seconds),
+                    operation_timeout_ms=_milliseconds(self.retry_budget_seconds),
+                    operation_attempt_timeout_ms=_milliseconds(self._request_timeout_seconds),
+                ),
+                retries=icechunk.StorageRetriesSettings(
+                    # Icechunk counts tries including the first one; obstore counts retries after it.
+                    max_tries=self._max_retries + 1,
+                    initial_backoff_ms=_milliseconds(self._retry_backoff_seconds),
+                    max_backoff_ms=_milliseconds(self._maximum_backoff_seconds),
+                ),
+            ),
         )
 
     def object_store(self) -> ObjectStore:
@@ -111,6 +150,7 @@ class S3StorageBackend(BaseStorageBackend):
                     self.bucket,
                     config=self._obstore_config(),
                     client_options=self._client_options(),
+                    retry_config=self._retry_config(),
                 )
             return self._store
 
@@ -135,7 +175,15 @@ class S3StorageBackend(BaseStorageBackend):
             "allow_http": str(self._allow_http).lower(),
             "anonymous": str(self._anonymous).lower(),
             "has_credentials": str(self.has_credentials).lower(),
+            "connect_timeout_seconds": str(self._connect_timeout_seconds),
+            "request_timeout_seconds": str(self._request_timeout_seconds),
+            "max_retries": str(self._max_retries),
         }
+
+    @property
+    def _maximum_backoff_seconds(self) -> float:
+        """Longest pause between two attempts, reached by doubling the initial backoff once per retry."""
+        return self._retry_backoff_seconds * 2.0**self._max_retries
 
     def _obstore_config(self) -> S3Config:
         """Translate the settings into the obstore S3 configuration."""
@@ -156,11 +204,33 @@ class S3StorageBackend(BaseStorageBackend):
 
     def _client_options(self) -> ClientConfig:
         """Translate the settings into the obstore HTTP client options."""
-        return {"allow_http": self._allow_http}
+        return {
+            "allow_http": self._allow_http,
+            "connect_timeout": timedelta(seconds=self._connect_timeout_seconds),
+            "timeout": timedelta(seconds=self._request_timeout_seconds),
+        }
+
+    def _retry_config(self) -> RetryConfig:
+        """Translate the settings into the obstore retry configuration."""
+        return {
+            "max_retries": self._max_retries,
+            "retry_timeout": timedelta(seconds=self.retry_budget_seconds),
+            "backoff": {
+                "init_backoff": timedelta(seconds=self._retry_backoff_seconds),
+                "max_backoff": timedelta(seconds=self._maximum_backoff_seconds),
+                "base": 2,
+            },
+        }
 
     def _pyarrow_options(self) -> dict[str, object]:
         """Translate the settings into the pyarrow S3 filesystem options."""
-        options: dict[str, object] = {"anonymous": self._anonymous}
+        options: dict[str, object] = {
+            "anonymous": self._anonymous,
+            "connect_timeout": self._connect_timeout_seconds,
+            "request_timeout": self._request_timeout_seconds,
+            # pyarrow counts attempts including the first one, as Icechunk does.
+            "retry_strategy": pyarrow.fs.AwsStandardS3RetryStrategy(max_attempts=self._max_retries + 1),
+        }
         if self._region is not None:
             options["region"] = self._region
         if not self._anonymous:
@@ -183,3 +253,8 @@ class S3StorageBackend(BaseStorageBackend):
 def _revealed_secret(secret: SecretStr | None) -> str | None:
     """Reveal a secret for the client that needs it, or return None when it was never set."""
     return None if secret is None else secret.get_secret_value()
+
+
+def _milliseconds(seconds: float) -> int:
+    """Render a duration in seconds as the whole milliseconds Icechunk asks for, never rounding down to zero."""
+    return max(1, round(seconds * 1000))

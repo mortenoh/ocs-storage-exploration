@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, assert_never
 
 from pluginkit import PluginManager
 
+from ocs_storage_exploration.storage.backends import default_plugin_manager
 from ocs_storage_exploration.storage.catalog import ObjectCatalog
 from ocs_storage_exploration.storage.errors import ItemTypeMismatchError
 from ocs_storage_exploration.storage.plugins import (
@@ -16,7 +17,6 @@ from ocs_storage_exploration.storage.plugins import (
 )
 from ocs_storage_exploration.storage.protocols import Catalog, StorageBackend
 from ocs_storage_exploration.storage.raster.repository import RasterRepository
-from ocs_storage_exploration.storage.registry import default_plugin_manager
 from ocs_storage_exploration.storage.schemas import (
     BackendDescription,
     CoverageDataset,
@@ -28,6 +28,20 @@ from ocs_storage_exploration.storage.vector.collection import VectorCollectionSt
 
 if TYPE_CHECKING:
     from ocs_storage_exploration.settings import Settings
+
+
+def require_coverage_record(record: Dataset, dataset_identifier: str) -> CoverageDataset:
+    """Narrow a dataset record to a coverage, refusing a dataset of another item type."""
+    if not isinstance(record, CoverageDataset):
+        raise ItemTypeMismatchError(f"dataset {dataset_identifier!r} is not a coverage")
+    return record
+
+
+def require_collection_record(record: Dataset, dataset_identifier: str) -> FeatureDataset:
+    """Narrow a dataset record to a vector collection, refusing a dataset of another item type."""
+    if not isinstance(record, FeatureDataset):
+        raise ItemTypeMismatchError(f"dataset {dataset_identifier!r} is not a vector collection")
+    return record
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,21 +91,14 @@ class StorageService:
 
     def require_coverage(self, dataset_identifier: str) -> CoverageDataset:
         """Read the record of a coverage, refusing a dataset of another item type."""
-        record = self.catalog.require(dataset_identifier)
-        if not isinstance(record, CoverageDataset):
-            raise ItemTypeMismatchError(f"dataset {dataset_identifier!r} is not a coverage")
-        return record
+        return require_coverage_record(self.catalog.require(dataset_identifier), dataset_identifier)
 
     def require_collection(self, dataset_identifier: str) -> FeatureDataset:
         """Read the record of a vector collection, refusing a dataset of another item type."""
-        record = self.catalog.require(dataset_identifier)
-        if not isinstance(record, FeatureDataset):
-            raise ItemTypeMismatchError(f"dataset {dataset_identifier!r} is not a vector collection")
-        return record
+        return require_collection_record(self.catalog.require(dataset_identifier), dataset_identifier)
 
-    def delete_dataset(self, dataset_identifier: str) -> Dataset:
+    def delete_record(self, record: Dataset) -> Dataset:
         """Delete a dataset through the engine its item type names and return the record that was deleted."""
-        record = self.catalog.require(dataset_identifier)
         match record:
             case CoverageDataset():
                 self.raster.delete(record.dataset_identifier)
@@ -100,3 +107,7 @@ class StorageService:
             case _:  # pragma: no cover - the dataset union has no other member
                 assert_never(record)
         return record
+
+    def delete_dataset(self, dataset_identifier: str) -> Dataset:
+        """Read the record of a dataset and delete it through the engine its item type names."""
+        return self.delete_record(self.catalog.require(dataset_identifier))

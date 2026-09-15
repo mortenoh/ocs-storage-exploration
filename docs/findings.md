@@ -1,11 +1,11 @@
 # Findings
 
-The executive summary of this exploration for the OCS team. Four passes stand
-behind it: the storage model, the S3 backend and Docker, the STAC catalog, and a
+The executive summary of this exploration for the OCS team. Six passes stand
+behind it: the storage model, the S3 backend and Docker, the STAC catalog, a
 hardening review that found eleven ways the prototype was right in the happy
-path and wrong under a second writer, and closed them all. Every claim about
-OCS is cited as a `file:line` against
-[the checkout](research/ocs-storage-today.md).
+path and wrong under a second writer and closed them all, pluggable backends,
+and an async surface over bounded S3 clients. Every claim about OCS is cited as
+a `file:line` against [the checkout](research/ocs-storage-today.md).
 
 ## TLDR
 
@@ -16,6 +16,7 @@ OCS is cited as a `file:line` against
 - Publication becomes one conditional write with no window where the dataset is absent and no recovery routine; rollback is the same call against an older target.
 - The vector half arrives at the same time: GeoParquet 1.1 with a covering bounding-box column, bounding-box and attribute pushdown, and per-version metadata.
 - One catalogue and one tagged union cover both kinds of dataset, and a STAC catalog falls out as a projection of those records rather than a second index to keep in sync.
+- The API is awaitable without pretending the engines are: every route is an `async def`, the catalogue is awaited natively through obstore, and the blocking engines run on worker threads behind a capacity limiter and a 504 timeout, with the S3 clients bounded per request in all three libraries.
 - The largest risks: Icechunk's conformance on non-AWS S3, rustfs being pre-1.0, retention bounding how far a rollback reaches, serving Zarr chunks for remote stores, and one JSON object per dataset at thousands of datasets.
 - Not proven: real ingestion sources, multiscale pyramids, moto as a Docker-free S3 double, and any scale beyond synthetic data.
 
@@ -25,20 +26,21 @@ Synthetic data only: a small cube and a handful of sample features, no OCS
 dataset, no real ingestion source, and no file large enough to make row-group
 pruning or pyramids measurable. The fixtures are cheap enough to run the whole
 suite once per backend.
-Addresses, keys, schemas, the catalogue, both engines and the API are
-parametrised over all three. The default run is 704 tests at about 94 percent
-statement and branch coverage; 269 of them carry the `s3` marker and run again
+Addresses, keys, schemas, both catalogues, both engines and the API are
+parametrised over all three. The default run is 771 tests at about 95 percent
+statement and branch coverage; 300 of them carry the `s3` marker and run again
 against rustfs `1.0.0-rc.6` under `make test-s3`, which starts the container and
-stops it again even when a test fails. No container was started for this page,
-so that is a selection count, not a fresh run.
+stops it again even when a test fails.
 
 The marked suite is not smoke tests. It asserts that the conditional PUT is the
 real one, not the local emulation, that two catalogues racing one
 record lose the create and the etag compare-and-swap, that two vector writers
 reserve different version numbers, that a stale raster publish loses the branch
 compare-and-swap, and that a second vector publisher can neither create the
-pointer twice nor overwrite it with a stale etag. Prefix deletes are swept on
-teardown and a full run leaves the bucket empty.
+pointer twice nor overwrite it with a stale etag. It also points a backend at an
+endpoint nothing listens on and asserts that a raster create, a catalogue put
+and a Parquet write each give up in under a second rather than hanging. Prefix
+deletes are swept on teardown and a full run leaves the bucket empty.
 
 ## Verdict per design question
 
@@ -54,6 +56,8 @@ teardown and a full run leaves the bucket empty.
 | `item_type` discriminator | A pydantic tagged union of `coverage` and `feature` | One exhaustive `match` replaces 16 scattered `ArtifactFormat.ICECHUNK` comparisons | High | A third item type has not been tried |
 | STAC projection | Projected from the version advertised, never stored | Round-tripped through `pystac` and checked once with `stac-validator` | Medium | datacube v2.2.0 has a dead schema reference; listings need paging |
 | Local S3 testing | rustfs behind a marker, with the whole suite re-run | Found what two local backends could not: `create_dir` leaves undeletable markers | Medium | rustfs is pre-1.0, MinIO untried, moto unverified |
+| Sync engines behind an async facade | Routes are `async def`; the catalogue is awaited through obstore and the engines run on bounded worker threads | A saturation test answers `/health` while sixteen storage calls are in flight, the limiter caps them and an over-long call answers 504 | High | A timed-out thread is abandoned, not cancelled, because no library here can be interrupted |
+| Bounded S3 clients | One block of timeouts and retries translated into obstore, Icechunk and pyarrow | An unreachable endpoint fails a raster create, a catalogue put and a Parquet write in under a second each, as 503 | Medium | The three clients only approximate one another; a slow endpoint, as opposed to an absent one, is untested |
 
 ## Recommendation for OCS
 
@@ -109,8 +113,13 @@ be served at all.
   unconditional first write for a new record, and a version number chosen by
   listing, both looked safe only because the happy path never collides.
 - State the threading model before writing the first route. The routes were
-  written `async def` and the caches added afterwards, so shared state was
-  discovered rather than designed.
+  written `async def`, then turned into plain `def` with the caches guarded
+  afterwards, then made `async def` again over a facade that bounds the threads.
+  Shared state was discovered rather than designed, and the route signatures
+  changed twice for a decision that could have been made once.
+- Bound every client at the moment it is built. The three S3 clients ran on
+  their own defaults for four passes, which meant a wrong endpoint hung instead
+  of failing, and nothing in the suite would have caught it.
 
 ## Not advisable
 

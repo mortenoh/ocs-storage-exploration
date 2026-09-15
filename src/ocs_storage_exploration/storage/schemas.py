@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from ocs_storage_exploration.storage.addresses import SchemeName
 
-# A loose shape check rather than a registry lookup: one SPDX-style identifier, or several joined
+# A loose shape check rather than a lookup against the SPDX list: one SPDX-style identifier, or several joined
 # by the SPDX operators. It accepts "CC-BY-4.0" and "proprietary" and refuses a sentence of prose,
 # which is the only mistake worth catching before the value reaches a STAC client.
 LICENSE_PATTERN: Final[re.Pattern[str]] = re.compile(

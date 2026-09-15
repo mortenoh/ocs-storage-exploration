@@ -77,13 +77,16 @@ src/ocs_storage_exploration/
     addresses.py      StorageScheme and StorageAddress
     keys.py           object key layout and identifier validation
     errors.py         StorageError hierarchy with HTTP status codes
+    failures.py       obstore, Icechunk and pyarrow transport failures as one storage error
     schemas.py        catalog records, the tagged dataset union and result models
-    protocols.py      StorageBackend and Catalog protocols
+    protocols.py      StorageBackend, Catalog and AsyncCatalog protocols
     plugins.py        pluginkit extension points a backend plugin implements
-    registry.py       plugin manager facade: build_backend and registered_schemes
     catalog.py        ObjectCatalog over the backend object store
-    objects.py        conditional object writes shared by the catalog and the pointer
-    backends/         filesystem, memory and S3 backends, and their plugins
+    catalog_async.py  AsyncObjectCatalog over the same records, through obstore's async API
+    objects.py        object reads, writes and listings, sync and async
+    service.py        StorageService composing the backend, the catalog and both engines
+    service_async.py  AsyncStorageService: native catalog reads, bounded worker threads
+    backends/         filesystem, memory and S3 backends, their plugins and the plugin manager
     raster/           Icechunk and GeoZarr engine
     vector/           GeoParquet engine
 tests/                pytest suite, parametrised over the filesystem, memory and s3 backends
@@ -93,7 +96,7 @@ examples/plugins/     external plugin packages, deliberately not installed
 
 ## Backend plugins
 
-- A backend is a pluginkit plugin, not a registry entry. Add one by implementing
+- A backend is a pluginkit plugin, not a table entry. Add one by implementing
   the extensions declared on `StorageBackendSpecs` in `storage/plugins.py`, and
   register it in `build_plugin_manager` (built in) or through the
   `ocs_storage_exploration.plugins` entry-point group (external).

@@ -26,6 +26,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: GIS",
 ]
 dependencies = [
+    "anyio>=4.15.1",
     "fastapi>=0.121",
     "geojson-pydantic>=2.1",
     "geopandas>=1.1",

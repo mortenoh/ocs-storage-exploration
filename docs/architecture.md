@@ -10,9 +10,9 @@ layer.
 
 ```mermaid
 flowchart TD
-    R["HTTP routers<br/>health, backends, datasets, raster, vector, stac"]
-    S["StorageService<br/>composition, exhaustive routing on item_type"]
-    E["RasterRepository<br/>VectorCollectionStore<br/>ObjectCatalog<br/>stac projection"]
+    R["HTTP routers, every one an async def<br/>health, backends, datasets, raster, vector, stac"]
+    S["AsyncStorageService over StorageService<br/>composition, limiter, timeout, exhaustive routing on item_type"]
+    E["RasterRepository<br/>VectorCollectionStore<br/>ObjectCatalog and AsyncObjectCatalog<br/>stac projection"]
     A["StorageAddress and key layout<br/>file:/// memory:// s3://"]
     B["FilesystemBackend<br/>MemoryBackend<br/>S3Backend"]
     L["icechunk.Storage<br/>obstore ObjectStore<br/>pyarrow.fs.FileSystem"]
@@ -31,14 +31,16 @@ knows why it happened.
 
 `StorageService` is a frozen dataclass holding the settings, the plugin
 manager, the backend, the catalogue and the two engines. It is built once in
-the lifespan and put on `app.state`. Operations that span item types — deleting a dataset, listing
-everything — route with an exhaustive `match` on `item_type`.
+the lifespan and put on `app.state`, next to the `AsyncStorageService` that
+wraps it and that every route awaits. Operations that span item types — deleting
+a dataset, listing everything — route with an exhaustive `match` on `item_type`.
 
 The engines are concrete. `RasterRepository` wraps an Icechunk repository;
 `VectorCollectionStore` writes and reads versioned GeoParquet;
-`ObjectCatalog` stores one JSON record per dataset through obstore. Only
-`ObjectCatalog` satisfies a protocol, because a catalogue backed by a database
-is a plausible second implementation and a second raster repository is not.
+`ObjectCatalog` and `AsyncObjectCatalog` store one JSON record per dataset
+through obstore. Only the catalogue satisfies a protocol, because a catalogue
+backed by a database is a plausible second implementation and a second raster
+repository is not.
 
 `storage/stac.py` sits beside the engines rather than in the router: it is a
 pure projection onto a STAC Collection, with no state of its own. It asks the
@@ -59,17 +61,50 @@ and is exercised by the whole test suite against rustfs.
 [Backends and key layout](concepts/backends-and-layout.md) has the handle table,
 the settings-to-client translation, and the S3 key layout.
 
-## Threading
+## Threading and async
 
-Every storage call is blocking: Icechunk, obstore and pyarrow all do their I/O
-in Rust or C, and none of them offers an awaitable. So every route that reaches
-the service layer is a plain `def` rather than an `async def`, which is how
-FastAPI is told to run it on the anyio threadpool instead of on the event loop.
-`GET /health` is the one `async def` left, because it reads a property and
-nothing else; it answers while the threadpool is busy, which is what makes it
-useful as a probe.
+Every storage call is blocking except one. Icechunk, xarray, geopandas and
+pyarrow all do their I/O in Rust or C behind a synchronous API, and none of them
+offers an awaitable. obstore is the exception: it has `get_async`, `put_async`,
+`head_async`, `delete_async` and an async listing, so raw object operations can
+be awaited without a thread at all.
 
-That puts several threads on one `StorageService`, so anything cached on it is
+Every route is an `async def` awaiting `AsyncStorageService`, a facade over the
+sync `StorageService` rather than a second implementation of it, and the facade
+is where that split is decided:
+
+| Call | Where it runs |
+| --- | --- |
+| Catalog reads and writes | `AsyncObjectCatalog`, natively on the event loop through obstore's async API |
+| Raster and vector engine calls | a worker thread, through `anyio.to_thread.run_sync` |
+| The STAC projection of a collection | one worker-thread call for the whole projection, through `run_blocking` |
+| `GET /health` | the event loop; it touches no storage at all |
+
+Two bounds apply to every engine call. An `anyio.CapacityLimiter` sized by
+`OCS_STORAGE_MAX_CONCURRENT_STORAGE_OPERATIONS` (16) caps how many run at once,
+so a burst of requests cannot open more Icechunk sessions or Parquet readers
+than the deployment was sized for. An `asyncio.timeout` sized by
+`OCS_STORAGE_STORAGE_OPERATION_TIMEOUT_SECONDS` (180) caps how long a caller
+waits for a token and for the call itself, and answers `StorageTimeoutError`
+(504) when it expires.
+
+A call that times out is abandoned rather than cancelled: no library here offers
+cancellation, so its thread runs to completion with the result discarded, and
+its limiter token is released when the wait is abandoned. Abandoning a thread is
+the expensive outcome, which is why the S3 clients carry their own bounds. The
+[timeouts and retries](concepts/backends-and-layout.md#timeouts-and-retries) of
+the backend bound each request and its retries, so a hung connection becomes a
+failed request rather than a stuck thread; the facade's timeout bounds the whole
+call, which is many requests, and is the backstop for the one that hangs
+anyway.
+
+`AsyncObjectCatalog` and `ObjectCatalog` share their key layout, record encoding
+and failure mapping rather than restating them, so the awaitable catalogue
+cannot drift away from the one the engines use. The engines keep the sync
+catalogue: they run on a worker thread already, and a vector pointer or
+reservation write inside one of them is a sync write by design.
+
+Several threads still meet on one `StorageService`, so anything cached on it is
 shared. `MemoryStorageBackend` guards its per-address `icechunk.Storage` cache
 with a lock, because two threads creating the same repository would otherwise
 each keep a store the other cannot see. `S3StorageBackend` builds its `S3Store`
@@ -94,15 +129,17 @@ write rather than in memory.
 | One backend yields all three handles | Icechunk, obstore and pyarrow must address the same bytes. Building them separately makes a mismatch invisible. |
 | obstore for object ops, `pyarrow.fs` for Parquet | There is no obstore-to-pyarrow adapter, and `obstore.fsspec` is best effort. |
 | fsspec rejected | Icechunk does its own I/O through Arrow `object_store` and never sees an fsspec filesystem (CLIM-555). |
-| Backends are pluginkit plugins, not a hand-rolled registry | One typed extension point per question, external schemes arrive through an entry-point group, and nothing imports a backend to make it exist. |
-| Only `StorageBackend` and `Catalog` are protocols | Those are the seams with a real second implementation. Protocols elsewhere would cost exhaustiveness for no gain. |
+| Backends are pluginkit plugins, not a hand-rolled table of factories | One typed extension point per question, external schemes arrive through an entry-point group, and nothing imports a backend to make it exist. |
+| Only `StorageBackend`, `Catalog` and `AsyncCatalog` are protocols | Those are the seams with a real second implementation. Protocols elsewhere would cost exhaustiveness for no gain. |
 | `item_type` discriminated union | Replaces 16 scattered `ArtifactFormat.ICECHUNK` comparisons with one exhaustive `match` the type checker enforces. |
 | OGC API Features vocabulary | `coverage` and `feature` are already the terms the API surface will use. |
 | Publish by pointer move | Branch reset with `from_snapshot_id` and etag-conditional pointer writes are atomic on S3; a directory rename is not (CLIM-880). |
 | Rollback is publish with an older target | One code path, tested by the publish tests, with no recovery routine to maintain. See [versioning](concepts/versioning.md). |
 | A record makes a dataset exist | No filesystem discovery, so a store without a record is bytes rather than a half-registered dataset. |
 | Commit bytes, then write the record | Orphan bytes are found by a prefix listing; a dangling record lists everywhere and fails on open. |
-| Blocking routes are plain `def` | FastAPI runs them on the threadpool; an `async def` calling Icechunk would block every other request on the event loop. |
+| Routes are `async def` over a bounded worker pool | Callers such as OCS are async FastAPI and want awaitables. The blocking engines run on worker threads the service bounds itself, rather than on FastAPI's unbounded offload of a plain `def`. |
+| Only the object layer is natively async | obstore is the one library here with an async API, so the catalogue is awaited and everything else is a thread. Pretending the rest is async would only hide the thread. |
+| Every storage call carries a deadline | A request that never returns is worse than one that fails: the S3 clients bound each attempt and the facade bounds the whole call at 504. |
 | Guards refuse loudly with thresholds named | A truncated result that looks complete is worse than an error saying what to narrow. |
 | `decode_coords="all"` on every read | Without it `spatial_ref` stays a data variable and the CRS is silently lost. |
 | Explicit GeoParquet `schema_version="1.1.0"` | Otherwise the file declares 1.0.0 while carrying a 1.1 covering key. |

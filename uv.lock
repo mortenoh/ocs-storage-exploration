@@ -1044,6 +1044,7 @@ name = "ocs-storage-exploration"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "anyio" },
     { name = "fastapi" },
     { name = "geojson-pydantic" },
     { name = "geopandas" },
@@ -1087,6 +1088,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4.15.1" },
     { name = "fastapi", specifier = ">=0.121" },
     { name = "geojson-pydantic", specifier = ">=2.1" },
     { name = "geopandas", specifier = ">=1.1" },

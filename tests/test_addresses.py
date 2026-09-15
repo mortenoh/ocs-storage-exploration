@@ -27,7 +27,7 @@ def test_malformed_scheme_is_rejected() -> None:
 
 def test_a_well_formed_unknown_scheme_is_accepted_for_a_plugin_to_claim() -> None:
     # A scheme the service does not build itself may still be provided by a plugin;
-    # build_backend is where an unprovided scheme is refused.
+    # backend_for_scheme is where an unprovided scheme is refused.
     assert parse_storage_scheme("gs") == "gs"
 
 

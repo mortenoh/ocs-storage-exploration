@@ -6,7 +6,7 @@ from typing import Annotated, Final
 
 from fastapi import APIRouter, Query, status
 
-from ocs_storage_exploration.api.dependencies import StorageServiceDependency
+from ocs_storage_exploration.api.dependencies import AsyncStorageServiceDependency
 from ocs_storage_exploration.api.parameters import (
     BoundingBoxCrsQuery,
     BoundingBoxQuery,
@@ -26,8 +26,8 @@ from ocs_storage_exploration.storage.vector import DEFAULT_CRS, parse_where
 
 router = APIRouter(prefix="/api/v1/vector", tags=["vector"])
 
-# Plain def, not async def: FastAPI runs these in the threadpool so the blocking storage calls
-# never occupy the event loop. See docs/architecture.md for the threading model.
+# Every route is an async def awaiting AsyncStorageService: the blocking engine calls run on bounded
+# worker threads and the event loop stays free. See docs/architecture.md for the threading model.
 
 MAXIMUM_FEATURE_LIMIT: Final[int] = 100_000
 
@@ -38,13 +38,13 @@ VersionQuery = Annotated[int | None, Query(ge=1, description="Version to read in
 
 
 @router.post("/{dataset_identifier}", status_code=status.HTTP_201_CREATED, summary="Write a vector collection")
-def create_vector(
+async def create_vector(
     dataset_identifier: str,
     request: CreateVectorRequest,
-    storage: StorageServiceDependency,
+    storage: AsyncStorageServiceDependency,
 ) -> VectorWriteResult:
     """Write a GeoJSON FeatureCollection as the next version of a vector collection."""
-    return storage.vector.write_geojson(
+    return await storage.vector.write_geojson(
         dataset_identifier,
         request.feature_collection,
         identifier_property=request.identifier_property,
@@ -58,9 +58,9 @@ def create_vector(
 
 
 @router.get("/{dataset_identifier}/features", summary="Read features of a vector collection")
-def read_features(
+async def read_features(
     dataset_identifier: str,
-    storage: StorageServiceDependency,
+    storage: AsyncStorageServiceDependency,
     bbox: BoundingBoxQuery = None,
     bbox_crs: BoundingBoxCrsQuery = None,
     where: WhereQuery = None,
@@ -70,7 +70,7 @@ def read_features(
 ) -> FeatureCollectionResponse:
     """Read features as GeoJSON, keeping the coordinates in the frame the collection was written in."""
     selected = parse_columns(columns)
-    handle = storage.vector.read(
+    handle = await storage.vector.read(
         dataset_identifier,
         bbox=parse_bbox(bbox),
         bbox_crs=parse_crs(bbox_crs, parameter="bbox-crs") or DEFAULT_CRS,
@@ -83,11 +83,11 @@ def read_features(
 
 
 @router.post("/{dataset_identifier}/publish", summary="Publish a collection version")
-def publish_vector(
+async def publish_vector(
     dataset_identifier: str,
-    storage: StorageServiceDependency,
+    storage: AsyncStorageServiceDependency,
     request: PublishRequest | None = None,
 ) -> PublicationResult:
     """Move the published pointer onto a version, which is also how a rollback is spelled."""
     selection = request if request is not None else PublishRequest()
-    return storage.vector.publish(dataset_identifier, version=selection.collection_version())
+    return await storage.vector.publish(dataset_identifier, version=selection.collection_version())

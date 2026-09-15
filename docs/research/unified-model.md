@@ -163,20 +163,22 @@ Flat, prefix-addressable, no directory semantics assumed.
   from the version being advertised, so an unpublished append no longer widens
   the published temporal extent and a draft written in another frame no longer
   changes the published coordinate reference system.
-- The service is multi-threaded and says so. Every route that reaches the
-  service layer is a plain `def`, which FastAPI runs on the threadpool rather
-  than on the event loop, and the caches several threads now share are guarded:
-  the memory backend's Icechunk storages by a lock, the S3 clients by a lock
-  around their construction, and the vector pointer etags by thread-local
-  storage so one thread's read cannot widen another thread's compare-and-swap.
-- The backend seam is a plugin framework rather than a hand-rolled registry.
-  pluginkit declares three typed extension points, the filesystem, memory and
-  S3 backends are three plugins registered by name, and an external package
-  adds a scheme by advertising itself under the
+- The service is awaited from the outside and multi-threaded on the inside, and
+  says so. Every route is an `async def` awaiting `AsyncStorageService`, which
+  answers catalogue reads natively through obstore and runs every blocking
+  engine call on a worker thread behind a capacity limiter and a timeout. The
+  caches those threads share are guarded: the memory backend's Icechunk storages
+  by a lock, the S3 clients by a lock around their construction, and the vector
+  pointer etags by thread-local storage so one thread's read cannot widen
+  another thread's compare-and-swap.
+- The backend seam is a plugin framework rather than a hand-rolled table of
+  factories. pluginkit declares three typed extension points, the filesystem,
+  memory and S3 backends are three plugins registered by name, and an external
+  package adds a scheme by advertising itself under the
   `ocs_storage_exploration.plugins` entry-point group. The dictionary of
   factories, the `register_backend` call each backend module made at import
   time and the dotted-path loader are gone: a scheme is no longer an enum
-  member the service must know in advance, and `build_backend` is the one
+  member the service must know in advance, and `backend_for_scheme` is the one
   place that refuses a scheme no plugin provides. `examples/plugins/ocs-storage-null/`
   is the worked external plugin, kept out of the install so a development
   checkout does not grow a scheme it did not ask for.

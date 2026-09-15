@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, Final, cast
 
 import geopandas
 import numpy
-import obstore
 import pyarrow
 import pyarrow.fs
 import pyarrow.parquet
@@ -37,6 +36,7 @@ from ocs_storage_exploration.storage.errors import (
     StorageError,
     VectorInputError,
 )
+from ocs_storage_exploration.storage.failures import backend_transport_failures
 from ocs_storage_exploration.storage.keys import (
     VECTOR_METADATA_NAME,
     parse_vector_version,
@@ -48,7 +48,13 @@ from ocs_storage_exploration.storage.keys import (
     vector_version_metadata_key,
     vector_version_prefix,
 )
-from ocs_storage_exploration.storage.objects import create_object, create_object_if_absent, replace_object
+from ocs_storage_exploration.storage.objects import (
+    create_object,
+    create_object_if_absent,
+    put_object,
+    read_object,
+    replace_object,
+)
 from ocs_storage_exploration.storage.protocols import Catalog, StorageBackend
 from ocs_storage_exploration.storage.schemas import (
     BoundingBox,
@@ -135,7 +141,8 @@ class ParquetSource:
         """Open the Parquet footer of this source."""
         if self.payload is not None:
             return pyarrow.parquet.ParquetFile(pyarrow.BufferReader(self.payload))
-        return pyarrow.parquet.ParquetFile(self._require_path(), filesystem=self.filesystem)
+        with backend_transport_failures(f"reading the Parquet footer of {self._require_path()!r}"):
+            return pyarrow.parquet.ParquetFile(self._require_path(), filesystem=self.filesystem)
 
     def schema(self) -> pyarrow.Schema:
         """Return the Arrow schema of the Parquet source."""
@@ -154,7 +161,8 @@ class ParquetSource:
         """Read the Parquet source into a GeoDataFrame."""
         if self.payload is not None:
             return geopandas.read_parquet(pyarrow.BufferReader(self.payload), **keywords)
-        return geopandas.read_parquet(self._require_path(), filesystem=self.filesystem, **keywords)
+        with backend_transport_failures(f"reading {self._require_path()!r}"):
+            return geopandas.read_parquet(self._require_path(), filesystem=self.filesystem, **keywords)
 
 
 def require_crs(value: Any, *, label: str = "crs") -> CRS:
@@ -441,12 +449,10 @@ class VectorCollectionStore:
         """Read the metadata sidecar describing one version of a collection as it was written."""
         identifier = validate_dataset_identifier(collection_identifier)
         key = self._backend.address(vector_version_metadata_key(identifier, version)).key
-        try:
-            payload = bytes(obstore.get(self._backend.object_store(), key).bytes())
-        except FileNotFoundError as error:
-            # obstore 0.11 reports a missing object as the builtin FileNotFoundError.
-            raise SnapshotNotFoundError(f"collection {identifier!r} has no version {version}") from error
-        return VectorVersionMetadata.model_validate_json(payload)
+        stored = read_object(self._backend.object_store(), key)
+        if stored is None:
+            raise SnapshotNotFoundError(f"collection {identifier!r} has no version {version}")
+        return VectorVersionMetadata.model_validate_json(stored.payload)
 
     def published_metadata(self, collection_identifier: str) -> VectorVersionMetadata | None:
         """Read the metadata sidecar of the published version, or None while nothing is published."""
@@ -564,25 +570,24 @@ class VectorCollectionStore:
         if filesystem is None:
             buffer = io.BytesIO()
             frame.to_parquet(buffer, **options)
-            obstore.put(self._backend.object_store(), address.key, buffer.getvalue())
+            put_object(self._backend.object_store(), address.key, buffer.getvalue())
             return
-        if isinstance(filesystem, pyarrow.fs.LocalFileSystem):
-            # to_parquet will not create the version directory itself on a local filesystem. An object
-            # store has no directories, and create_dir would leave a marker object behind that a prefix
-            # sweep cannot delete, so the call is made only where it is needed.
-            filesystem.create_dir(self._backend.parquet_path(address.parent()), recursive=True)
-        frame.to_parquet(self._backend.parquet_path(address), filesystem=filesystem, **options)
+        with backend_transport_failures(f"writing {address.as_uri()}"):
+            if isinstance(filesystem, pyarrow.fs.LocalFileSystem):
+                # to_parquet will not create the version directory itself on a local filesystem. An object
+                # store has no directories, and create_dir would leave a marker object behind that a prefix
+                # sweep cannot delete, so the call is made only where it is needed.
+                filesystem.create_dir(self._backend.parquet_path(address.parent()), recursive=True)
+            frame.to_parquet(self._backend.parquet_path(address), filesystem=filesystem, **options)
 
     def _parquet_source(self, address: StorageAddress) -> ParquetSource:
         """Resolve an address into a Parquet source, buffering the bytes when no pyarrow filesystem exists."""
         filesystem = self._backend.parquet_filesystem()
         if filesystem is None:
-            try:
-                payload = bytes(obstore.get(self._backend.object_store(), address.key).bytes())
-            except FileNotFoundError as error:
-                # obstore 0.11 reports a missing object as the builtin FileNotFoundError.
-                raise SnapshotNotFoundError(f"no vector data object at {address.as_uri()}") from error
-            return ParquetSource(payload=payload)
+            stored = read_object(self._backend.object_store(), address.key)
+            if stored is None:
+                raise SnapshotNotFoundError(f"no vector data object at {address.as_uri()}")
+            return ParquetSource(payload=stored.payload)
         return ParquetSource(path=self._backend.parquet_path(address), filesystem=filesystem)
 
     def _write_version_metadata(
@@ -721,16 +726,12 @@ class VectorCollectionStore:
     def _read_pointer(self, identifier: str) -> VectorCollectionPointer | None:
         """Read the pointer object of a collection and remember its etag, or return None when it is absent."""
         key = self._pointer_address(identifier).key
-        try:
-            result = obstore.get(self._backend.object_store(), key)
-            etag = result.meta.get("e_tag")
-            payload = bytes(result.bytes())
-        except FileNotFoundError:
-            # obstore 0.11 reports a missing object as the builtin FileNotFoundError.
+        stored = read_object(self._backend.object_store(), key)
+        if stored is None:
             self._pointer_etags.pop(identifier, None)
             return None
-        self._remember_pointer_etag(identifier, etag)
-        return VectorCollectionPointer.model_validate_json(payload)
+        self._remember_pointer_etag(identifier, stored.revision)
+        return VectorCollectionPointer.model_validate_json(stored.payload)
 
     def _write_pointer(self, identifier: str, metadata: VectorVersionMetadata) -> VectorCollectionPointer:
         """Write the pointer object of a collection under compare-and-swap against the etag last read."""

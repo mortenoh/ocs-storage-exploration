@@ -22,6 +22,8 @@ def test_defaults_use_the_filesystem_backend() -> None:
     assert settings.max_query_cell_count == 50_000_000
     assert settings.max_cube_cells == 50_000_000
     assert settings.parquet_row_group_size == 65_536
+    assert settings.max_concurrent_storage_operations == 16
+    assert settings.storage_operation_timeout_seconds == 180.0
 
 
 def test_environment_variables_use_the_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -52,6 +54,28 @@ def test_nested_object_storage_settings_use_the_double_underscore_delimiter(
     assert settings.s3.access_key_id == "rustfsadmin"
     assert settings.s3.secret_access_key is not None
     assert settings.s3.secret_access_key.get_secret_value() == "supersecret"
+    assert settings.s3.connect_timeout_seconds == 5.0
+    assert settings.s3.request_timeout_seconds == 30.0
+    assert settings.s3.max_retries == 3
+    assert settings.s3.retry_backoff_seconds == 0.5
+
+
+def test_the_client_bounds_are_read_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OCS_STORAGE_MAX_CONCURRENT_STORAGE_OPERATIONS", "4")
+    monkeypatch.setenv("OCS_STORAGE_STORAGE_OPERATION_TIMEOUT_SECONDS", "12.5")
+    monkeypatch.setenv("OCS_STORAGE_S3__BUCKET", "ocs-exploration")
+    monkeypatch.setenv("OCS_STORAGE_S3__CONNECT_TIMEOUT_SECONDS", "1.5")
+    monkeypatch.setenv("OCS_STORAGE_S3__REQUEST_TIMEOUT_SECONDS", "9")
+    monkeypatch.setenv("OCS_STORAGE_S3__MAX_RETRIES", "1")
+
+    settings = Settings()
+
+    assert settings.max_concurrent_storage_operations == 4
+    assert settings.storage_operation_timeout_seconds == 12.5
+    assert settings.s3 is not None
+    assert settings.s3.connect_timeout_seconds == 1.5
+    assert settings.s3.request_timeout_seconds == 9.0
+    assert settings.s3.max_retries == 1
 
 
 def test_secrets_are_hidden_when_the_settings_are_rendered() -> None:

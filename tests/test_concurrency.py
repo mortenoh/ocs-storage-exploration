@@ -1,7 +1,8 @@
-"""Tests that the routers run in the threadpool and that the shared caches survive several threads."""
+"""Tests that every route is awaitable, that the limiter bounds the engines and that the timeout answers 504."""
 
 from __future__ import annotations
 
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from inspect import iscoroutinefunction
@@ -16,6 +17,7 @@ from ocs_storage_exploration.api import backends, datasets, health, raster, stac
 from ocs_storage_exploration.main import create_app
 from ocs_storage_exploration.settings import Settings
 from ocs_storage_exploration.storage.addresses import StorageScheme
+from ocs_storage_exploration.storage.raster.repository import RasterRepository
 
 COVERAGE = "concurrent-coverage"
 COLLECTION = "concurrent-collection"
@@ -49,23 +51,26 @@ VECTOR_BODY: dict[str, Any] = {
 }
 
 
+# A storage call slow enough that the timeout below always wins the race.
+SLOW_CALL_SECONDS = 2.0
+TIMEOUT_BUDGET_SECONDS = 1.0
+CONCURRENCY_LIMIT = 2
+
+
 @pytest.fixture
 def memory_settings() -> Settings:
     return Settings(backend=StorageScheme.MEMORY, base_prefix="ocs")
 
 
-def test_every_storage_route_is_offloaded_to_the_threadpool() -> None:
+def test_every_route_is_a_coroutine_awaiting_the_async_facade() -> None:
     routers = (backends.router, datasets.router, health.router, raster.router, stac.router, vector.router)
+    routes = [route for router in routers for route in router.routes if isinstance(route, APIRoute)]
 
-    coroutine_routes = sorted(
-        route.path
-        for router in routers
-        for route in router.routes
-        if isinstance(route, APIRoute) and iscoroutinefunction(route.endpoint)
-    )
+    blocking_routes = sorted(route.path for route in routes if not iscoroutinefunction(route.endpoint))
 
-    # The health probe is the one route that touches no storage, so it stays on the event loop.
-    assert coroutine_routes == ["/health"]
+    # Nothing is left for FastAPI to offload: the async facade decides which calls reach a worker thread.
+    assert blocking_routes == []
+    assert len(routes) > 1
 
 
 def test_concurrent_reads_are_served_while_health_answers_promptly(client: TestClient) -> None:
@@ -103,3 +108,55 @@ def test_two_concurrent_creates_of_different_datasets_both_succeed(memory_settin
         # Each repository keeps its own cached in-memory storage, so neither create lost its cube.
         assert sorted(record["dataset_identifier"] for record in listed) == ["concurrent-alpha", "concurrent-beta"]
         assert {record["timestep_count"] for record in listed} == {3}
+
+
+def test_a_storage_call_that_outlives_the_timeout_answers_504(
+    memory_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def slow_query(*arguments: Any, **keywords: Any) -> Any:
+        time.sleep(SLOW_CALL_SECONDS)
+        raise AssertionError("the timeout should have answered long before this call returned")
+
+    monkeypatch.setattr(RasterRepository, "query", slow_query)
+    settings = memory_settings.model_copy(update={"storage_operation_timeout_seconds": 0.1})
+
+    with TestClient(create_app(settings=settings)) as client:
+        started = time.perf_counter()
+        response = client.get(f"/api/v1/raster/{COVERAGE}/query")
+        elapsed = time.perf_counter() - started
+
+    assert response.status_code == 504
+    assert response.json()["error"] == "StorageTimeoutError"
+    # The worker thread is abandoned rather than cancelled, so the answer must not wait for it.
+    assert elapsed < TIMEOUT_BUDGET_SECONDS
+
+
+def test_the_limiter_caps_how_many_engine_calls_run_at_once(
+    memory_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lock = threading.Lock()
+    observed = {"active": 0, "peak": 0}
+    real_query = RasterRepository.query
+
+    def counting_query(self: RasterRepository, *arguments: Any, **keywords: Any) -> Any:
+        with lock:
+            observed["active"] += 1
+            observed["peak"] = max(observed["peak"], observed["active"])
+        try:
+            time.sleep(0.05)
+            return real_query(self, *arguments, **keywords)
+        finally:
+            with lock:
+                observed["active"] -= 1
+
+    monkeypatch.setattr(RasterRepository, "query", counting_query)
+    settings = memory_settings.model_copy(update={"max_concurrent_storage_operations": CONCURRENCY_LIMIT})
+
+    with TestClient(create_app(settings=settings)) as client:
+        assert client.post(f"/api/v1/raster/{COVERAGE}", json=RASTER_BODY).status_code == 201
+        with ThreadPoolExecutor(max_workers=REQUEST_COUNT) as pool:
+            pending = [pool.submit(client.get, f"/api/v1/raster/{COVERAGE}/query") for _ in range(REQUEST_COUNT)]
+            responses: list[httpx.Response] = [future.result() for future in pending]
+
+    assert [response.status_code for response in responses] == [200] * REQUEST_COUNT
+    assert 0 < observed["peak"] <= CONCURRENCY_LIMIT

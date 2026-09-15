@@ -76,6 +76,49 @@ a second thread or a rollback. All eleven are closed:
   malformed document goes wrong, with an unreadable coordinate reference system
   answered as 400 and structurally wrong vector input as 422.
 
+**Pass 5: pluggable backends.** The backend seam became a
+[pluginkit](https://winterop-com.github.io/pluginkit) extension point rather
+than a table of factories. `StorageBackendSpecs` declares three typed extension
+points, the filesystem, memory and S3 backends are three plugins registered by
+name before any entry point is loaded, and an external distribution adds a
+scheme by advertising itself under the `ocs_storage_exploration.plugins` group.
+`examples/plugins/ocs-storage-null/` is the worked external plugin, deliberately
+not installed. `GET /api/v1/backends` describes every provided scheme without
+building a client or reading a credential, and a findings page summarises the
+exploration for the OCS team.
+
+**Pass 6: async surface and bounded S3 clients.** The plain `def` routes of pass
+4 became `async def` over `AsyncStorageService`, because the caller this is
+meant for is an async FastAPI service that wants awaitables rather than a
+threadpool hop it does not control:
+
+- `AsyncObjectCatalog` answers record reads and writes natively through
+  obstore's `get_async`, `put_async`, `head_async`, `delete_async` and async
+  listing, with the same compare-and-swap semantics as `ObjectCatalog` and the
+  key layout, record encoding and failure mapping shared rather than restated.
+  obstore is the one library here with an async API, so it is the one layer that
+  does not need a thread.
+- Every raster and vector engine call runs on a worker thread through
+  `anyio.to_thread.run_sync`, behind an `anyio.CapacityLimiter` sized by
+  `OCS_STORAGE_MAX_CONCURRENT_STORAGE_OPERATIONS` and inside an
+  `asyncio.timeout` sized by `OCS_STORAGE_STORAGE_OPERATION_TIMEOUT_SECONDS`,
+  which reports `StorageTimeoutError` as 504.
+- The S3 clients are bounded where they are built: `connect_timeout_seconds`,
+  `request_timeout_seconds`, `max_retries` and `retry_backoff_seconds` are
+  translated once into obstore's `client_options` and `RetryConfig`, pyarrow's
+  `connect_timeout`, `request_timeout` and retry strategy, and Icechunk's
+  `network_stream_timeout_seconds` plus a `RepositoryConfig` carrying
+  `StorageSettings(timeouts=..., retries=...)`, which
+  `StorageBackend.repository_config()` hands to `Repository.open_or_create`. An
+  unreachable endpoint now fails in under a second with
+  `BackendUnavailableError` (503) instead of hanging, and the conditional-write
+  switches are never touched.
+- The plugin manager moved next to the plugins it registers:
+  `build_plugin_manager` and `default_plugin_manager` are in
+  `storage/backends/`, the facade that wrapped them is gone, and
+  `plugins.backend_for_scheme` is the single place that refuses a scheme no
+  plugin provides.
+
 ## Next
 
 1. **Real-data ingestion through the same API.** Drive an OCS dataset plugin's

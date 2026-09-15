@@ -9,10 +9,14 @@ from ocs_storage_exploration.storage.backends import (
     MemoryStorageBackend,
     S3BackendPlugin,
     S3StorageBackend,
+    build_plugin_manager,
+    default_plugin_manager,
 )
 from ocs_storage_exploration.storage.catalog import ObjectCatalog
+from ocs_storage_exploration.storage.catalog_async import AsyncObjectCatalog
 from ocs_storage_exploration.storage.errors import (
     BackendNotSupportedError,
+    BackendUnavailableError,
     CrsError,
     DatasetAlreadyExistsError,
     DatasetNotFoundError,
@@ -28,16 +32,21 @@ from ocs_storage_exploration.storage.errors import (
     SnapshotNotFoundError,
     StorageAddressError,
     StorageError,
+    StorageTimeoutError,
     VectorInputError,
 )
+from ocs_storage_exploration.storage.failures import backend_transport_failures
 from ocs_storage_exploration.storage.plugins import (
     ENTRY_POINT_GROUP,
     INACTIVE_BACKEND_STATUS,
     StorageBackendSpecs,
+    backend_for_scheme,
+    description_for_scheme,
     extension,
     extension_point,
+    provided_schemes,
 )
-from ocs_storage_exploration.storage.protocols import Catalog, StorageBackend
+from ocs_storage_exploration.storage.protocols import AsyncCatalog, Catalog, StorageBackend
 from ocs_storage_exploration.storage.raster import (
     GRID_MAPPING_ATTRIBUTE,
     MAIN_BRANCH,
@@ -59,12 +68,6 @@ from ocs_storage_exploration.storage.raster import (
     build_timestamps,
     projection_code,
     wrap_longitudes,
-)
-from ocs_storage_exploration.storage.registry import (
-    build_backend,
-    build_plugin_manager,
-    default_plugin_manager,
-    registered_schemes,
 )
 from ocs_storage_exploration.storage.schemas import (
     BackendDescription,
@@ -88,6 +91,12 @@ from ocs_storage_exploration.storage.schemas import (
     VectorWriteResult,
 )
 from ocs_storage_exploration.storage.service import StorageService
+from ocs_storage_exploration.storage.service_async import (
+    AsyncRasterRepository,
+    AsyncStorageService,
+    AsyncVectorCollectionStore,
+    StorageOperationRunner,
+)
 from ocs_storage_exploration.storage.vector import (
     DEFAULT_CRS,
     GEOPARQUET_SCHEMA_VERSION,
@@ -115,8 +124,14 @@ from ocs_storage_exploration.storage.vector import (
 )
 
 __all__ = [
+    "AsyncCatalog",
+    "AsyncObjectCatalog",
+    "AsyncRasterRepository",
+    "AsyncStorageService",
+    "AsyncVectorCollectionStore",
     "BackendDescription",
     "BackendNotSupportedError",
+    "BackendUnavailableError",
     "BaseStorageBackend",
     "BoundingBox",
     "Catalog",
@@ -177,8 +192,10 @@ __all__ = [
     "StorageBackend",
     "StorageError",
     "StorageFormat",
+    "StorageOperationRunner",
     "StorageScheme",
     "StorageService",
+    "StorageTimeoutError",
     "TemporalExtent",
     "TimeStep",
     "VectorCollectionPointer",
@@ -193,7 +210,8 @@ __all__ = [
     "WhereClause",
     "apply_geozarr_attributes",
     "assert_finite_attributes",
-    "build_backend",
+    "backend_for_scheme",
+    "backend_transport_failures",
     "build_plugin_manager",
     "build_cell_sizes",
     "build_coordinates",
@@ -205,13 +223,14 @@ __all__ = [
     "coerce_clause_value",
     "crs_identifier",
     "default_plugin_manager",
+    "description_for_scheme",
     "extension",
     "extension_point",
     "frame_bounding_box",
     "is_prefix_value",
     "parse_where",
     "projection_code",
-    "registered_schemes",
+    "provided_schemes",
     "require_crs",
     "same_crs",
     "validate_feature_collection",

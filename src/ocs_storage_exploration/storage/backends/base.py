@@ -5,12 +5,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 import icechunk
-import obstore
 import pyarrow.fs
 from obstore.store import ObjectStore
 
 from ocs_storage_exploration.storage.addresses import StorageAddress, join_key_parts, parse_storage_scheme
 from ocs_storage_exploration.storage.errors import StorageAddressError
+from ocs_storage_exploration.storage.objects import delete_objects, list_object_keys, object_exists
 from ocs_storage_exploration.storage.schemas import BackendDescription
 
 
@@ -59,6 +59,10 @@ class BaseStorageBackend(ABC):
     def icechunk_storage(self, address: StorageAddress) -> icechunk.Storage:
         """Resolve an address into the Icechunk storage of a repository."""
 
+    def repository_config(self) -> icechunk.RepositoryConfig | None:
+        """Return the Icechunk repository configuration this backend imposes, or None to keep the defaults."""
+        return None
+
     @abstractmethod
     def object_store(self) -> ObjectStore:
         """Return the obstore store used for raw object operations."""
@@ -73,25 +77,17 @@ class BaseStorageBackend(ABC):
 
     def exists(self, address: StorageAddress) -> bool:
         """Report whether a single object exists at the address."""
-        try:
-            obstore.head(self.object_store(), address.key)
-        except FileNotFoundError:
-            # obstore 0.11 reports a missing object as the builtin FileNotFoundError.
-            return False
-        return True
+        return object_exists(self.object_store(), address.key)
 
     def list_keys(self, address: StorageAddress) -> list[str]:
         """List every object key at or below the address."""
-        prefix = address.key
-        listed = obstore.list(self.object_store(), prefix).collect()
-        keys = [str(item["path"]) for item in listed]
-        return sorted(key for key in keys if key == prefix or key.startswith(f"{prefix}/"))
+        return list_object_keys(self.object_store(), address.key)
 
     def delete_prefix(self, address: StorageAddress) -> int:
         """Delete every object at or below the address and return how many were removed."""
         keys = self.list_keys(address)
         if keys:
-            obstore.delete(self.object_store(), keys)
+            delete_objects(self.object_store(), keys)
         return len(keys)
 
     def description_details(self) -> dict[str, str]:

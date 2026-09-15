@@ -34,21 +34,25 @@ Generated reference for the application, its settings and the storage package.
 
 ::: ocs_storage_exploration.storage.plugins
 
-## Storage registry
+## Storage failures
 
-::: ocs_storage_exploration.storage.registry
+::: ocs_storage_exploration.storage.failures
 
 ## Storage catalog
 
 ::: ocs_storage_exploration.storage.catalog
 
-## Conditional object writes
+::: ocs_storage_exploration.storage.catalog_async
+
+## Object reads and writes
 
 ::: ocs_storage_exploration.storage.objects
 
 ## Storage service
 
 ::: ocs_storage_exploration.storage.service
+
+::: ocs_storage_exploration.storage.service_async
 
 ## STAC projection
 

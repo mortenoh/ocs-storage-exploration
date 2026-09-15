@@ -16,10 +16,13 @@ from pydantic import SecretStr
 from ocs_storage_exploration.main import create_app
 from ocs_storage_exploration.settings import ObjectStorageSettings, Settings
 from ocs_storage_exploration.storage.addresses import StorageScheme
+from ocs_storage_exploration.storage.backends import default_plugin_manager
 from ocs_storage_exploration.storage.catalog import ObjectCatalog
+from ocs_storage_exploration.storage.catalog_async import AsyncObjectCatalog
+from ocs_storage_exploration.storage.plugins import backend_for_scheme
 from ocs_storage_exploration.storage.protocols import StorageBackend
-from ocs_storage_exploration.storage.registry import build_backend
 from ocs_storage_exploration.storage.service import StorageService
+from ocs_storage_exploration.storage.service_async import AsyncStorageService
 
 # The environment is read at import time: the isolated_environment fixture clears every
 # OCS_STORAGE_ variable before a test runs, so a fixture body would only ever see the defaults.
@@ -30,6 +33,10 @@ S3_ACCESS_KEY_ID = os.environ.get("OCS_STORAGE_S3__ACCESS_KEY_ID", "rustfsadmin"
 S3_SECRET_ACCESS_KEY = os.environ.get("OCS_STORAGE_S3__SECRET_ACCESS_KEY", "rustfsadmin")
 S3_ALLOW_HTTP = os.environ.get("OCS_STORAGE_S3__ALLOW_HTTP", "true")
 S3_FORCE_PATH_STYLE = os.environ.get("OCS_STORAGE_S3__FORCE_PATH_STYLE", "true")
+
+
+def backend_for_settings(settings: Settings) -> StorageBackend:
+    return backend_for_scheme(default_plugin_manager(), settings, settings.backend)
 
 
 def boolean_from_environment(value: str) -> bool:
@@ -59,7 +66,7 @@ def s3_test_settings() -> Settings:
 
 
 def remove_s3_test_prefix(settings: Settings) -> None:
-    backend = build_backend(settings)
+    backend = backend_for_settings(settings)
     backend.delete_prefix(backend.address())
 
 
@@ -107,12 +114,12 @@ def live_s3_settings() -> Iterator[Settings]:
 
 @pytest.fixture
 def live_s3_backend(live_s3_settings: Settings) -> StorageBackend:
-    return build_backend(live_s3_settings)
+    return backend_for_settings(live_s3_settings)
 
 
 @pytest.fixture
 def storage_backend(settings: Settings) -> StorageBackend:
-    return build_backend(settings)
+    return backend_for_settings(settings)
 
 
 @pytest.fixture
@@ -121,8 +128,18 @@ def catalog(storage_backend: StorageBackend) -> ObjectCatalog:
 
 
 @pytest.fixture
+def async_catalog(storage_backend: StorageBackend) -> AsyncObjectCatalog:
+    return AsyncObjectCatalog(storage_backend)
+
+
+@pytest.fixture
 def storage_service(settings: Settings) -> StorageService:
     return StorageService.from_settings(settings)
+
+
+@pytest.fixture
+def async_storage_service(storage_service: StorageService) -> AsyncStorageService:
+    return AsyncStorageService(storage_service)
 
 
 @pytest.fixture

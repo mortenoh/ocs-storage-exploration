@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import icechunk
@@ -17,10 +18,11 @@ from ocs_storage_exploration.storage.backends import (
     FilesystemStorageBackend,
     MemoryStorageBackend,
     S3StorageBackend,
+    default_plugin_manager,
 )
 from ocs_storage_exploration.storage.errors import BackendNotSupportedError
+from ocs_storage_exploration.storage.plugins import backend_for_scheme, provided_schemes
 from ocs_storage_exploration.storage.protocols import StorageBackend
-from ocs_storage_exploration.storage.registry import build_backend, registered_schemes
 
 SECRET_VALUE = "supersecretvalue"
 
@@ -145,6 +147,66 @@ def test_s3_backend_describes_itself_without_secrets() -> None:
     assert SECRET_VALUE not in description.model_dump_json()
 
 
+def test_s3_backend_reports_its_client_bounds_in_its_description() -> None:
+    description = build_s3_backend().describe()
+
+    assert description.details["connect_timeout_seconds"] == "5.0"
+    assert description.details["request_timeout_seconds"] == "30.0"
+    assert description.details["max_retries"] == "3"
+
+
+def test_the_client_bounds_reach_all_three_clients() -> None:
+    backend = S3StorageBackend(
+        bucket="ocs-exploration",
+        connect_timeout_seconds=2.0,
+        request_timeout_seconds=4.0,
+        max_retries=2,
+        retry_backoff_seconds=0.25,
+    )
+
+    client_options = backend._client_options()
+    retry_config = backend._retry_config()
+    pyarrow_options = backend._pyarrow_options()
+    repository_config = backend.repository_config()
+    storage = repository_config.storage
+    assert storage is not None
+    timeouts = storage.timeouts
+    retries = storage.retries
+    assert timeouts is not None
+    assert retries is not None
+
+    # One budget for the whole request: four seconds per attempt, three attempts, two backoffs.
+    assert backend.retry_budget_seconds == pytest.approx(12.5)
+    assert client_options.get("connect_timeout") == timedelta(seconds=2.0)
+    assert client_options.get("timeout") == timedelta(seconds=4.0)
+    assert retry_config.get("max_retries") == 2
+    assert retry_config.get("retry_timeout") == timedelta(seconds=12.5)
+    assert retry_config.get("backoff") == {
+        "init_backoff": timedelta(seconds=0.25),
+        "max_backoff": timedelta(seconds=1.0),
+        "base": 2,
+    }
+    assert pyarrow_options["connect_timeout"] == 2.0
+    assert pyarrow_options["request_timeout"] == 4.0
+    assert timeouts.connect_timeout_ms == 2000
+    assert timeouts.read_timeout_ms == 4000
+    assert timeouts.operation_timeout_ms == 12500
+    assert timeouts.operation_attempt_timeout_ms == 4000
+    # Icechunk counts tries including the first one, obstore counts retries after it.
+    assert retries.max_tries == 3
+    assert retries.initial_backoff_ms == 250
+    assert retries.max_backoff_ms == 1000
+    # Never disabled, whatever the timeouts are.
+    assert storage.unsafe_use_conditional_create is not False
+    assert storage.unsafe_use_conditional_update is not False
+
+
+def test_only_the_s3_backend_imposes_a_repository_config(tmp_path: Path) -> None:
+    assert FilesystemStorageBackend(directory=tmp_path / "data").repository_config() is None
+    assert MemoryStorageBackend().repository_config() is None
+    assert isinstance(build_s3_backend().repository_config(), icechunk.RepositoryConfig)
+
+
 def test_s3_backend_builds_and_caches_its_handles_without_reaching_the_endpoint() -> None:
     backend = build_s3_backend()
     address = backend.address("vector/one", "data.parquet")
@@ -168,7 +230,7 @@ def test_s3_backend_is_built_from_settings() -> None:
         s3=ObjectStorageSettings(bucket="ocs-exploration", prefix="exploration"),
     )
 
-    backend = build_backend(settings)
+    backend = backend_for_scheme(default_plugin_manager(), settings, settings.backend)
 
     assert backend.scheme is StorageScheme.S3
     assert backend.root == "ocs-exploration"
@@ -176,10 +238,10 @@ def test_s3_backend_is_built_from_settings() -> None:
 
 
 def test_every_built_in_scheme_is_provided_by_a_plugin() -> None:
-    assert registered_schemes() == (StorageScheme.FILE, StorageScheme.MEMORY, StorageScheme.S3)
+    assert provided_schemes(default_plugin_manager()) == (StorageScheme.FILE, StorageScheme.MEMORY, StorageScheme.S3)
 
 
-def test_the_facade_builds_the_backend_named_by_the_settings(settings: Settings) -> None:
-    backend = build_backend(settings)
+def test_the_plugins_build_the_backend_named_by_the_settings(settings: Settings) -> None:
+    backend = backend_for_scheme(default_plugin_manager(), settings, settings.backend)
 
     assert backend.scheme is settings.backend

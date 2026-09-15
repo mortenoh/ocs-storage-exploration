@@ -10,7 +10,8 @@ from pydantic import SecretStr
 
 from ocs_storage_exploration.main import create_app
 from ocs_storage_exploration.settings import ObjectStorageSettings, Settings
-from ocs_storage_exploration.storage.registry import registered_schemes
+from ocs_storage_exploration.storage.backends import default_plugin_manager
+from ocs_storage_exploration.storage.plugins import provided_schemes
 
 SECRET_VALUE = "rustfsadminsecret"
 SESSION_TOKEN_VALUE = "rustfssessiontoken"
@@ -40,7 +41,7 @@ def test_the_active_backend_is_listed_first(client: TestClient, settings: Settin
 
     assert response.status_code == 200
     items = response.json()["items"]
-    assert len(items) == len(registered_schemes())
+    assert len(items) == len(provided_schemes(default_plugin_manager()))
     assert items[0]["scheme"] == settings.backend
     assert items[0]["available"] is True
     assert items[0]["base_prefix"] == settings.base_prefix
@@ -51,7 +52,7 @@ def test_the_other_registered_schemes_are_reported_as_inactive(client: TestClien
 
     inactive = [item for item in items if item["scheme"] != settings.backend]
     assert {item["scheme"] for item in inactive} == {
-        str(scheme) for scheme in registered_schemes() if scheme != settings.backend
+        str(scheme) for scheme in provided_schemes(default_plugin_manager()) if scheme != settings.backend
     }
     assert all(item["available"] is False for item in inactive)
 

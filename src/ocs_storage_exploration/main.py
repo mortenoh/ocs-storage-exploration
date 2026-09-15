@@ -13,6 +13,7 @@ from ocs_storage_exploration.api import backends, datasets, health, raster, stac
 from ocs_storage_exploration.settings import Settings, get_settings
 from ocs_storage_exploration.storage.errors import StorageError
 from ocs_storage_exploration.storage.service import StorageService
+from ocs_storage_exploration.storage.service_async import AsyncStorageService
 
 APPLICATION_TITLE = "OCS storage exploration"
 APPLICATION_DESCRIPTION = "Prototype of a unified raster and vector storage abstraction for the Open Climate Service"
@@ -34,9 +35,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
-        """Build the storage service for the lifetime of the application."""
+        """Build the storage service and its awaitable facade for the lifetime of the application."""
         service = StorageService.from_settings(resolved_settings)
         application.state.storage = service
+        # Every route awaits the async facade; the sync service stays on the state because the STAC
+        # projection takes one, and because the facade wraps it rather than replacing it.
+        application.state.storage_async = AsyncStorageService(service)
         # The backend and the catalog stay on the state so a dependency that needs one handle
         # does not have to reach through the service.
         application.state.backend = service.backend

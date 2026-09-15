@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from typing import Protocol, runtime_checkable
 
 import icechunk
@@ -38,6 +38,10 @@ class StorageBackend(Protocol):
 
     def icechunk_storage(self, address: StorageAddress) -> icechunk.Storage:
         """Resolve an address into the Icechunk storage of a repository."""
+        ...
+
+    def repository_config(self) -> icechunk.RepositoryConfig | None:
+        """Return the Icechunk repository configuration this backend imposes, or None to keep the defaults."""
         ...
 
     def object_store(self) -> ObjectStore:
@@ -102,5 +106,42 @@ class Catalog(Protocol):
         ...
 
     def iter_identifiers(self) -> Iterator[str]:
+        """Iterate over the identifiers of every known dataset."""
+        ...
+
+
+@runtime_checkable
+class AsyncCatalog(Protocol):
+    """Stores the record that makes a dataset exist, one awaitable per call."""
+
+    async def put(self, dataset: Dataset, *, revision: str | None = None, create: bool = False) -> None:
+        """Write a dataset record as a conditional create, as a compare-and-swap, or as a plain overwrite."""
+        ...
+
+    async def get(self, identifier: str) -> Dataset | None:
+        """Read a dataset record, or None when it does not exist."""
+        ...
+
+    async def get_entry(self, identifier: str) -> CatalogEntry | None:
+        """Read a dataset record with the revision it was read at, or None when it does not exist."""
+        ...
+
+    async def require(self, identifier: str) -> Dataset:
+        """Read a dataset record or raise DatasetNotFoundError."""
+        ...
+
+    async def require_entry(self, identifier: str) -> CatalogEntry:
+        """Read a dataset record with its revision or raise DatasetNotFoundError."""
+        ...
+
+    async def list_datasets(self, item_type: ItemType | None = None) -> list[Dataset]:
+        """List dataset records, optionally filtered by item type."""
+        ...
+
+    async def delete(self, identifier: str) -> None:
+        """Delete a dataset record."""
+        ...
+
+    def iter_identifiers(self) -> AsyncIterator[str]:
         """Iterate over the identifiers of every known dataset."""
         ...

@@ -12,7 +12,7 @@ from ocs_storage_exploration.storage.addresses import SchemeName, StorageScheme
 
 
 class ObjectStorageSettings(BaseModel):
-    """S3 compatible object storage configuration; secrets stay wrapped in SecretStr."""
+    """S3 compatible object storage configuration, including client timeouts; secrets stay wrapped in SecretStr."""
 
     bucket: str
     prefix: str = "ocs"
@@ -24,6 +24,10 @@ class ObjectStorageSettings(BaseModel):
     session_token: SecretStr | None = None
     force_path_style: bool = True
     anonymous: bool = False
+    connect_timeout_seconds: float = Field(default=5.0, gt=0)
+    request_timeout_seconds: float = Field(default=30.0, gt=0)
+    max_retries: int = Field(default=3, ge=0)
+    retry_backoff_seconds: float = Field(default=0.5, gt=0)
 
 
 class Settings(BaseSettings):
@@ -45,6 +49,8 @@ class Settings(BaseSettings):
     max_query_cell_count: int = Field(default=50_000_000, ge=1)
     max_cube_cells: int = Field(default=50_000_000, ge=1)
     parquet_row_group_size: int = Field(default=65_536, ge=1)
+    max_concurrent_storage_operations: int = Field(default=16, ge=1)
+    storage_operation_timeout_seconds: float = Field(default=180.0, gt=0)
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
     log_level: str = "info"

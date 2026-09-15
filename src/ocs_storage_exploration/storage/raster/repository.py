@@ -28,6 +28,7 @@ from ocs_storage_exploration.storage.errors import (
     RasterContractError,
     SnapshotNotFoundError,
 )
+from ocs_storage_exploration.storage.failures import backend_transport_failures
 from ocs_storage_exploration.storage.keys import raster_prefix, validate_dataset_identifier
 from ocs_storage_exploration.storage.protocols import Catalog, StorageBackend
 from ocs_storage_exploration.storage.raster.grid import (
@@ -387,9 +388,12 @@ class RasterRepository:
 
     def _open_repository(self, dataset_identifier: str) -> icechunk.Repository:
         """Open the Icechunk repository of a coverage, creating it when it does not exist."""
-        return icechunk.Repository.open_or_create(
-            self._backend.icechunk_storage(self.repository_address(dataset_identifier))
-        )
+        address = self.repository_address(dataset_identifier)
+        with backend_transport_failures(f"opening the repository of {dataset_identifier!r}"):
+            return icechunk.Repository.open_or_create(
+                self._backend.icechunk_storage(address),
+                config=self._backend.repository_config(),
+            )
 
     def _existing_entry(self, dataset_identifier: str, *, overwrite: bool) -> CoverageEntry | None:
         """Return the entry being overwritten, refusing an existing dataset unless overwrite is set."""

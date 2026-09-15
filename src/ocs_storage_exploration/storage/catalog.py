@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from typing import Final
 
-import obstore
 from pydantic import TypeAdapter
 
 from ocs_storage_exploration.storage.addresses import StorageAddress
@@ -20,13 +19,57 @@ from ocs_storage_exploration.storage.keys import (
     catalog_record_key,
     dataset_identifier_from_catalog_key,
 )
-from ocs_storage_exploration.storage.objects import create_object, replace_object
+from ocs_storage_exploration.storage.objects import (
+    ObjectPayload,
+    create_object,
+    delete_objects,
+    put_object,
+    read_object,
+    replace_object,
+)
 from ocs_storage_exploration.storage.protocols import StorageBackend
 from ocs_storage_exploration.storage.schemas import CatalogEntry, Dataset, ItemType
 
 RECORD_LABEL: Final[str] = "dataset record"
 
 DATASET_ADAPTER: TypeAdapter[Dataset] = TypeAdapter(Dataset)
+
+
+def encode_record(dataset: Dataset) -> bytes:
+    """Render a dataset record as the JSON bytes stored under its key."""
+    return DATASET_ADAPTER.dump_json(dataset)
+
+
+def assert_single_write_mode(*, create: bool, revision: str | None) -> None:
+    """Refuse a write that asks to be both a conditional create and a compare-and-swap."""
+    if create and revision is not None:
+        raise PublicationConflictError("a catalog write is either a create or a compare-and-swap, not both")
+
+
+def already_exists(identifier: str) -> DatasetAlreadyExistsError:
+    """Build the failure reported when a record was created by another writer first."""
+    return DatasetAlreadyExistsError(f"dataset {identifier!r} already has a catalog record")
+
+
+def no_such_record(identifier: str) -> DatasetNotFoundError:
+    """Build the failure reported when no catalog record exists for an identifier."""
+    return DatasetNotFoundError(f"no dataset record for {identifier!r}")
+
+
+def entry_from_payload(payload: ObjectPayload, key: str) -> CatalogEntry:
+    """Build the catalog entry of a record that was read, refusing a store that reports no etag."""
+    if payload.revision is None:
+        raise BackendNotSupportedError(
+            f"the object store reports no etag for {RECORD_LABEL} {key!r}, so it cannot be updated safely",
+        )
+    return CatalogEntry(record=DATASET_ADAPTER.validate_json(payload.payload), revision=payload.revision)
+
+
+def identifiers_from_keys(keys: Iterable[str]) -> Iterator[str]:
+    """Read the dataset identifier out of every catalog record key, skipping anything else."""
+    for key in keys:
+        if key.endswith(".json"):
+            yield dataset_identifier_from_catalog_key(key)
 
 
 class ObjectCatalog:
@@ -52,23 +95,20 @@ class ObjectCatalog:
         ``CatalogEntry`` refuses a record that changed since it was read. Passing neither overwrites
         whatever is stored, which is the caller declaring that it does not care who wrote it last.
         """
-        if create and revision is not None:
-            raise PublicationConflictError("a catalog write is either a create or a compare-and-swap, not both")
+        assert_single_write_mode(create=create, revision=revision)
         key = self.record_address(dataset.dataset_identifier).key
-        payload = DATASET_ADAPTER.dump_json(dataset)
+        payload = encode_record(dataset)
         store = self._backend.object_store()
         if create:
             try:
                 create_object(store, key, payload, label=RECORD_LABEL)
             except PublicationConflictError as error:
-                raise DatasetAlreadyExistsError(
-                    f"dataset {dataset.dataset_identifier!r} already has a catalog record",
-                ) from error
+                raise already_exists(dataset.dataset_identifier) from error
             return
         if revision is not None:
             replace_object(store, key, payload, revision, label=RECORD_LABEL)
             return
-        obstore.put(store, key, payload)
+        put_object(store, key, payload)
 
     def get(self, identifier: str) -> Dataset | None:
         """Read a dataset record, or None when it does not exist."""
@@ -78,18 +118,8 @@ class ObjectCatalog:
     def get_entry(self, identifier: str) -> CatalogEntry | None:
         """Read a dataset record with the revision it was read at, or None when it does not exist."""
         key = self.record_address(identifier).key
-        try:
-            result = obstore.get(self._backend.object_store(), key)
-            revision = result.meta.get("e_tag")
-            payload = bytes(result.bytes())
-        except FileNotFoundError:
-            # obstore 0.11 reports a missing object as the builtin FileNotFoundError.
-            return None
-        if revision is None:
-            raise BackendNotSupportedError(
-                f"the object store reports no etag for {RECORD_LABEL} {key!r}, so it cannot be updated safely",
-            )
-        return CatalogEntry(record=DATASET_ADAPTER.validate_json(payload), revision=revision)
+        payload = read_object(self._backend.object_store(), key)
+        return None if payload is None else entry_from_payload(payload, key)
 
     def require(self, identifier: str) -> Dataset:
         """Read a dataset record or raise DatasetNotFoundError."""
@@ -99,7 +129,7 @@ class ObjectCatalog:
         """Read a dataset record with its revision or raise DatasetNotFoundError."""
         entry = self.get_entry(identifier)
         if entry is None:
-            raise DatasetNotFoundError(f"no dataset record for {identifier!r}")
+            raise no_such_record(identifier)
         return entry
 
     def list_datasets(self, item_type: ItemType | None = None) -> list[Dataset]:
@@ -117,11 +147,9 @@ class ObjectCatalog:
         """Delete a dataset record, raising DatasetNotFoundError when it is absent."""
         address = self.record_address(identifier)
         if not self._backend.exists(address):
-            raise DatasetNotFoundError(f"no dataset record for {identifier!r}")
-        obstore.delete(self._backend.object_store(), address.key)
+            raise no_such_record(identifier)
+        delete_objects(self._backend.object_store(), address.key)
 
     def iter_identifiers(self) -> Iterator[str]:
         """Iterate over the identifiers of every known dataset in key order."""
-        for key in self._backend.list_keys(self._backend.address(CATALOG_PREFIX)):
-            if key.endswith(".json"):
-                yield dataset_identifier_from_catalog_key(key)
+        return identifiers_from_keys(self._backend.list_keys(self._backend.address(CATALOG_PREFIX)))

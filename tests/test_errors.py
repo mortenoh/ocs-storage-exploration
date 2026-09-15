@@ -10,6 +10,7 @@ EXPECTED_STATUS_CODES = {
     "StorageError": 500,
     "StorageAddressError": 400,
     "BackendNotSupportedError": 501,
+    "BackendUnavailableError": 503,
     "CrsError": 400,
     "DatasetNotFoundError": 404,
     "DatasetAlreadyExistsError": 409,
@@ -24,6 +25,7 @@ EXPECTED_STATUS_CODES = {
     "FeatureCountGuardError": 413,
     "QuerySizeGuardError": 413,
     "SelectableColumnError": 400,
+    "StorageTimeoutError": 504,
 }
 
 

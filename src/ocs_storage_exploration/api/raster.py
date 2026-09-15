@@ -7,7 +7,7 @@ from typing import Annotated, Final
 
 from fastapi import APIRouter, Query, status
 
-from ocs_storage_exploration.api.dependencies import StorageServiceDependency
+from ocs_storage_exploration.api.dependencies import AsyncStorageServiceDependency
 from ocs_storage_exploration.api.parameters import BoundingBoxQuery, parse_bbox
 from ocs_storage_exploration.api.schemas import (
     AppendRasterRequest,
@@ -20,8 +20,8 @@ from ocs_storage_exploration.storage.schemas import PublicationResult, RasterQue
 
 router = APIRouter(prefix="/api/v1/raster", tags=["raster"])
 
-# Plain def, not async def: FastAPI runs these in the threadpool so the blocking storage calls
-# never occupy the event loop. See docs/architecture.md for the threading model.
+# Every route is an async def awaiting AsyncStorageService: the blocking engine calls run on bounded
+# worker threads and the event loop stays free. See docs/architecture.md for the threading model.
 
 DEFAULT_VERSION_LIMIT: Final[int] = 100
 MAXIMUM_VERSION_LIMIT: Final[int] = 1000
@@ -30,14 +30,14 @@ VersionLimitQuery = Annotated[int, Query(ge=1, le=MAXIMUM_VERSION_LIMIT, descrip
 
 
 @router.post("/{dataset_identifier}", status_code=status.HTTP_201_CREATED, summary="Create a synthetic coverage")
-def create_raster(
+async def create_raster(
     dataset_identifier: str,
     request: CreateRasterRequest,
-    storage: StorageServiceDependency,
+    storage: AsyncStorageServiceDependency,
 ) -> RasterWriteResult:
     """Generate a synthetic cube, write it as a new coverage and publish it when the request asks for it."""
     grid = request.to_grid()
-    result = storage.raster.create(
+    result = await storage.raster.create(
         dataset_identifier,
         grid,
         request.to_cube(grid),
@@ -48,29 +48,29 @@ def create_raster(
     )
     if not request.publish:
         return result
-    storage.raster.publish(dataset_identifier, snapshot_identifier=result.snapshot_identifier)
+    await storage.raster.publish(dataset_identifier, snapshot_identifier=result.snapshot_identifier)
     return result.model_copy(update={"published": True})
 
 
 @router.post("/{dataset_identifier}/append", summary="Append timesteps to a coverage")
-def append_raster(
+async def append_raster(
     dataset_identifier: str,
     request: AppendRasterRequest,
-    storage: StorageServiceDependency,
+    storage: AsyncStorageServiceDependency,
 ) -> RasterWriteResult:
     """Continue the time axis of a coverage with more synthetic timesteps."""
-    record = storage.require_coverage(dataset_identifier)
-    result = storage.raster.append(dataset_identifier, request.to_cube(record))
+    record = await storage.require_coverage(dataset_identifier)
+    result = await storage.raster.append(dataset_identifier, request.to_cube(record))
     if not request.publish:
         return result
-    storage.raster.publish(dataset_identifier, snapshot_identifier=result.snapshot_identifier)
+    await storage.raster.publish(dataset_identifier, snapshot_identifier=result.snapshot_identifier)
     return result.model_copy(update={"published": True})
 
 
 @router.get("/{dataset_identifier}/query", summary="Summarise a window of a coverage")
-def query_raster(
+async def query_raster(
     dataset_identifier: str,
-    storage: StorageServiceDependency,
+    storage: AsyncStorageServiceDependency,
     bbox: BoundingBoxQuery = None,
     start: datetime | None = None,
     end: datetime | None = None,
@@ -79,7 +79,7 @@ def query_raster(
     snapshot_identifier: str | None = None,
 ) -> RasterQuerySummary:
     """Summarise one variable of a coverage over a spatial and temporal window."""
-    return storage.raster.query(
+    return await storage.raster.query(
         dataset_identifier,
         variable=variable,
         bbox=parse_bbox(bbox),
@@ -91,21 +91,21 @@ def query_raster(
 
 
 @router.post("/{dataset_identifier}/publish", summary="Publish a coverage snapshot")
-def publish_raster(
+async def publish_raster(
     dataset_identifier: str,
-    storage: StorageServiceDependency,
+    storage: AsyncStorageServiceDependency,
     request: PublishRequest | None = None,
 ) -> PublicationResult:
     """Move the published branch onto a snapshot, which is also how a rollback is spelled."""
     selection = request if request is not None else PublishRequest()
-    return storage.raster.publish(dataset_identifier, snapshot_identifier=selection.coverage_snapshot())
+    return await storage.raster.publish(dataset_identifier, snapshot_identifier=selection.coverage_snapshot())
 
 
 @router.get("/{dataset_identifier}/versions", summary="List the snapshots of a coverage")
-def list_raster_versions(
+async def list_raster_versions(
     dataset_identifier: str,
-    storage: StorageServiceDependency,
+    storage: AsyncStorageServiceDependency,
     limit: VersionLimitQuery = DEFAULT_VERSION_LIMIT,
 ) -> RasterVersionListResponse:
     """List the snapshots of a coverage newest first, marking the published one."""
-    return RasterVersionListResponse(items=storage.raster.versions(dataset_identifier, limit=limit))
+    return RasterVersionListResponse(items=await storage.raster.versions(dataset_identifier, limit=limit))

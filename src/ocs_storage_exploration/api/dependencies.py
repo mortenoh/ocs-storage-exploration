@@ -9,6 +9,7 @@ from fastapi import Depends, Request
 from ocs_storage_exploration.settings import Settings
 from ocs_storage_exploration.storage.protocols import Catalog, StorageBackend
 from ocs_storage_exploration.storage.service import StorageService
+from ocs_storage_exploration.storage.service_async import AsyncStorageService
 
 
 def get_settings_from_request(request: Request) -> Settings:
@@ -20,6 +21,12 @@ def get_settings_from_request(request: Request) -> Settings:
 def get_storage_service(request: Request) -> StorageService:
     """Return the storage service built during the application lifespan."""
     service: StorageService = request.app.state.storage
+    return service
+
+
+def get_async_storage_service(request: Request) -> AsyncStorageService:
+    """Return the awaitable storage facade built during the application lifespan."""
+    service: AsyncStorageService = request.app.state.storage_async
     return service
 
 
@@ -37,5 +44,6 @@ def get_catalog(request: Request) -> Catalog:
 
 SettingsDependency = Annotated[Settings, Depends(get_settings_from_request)]
 StorageServiceDependency = Annotated[StorageService, Depends(get_storage_service)]
+AsyncStorageServiceDependency = Annotated[AsyncStorageService, Depends(get_async_storage_service)]
 StorageBackendDependency = Annotated[StorageBackend, Depends(get_storage_backend)]
 CatalogDependency = Annotated[Catalog, Depends(get_catalog)]

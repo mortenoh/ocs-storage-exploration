@@ -33,7 +33,7 @@ def validate_storage_scheme(value: str) -> str:
         return StorageScheme(value)
     except ValueError:
         # A scheme the service does not build itself is still a scheme: a plugin may provide it.
-        # build_backend is the one place that refuses a scheme no plugin claims.
+        # backend_for_scheme is the one place that refuses a scheme no plugin claims.
         return value
 
 

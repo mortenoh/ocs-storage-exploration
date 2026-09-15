@@ -39,7 +39,56 @@ One settings block, three translations:
 so every repository gets its own non-empty prefix, and `parquet_path(address)`
 is `"{bucket}/{key}"`, which is the only shape `pyarrow.fs.S3FileSystem`
 accepts. `describe()` reports the bucket, the region, the endpoint, the
-addressing style and whether credentials were configured, and never a secret.
+addressing style, the client bounds below and whether credentials were
+configured, and never a secret.
+
+## Timeouts and retries
+
+Three clients reach the same bucket, so a request that hangs must be bounded in
+three places or it is not bounded at all. Four settings are translated once, in
+`S3StorageBackend`, into whatever each client calls them:
+
+| Setting | Default | obstore | Icechunk | pyarrow |
+| --- | --- | --- | --- | --- |
+| `connect_timeout_seconds` | 5 | `client_options["connect_timeout"]` | `StorageTimeoutSettings(connect_timeout_ms=)` | `connect_timeout` |
+| `request_timeout_seconds` | 30 | `client_options["timeout"]` | `network_stream_timeout_seconds`, `read_timeout_ms` and `operation_attempt_timeout_ms` | `request_timeout` |
+| `max_retries` | 3 | `retry_config["max_retries"]` | `StorageRetriesSettings(max_tries=max_retries + 1)` | `AwsStandardS3RetryStrategy(max_attempts=max_retries + 1)` |
+| `retry_backoff_seconds` | 0.5 | `retry_config["backoff"]` | `initial_backoff_ms` and `max_backoff_ms` | fixed by the retry strategy |
+
+Two counting conventions meet here. obstore counts retries *after* the first
+attempt, while Icechunk and pyarrow count tries *including* it, so three retries
+is four tries and the translation adds the one.
+
+The retry budget follows from the rest:
+`request_timeout_seconds * (max_retries + 1) + retry_backoff_seconds * max_retries`,
+which is 121.5 seconds at the defaults above. It becomes obstore's
+`retry_timeout` and Icechunk's `operation_timeout_ms`, so both give up on the
+same wall clock rather than on their own defaults of three minutes.
+
+That budget bounds one request. An engine call is many requests, and it is
+bounded instead by the facade's
+`OCS_STORAGE_STORAGE_OPERATION_TIMEOUT_SECONDS`, described under
+[threading and async](../architecture.md#threading-and-async). The two are
+deliberately of the same order: a deployment that raises one without the other
+gets either a client that outlives the call it belongs to or a call that is
+abandoned while its first request is still being retried.
+
+Icechunk takes its settings in two places: `s3_storage(...)` takes the stream
+timeout, and everything else arrives as a `RepositoryConfig` with a
+`StorageSettings` block. `StorageBackend.repository_config()` is what carries
+it: the S3 backend returns one, the filesystem and memory backends return
+`None`, and `RasterRepository` passes whatever comes back to
+`Repository.open_or_create`. The conditional-write switches in that same
+`StorageSettings` block, `unsafe_use_conditional_create` and
+`unsafe_use_conditional_update`, are never touched: publication depends on them.
+
+When the budget runs out the three libraries spell the failure three ways -
+obstore raises its fallback `GenericError`, Icechunk raises
+`icechunk.StorageError`, and pyarrow raises a builtin `OSError`.
+`storage/failures.py` is the one place that reads all three as the same thing
+and reports `BackendUnavailableError`, a 503 that keeps the original message. A
+missing object is not an outage, so `FileNotFoundError` still passes through to
+the callers that read it as "absent".
 
 ## Writing a backend plugin
 
@@ -78,9 +127,9 @@ class GcsBackendPlugin:
         return GcsStorageBackend.from_settings(settings)
 ```
 
-`build_plugin_manager()` registers the built-ins and then calls
-`load_entrypoints("ocs_storage_exploration.plugins")`, so an installed
-distribution joins in by advertising itself:
+`build_plugin_manager()`, in `storage/backends/__init__.py`, registers the
+built-ins and then calls `load_entrypoints("ocs_storage_exploration.plugins")`,
+so an installed distribution joins in by advertising itself:
 
 ```toml
 [project.entry-points."ocs_storage_exploration.plugins"]
@@ -104,16 +153,27 @@ Three rules follow from the dispatch modes:
   external plugins claiming the same scheme are resolved by entry-point order.
 - **A scheme is a name, not an enum member.** `StorageScheme` still lists the
   three built-in schemes, but a scheme is carried as a string matching
-  `[a-z][a-z0-9+.-]*`, so an external plugin can name its own. `build_backend`
-  is the single place that refuses a scheme no plugin provides, with
-  `BackendNotSupportedError`.
+  `[a-z][a-z0-9+.-]*`, so an external plugin can name its own.
+  `backend_for_scheme` is the single place that refuses a scheme no plugin
+  provides, with `BackendNotSupportedError`.
 - **Describing costs nothing.** `describe_backends` asks the plugin of every
   inactive scheme to describe it, so listing the backends never creates a
   directory, builds a client or reads a credential.
 
 The manager is built once per process by `default_plugin_manager()` and lives on
 the storage service as `service.plugin_manager`; `StorageService.from_settings`
-takes another one when a test needs an isolated set of plugins.
+takes another one when a test needs an isolated set of plugins. Nothing wraps
+the manager: `build_plugin_manager`, `default_plugin_manager` and the two
+helpers above are the whole surface.
+
+The manager is the sync `PluginManager`, even though the service is awaited
+through `AsyncStorageService`. It is called once per process to build a backend
+and once per request to describe the inactive schemes, and no hook awaits
+anything: a backend constructor opens no connection. pluginkit also ships
+`AsyncPluginManager`, with the same extension points and `async` callers, and
+that is the one to move to the day a plugin has to await during construction -
+fetching a token, say, or probing an endpoint. Until then it would add an await
+to a call that never yields.
 
 ## Three handles, one address
 
@@ -136,7 +196,7 @@ Each part of the storage package uses exactly what it needs:
 | --- | --- |
 | `RasterRepository` | `icechunk_storage` for every read and write; `delete_prefix` to remove a repository |
 | `VectorCollectionStore` | `parquet_filesystem` and `parquet_path` to write and read Parquet, falling back to obstore plus a `pyarrow.BufferReader` when the filesystem is `None`; obstore for the `current.json` pointer, the per-version `reservation.json` and `metadata.json`, and for listing versions |
-| `ObjectCatalog` | obstore only: `put` as a conditional create, an etag compare-and-swap or a plain overwrite, `get`, `delete`, `list` |
+| `ObjectCatalog`, `AsyncObjectCatalog` | obstore only: `put` as a conditional create, an etag compare-and-swap or a plain overwrite, `get`, `delete`, `list` |
 
 The catalogue record and every conditional vector object go through
 `storage/objects.py`, which is the one place that knows how a conditional PUT
@@ -147,6 +207,13 @@ head-then-put emulation is reached only on obstore's `LocalStore`, and only for
 an etag replace. Any other store that reports `NotImplementedError` for a
 conditional write raises `BackendNotSupportedError` rather than quietly losing
 the guarantee.
+
+Every helper there comes in two spellings, `create_object` and
+`create_object_async` and so on down the module, over obstore's sync and async
+functions. The failure mapping is written once and shared, so the two cannot
+disagree about what a lost create means. The engines call the sync ones, because
+they already run on a worker thread; `AsyncObjectCatalog` calls the async ones,
+because it runs on the event loop.
 
 `ObjectCatalog` remembers nothing between calls. A caller that intends to edit a
 record reads it with `get_entry`, which returns a `CatalogEntry` carrying the
@@ -179,7 +246,14 @@ bytes land:
 | `OCS_STORAGE_BACKEND` | `file` | Which scheme to build: `file`, `memory`, `s3`, or any scheme a plugin provides |
 | `OCS_STORAGE_DATA_DIRECTORY` | `data` | Root directory of the filesystem backend |
 | `OCS_STORAGE_BASE_PREFIX` | `ocs` | Key prefix every address starts with |
-| `OCS_STORAGE_S3__*` | unset | The object storage block: `BUCKET`, `PREFIX`, `REGION`, `ENDPOINT_URL`, `ALLOW_HTTP`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, `SESSION_TOKEN`, `FORCE_PATH_STYLE`, `ANONYMOUS` |
+| `OCS_STORAGE_S3__*` | unset | The object storage block: `BUCKET`, `PREFIX`, `REGION`, `ENDPOINT_URL`, `ALLOW_HTTP`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, `SESSION_TOKEN`, `FORCE_PATH_STYLE`, `ANONYMOUS`, and the four bounds of [timeouts and retries](#timeouts-and-retries) |
+
+Two more decide how the service spends itself rather than where bytes land:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `OCS_STORAGE_MAX_CONCURRENT_STORAGE_OPERATIONS` | `16` | How many blocking engine calls may run at once |
+| `OCS_STORAGE_STORAGE_OPERATION_TIMEOUT_SECONDS` | `180` | How long one engine call may wait for a slot and run before it answers 504 |
 
 Secrets are `SecretStr`, they never reach a catalog record or a backend
 description, and `.env.example` carries a commented block that matches the

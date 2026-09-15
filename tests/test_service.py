@@ -12,11 +12,11 @@ from pydantic import SecretStr
 
 from ocs_storage_exploration.settings import ObjectStorageSettings, Settings
 from ocs_storage_exploration.storage.addresses import StorageScheme
+from ocs_storage_exploration.storage.backends import default_plugin_manager
 from ocs_storage_exploration.storage.errors import DatasetNotFoundError, ItemTypeMismatchError
 from ocs_storage_exploration.storage.keys import raster_prefix, vector_prefix
-from ocs_storage_exploration.storage.plugins import INACTIVE_BACKEND_STATUS
+from ocs_storage_exploration.storage.plugins import INACTIVE_BACKEND_STATUS, provided_schemes
 from ocs_storage_exploration.storage.raster import TimeStep, build_synthetic_cube, build_timestamps
-from ocs_storage_exploration.storage.registry import registered_schemes
 from ocs_storage_exploration.storage.schemas import (
     BoundingBox,
     CoverageDataset,
@@ -70,7 +70,7 @@ def test_describe_backends_reports_the_active_backend_first(storage_service: Sto
     descriptions = storage_service.describe_backends()
 
     assert [description.scheme for description in descriptions][0] is storage_service.backend.scheme
-    assert len(descriptions) == len(registered_schemes())
+    assert len(descriptions) == len(provided_schemes(default_plugin_manager()))
     assert descriptions[0].available is True
     assert all(description.available is False for description in descriptions[1:])
     assert all(description.details["status"] == INACTIVE_BACKEND_STATUS for description in descriptions[1:])

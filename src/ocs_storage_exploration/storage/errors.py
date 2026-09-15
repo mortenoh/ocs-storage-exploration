@@ -28,6 +28,12 @@ class BackendNotSupportedError(StorageError):
     status_code: ClassVar[int] = 501
 
 
+class BackendUnavailableError(StorageError):
+    """Raised when the object store could not be reached before the configured timeouts and retries ran out."""
+
+    status_code: ClassVar[int] = 503
+
+
 class CrsError(StorageError):
     """Raised when a coordinate reference system cannot be read by pyproj."""
 
@@ -110,3 +116,9 @@ class SelectableColumnError(StorageError):
     """Raised when a query references a column that was not declared selectable."""
 
     status_code: ClassVar[int] = 400
+
+
+class StorageTimeoutError(StorageError):
+    """Raised when a storage operation outlived the timeout the async facade bounds it with."""
+
+    status_code: ClassVar[int] = 504
