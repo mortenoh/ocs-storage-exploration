@@ -266,6 +266,13 @@ class RasterWriteResult(BaseModel):
     published: bool = False
 
 
+class RasterIngestResult(RasterWriteResult):
+    """Outcome of ingesting real raster files, naming the files that were read and the timesteps they carried."""
+
+    files: tuple[str, ...] = ()
+    timestamps: tuple[datetime, ...] = ()
+
+
 class RasterQuerySummary(BaseModel):
     """Summary statistics of a windowed raster query."""
 

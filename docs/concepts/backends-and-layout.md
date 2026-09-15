@@ -92,6 +92,9 @@ the callers that read it as "absent".
 
 ## Writing a backend plugin
 
+The framework underneath this section - its vocabulary, its dispatch modes and
+why it was chosen - is described in [plugin framework](pluginkit.md).
+
 Backends are [pluginkit](https://winterop-com.github.io/pluginkit) plugins. The
 service declares three extension points on `StorageBackendSpecs` in
 `storage/plugins.py`, and a plugin is any object whose methods are marked with

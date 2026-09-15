@@ -377,10 +377,10 @@ make docker-run-s3      # rustfs plus the service on the s3 backend, in the fore
 export BASE=http://127.0.0.1:8001
 ```
 
-`docker-run-s3` runs the `s3` compose profile in the foreground, so Ctrl-C stops
-both containers; `make docker-down` cleans up a stack that was interrupted. The
-service is published on 8001 so it never collides with a local `make run` or
-with the filesystem profile on 8000. To run it outside Docker instead, point the
+`docker-run-s3` runs the `s3` compose profile in the foreground under a shell
+trap that runs `docker compose down` however the run ends, so Ctrl-C stops and
+removes both containers and the network. The service is published on 8001 so it
+never collides with a local `make run` or with the filesystem profile on 8000. To run it outside Docker instead, point the
 same settings at the endpoint by hand:
 
 ```bash

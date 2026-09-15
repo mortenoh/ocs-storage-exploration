@@ -19,6 +19,12 @@ from ocs_storage_exploration.storage.vector.collection import (
     validate_feature_collection,
     versions_prefix,
 )
+from ocs_storage_exploration.storage.vector.ingest import (
+    VectorIngestPlan,
+    build_vector_ingest_plan,
+    ingest_vector_file,
+    open_vector_file,
+)
 from ocs_storage_exploration.storage.vector.predicates import (
     WhereClause,
     build_filters,
@@ -36,6 +42,7 @@ __all__ = [
     "ParquetSource",
     "VectorCollectionPointer",
     "VectorCollectionStore",
+    "VectorIngestPlan",
     "VectorReadHandle",
     "VectorTableSchema",
     "VectorVersionReservation",
@@ -43,10 +50,13 @@ __all__ = [
     "build_filters",
     "build_frame_from_geojson",
     "build_prefix_filter",
+    "build_vector_ingest_plan",
     "coerce_clause_value",
     "crs_identifier",
     "frame_bounding_box",
+    "ingest_vector_file",
     "is_prefix_value",
+    "open_vector_file",
     "parse_where",
     "require_crs",
     "same_crs",

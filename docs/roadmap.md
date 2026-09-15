@@ -119,12 +119,40 @@ threadpool hop it does not control:
   `plugins.backend_for_scheme` is the single place that refuses a scheme no
   plugin provides.
 
+**Pass 7: real-data ingestion.** The model is now exercised by files somebody
+else produced rather than only by synthetic cubes and hand-written features.
+`POST /api/v1/raster/{id}/ingest` reads local GeoTIFF, COG, NetCDF and Zarr
+files and `POST /api/v1/vector/{id}/ingest` reads local GeoJSON and GeoParquet,
+both bounded by `Settings.ingest_roots` so a path outside the named directories
+is refused before anything is opened:
+
+- `storage/raster/ingest.py` normalises an opened raster onto the coverage
+  contract with the rules the Open Climate Service applies to a fetched period,
+  in the order that makes them safe: axis names, then the projection, then the
+  longitude roll and the y reversal that need to know whether x is a longitude.
+  The nodata sentinel is masked to NaN and kept as a finite attribute, the CF
+  encoding is dropped, and the `GridSpecification` is derived from the data
+  rather than declared by the request, so an ingest cannot claim a grid the file
+  does not have. A static raster such as a population grid gets its single
+  timestep from the request, so the `t` axis is always present.
+- A glob is expanded, ordered by timestamp and written through the same `create`
+  and `append` as the synthetic path, so the cube guard, the coordinate check
+  and the variable check all still apply. The 14 CHIRPS days become one Icechunk
+  repository with fourteen commits and a published branch.
+- `samples/` carries three small real files and `make samples` fetches two more
+  by clipping cloud optimised GeoTIFFs over HTTP range requests, so 14 days of
+  global rainfall arrive as 60 kB rather than 420 MB. `make demo` ingests all
+  five offline and `make offline` is the single online step that prepares a
+  machine. See [real data](guides/real-data.md) and
+  [the offline quickstart](guides/offline-quickstart.md).
+
 ## Next
 
-1. **Real-data ingestion through the same API.** Drive an OCS dataset plugin's
-   `fetch_period` into `RasterRepository.append`, and local GeoJSON or
-   GeoParquet into the vector store, so the model is exercised by real files
-   rather than by synthetic cubes and sample features.
+1. **Fetching as well as reading.** The ingest reads what is already on the
+   machine. Driving an OCS dataset plugin's `fetch_period` straight into
+   `RasterRepository.append`, so a period is fetched, normalised and stored in
+   one call, is what would make this the OCS write path rather than a sandbox
+   one.
 2. **Retention.** `expire_snapshots` and garbage collection constrained to keep
    every published snapshot reachable, and a pruning policy for vector version
    directories. Both bound how far a rollback can go, so the policy has to be

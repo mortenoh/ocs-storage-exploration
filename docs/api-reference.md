@@ -18,6 +18,10 @@ Generated reference for the application, its settings and the storage package.
 
 ::: ocs_storage_exploration.storage.keys
 
+## Ingest paths
+
+::: ocs_storage_exploration.storage.paths
+
 ## Storage errors
 
 ::: ocs_storage_exploration.storage.errors
@@ -76,11 +80,15 @@ Generated reference for the application, its settings and the storage package.
 
 ::: ocs_storage_exploration.storage.raster.repository
 
+::: ocs_storage_exploration.storage.raster.ingest
+
 ## Vector engine
 
 ::: ocs_storage_exploration.storage.vector.predicates
 
 ::: ocs_storage_exploration.storage.vector.collection
+
+::: ocs_storage_exploration.storage.vector.ingest
 
 ## HTTP layer
 

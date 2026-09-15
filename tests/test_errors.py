@@ -19,6 +19,7 @@ EXPECTED_STATUS_CODES = {
     "PublicationConflictError": 409,
     "PublicationSelectorError": 422,
     "SnapshotNotFoundError": 404,
+    "IngestPathError": 400,
     "RasterContractError": 422,
     "FeatureIdentityError": 422,
     "VectorInputError": 422,

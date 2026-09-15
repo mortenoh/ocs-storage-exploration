@@ -16,6 +16,16 @@ from ocs_storage_exploration.storage.raster.grid import (
     projection_code,
     wrap_longitudes,
 )
+from ocs_storage_exploration.storage.raster.ingest import (
+    DEFAULT_FILENAME_DATE_PATTERN,
+    RasterIngestPlan,
+    build_raster_ingest_plan,
+    grid_from_dataset,
+    ingest_raster_files,
+    normalise_for_contract,
+    open_raster_file,
+    timestamp_from_filename,
+)
 from ocs_storage_exploration.storage.raster.repository import (
     MAIN_BRANCH,
     PUBLISHED_BRANCH,
@@ -27,6 +37,7 @@ from ocs_storage_exploration.storage.raster.repository import (
 )
 
 __all__ = [
+    "DEFAULT_FILENAME_DATE_PATTERN",
     "GRID_MAPPING_ATTRIBUTE",
     "MAIN_BRANCH",
     "NODATA_ATTRIBUTE",
@@ -35,6 +46,7 @@ __all__ = [
     "SPATIAL_BBOX_ATTRIBUTE",
     "SPATIAL_REFERENCE_NAME",
     "CoverageEntry",
+    "RasterIngestPlan",
     "RasterReadHandle",
     "RasterRepository",
     "RasterStoreDescription",
@@ -44,8 +56,14 @@ __all__ = [
     "assert_finite_attributes",
     "build_cell_sizes",
     "build_coordinates",
+    "build_raster_ingest_plan",
     "build_synthetic_cube",
     "build_timestamps",
+    "grid_from_dataset",
+    "ingest_raster_files",
+    "normalise_for_contract",
+    "open_raster_file",
     "projection_code",
+    "timestamp_from_filename",
     "wrap_longitudes",
 ]

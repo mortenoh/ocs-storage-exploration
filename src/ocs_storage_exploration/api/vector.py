@@ -6,7 +6,7 @@ from typing import Annotated, Final
 
 from fastapi import APIRouter, Query, status
 
-from ocs_storage_exploration.api.dependencies import AsyncStorageServiceDependency
+from ocs_storage_exploration.api.dependencies import AsyncStorageServiceDependency, SettingsDependency
 from ocs_storage_exploration.api.parameters import (
     BoundingBoxCrsQuery,
     BoundingBoxQuery,
@@ -19,6 +19,7 @@ from ocs_storage_exploration.api.parameters import (
 from ocs_storage_exploration.api.schemas import (
     CreateVectorRequest,
     FeatureCollectionResponse,
+    IngestVectorRequest,
     PublishRequest,
 )
 from ocs_storage_exploration.storage.schemas import PublicationResult, VectorWriteResult
@@ -55,6 +56,21 @@ async def create_vector(
         selectable_columns=request.selectable_columns,
         publish=request.publish,
     )
+
+
+@router.post(
+    "/{dataset_identifier}/ingest",
+    status_code=status.HTTP_201_CREATED,
+    summary="Ingest a local vector file into a collection",
+)
+async def ingest_vector(
+    dataset_identifier: str,
+    request: IngestVectorRequest,
+    storage: AsyncStorageServiceDependency,
+    settings: SettingsDependency,
+) -> VectorWriteResult:
+    """Read one local GeoJSON or GeoParquet file below the ingest roots as the next version of a collection."""
+    return await storage.vector.ingest(dataset_identifier, request.to_plan(settings))
 
 
 @router.get("/{dataset_identifier}/features", summary="Read features of a vector collection")

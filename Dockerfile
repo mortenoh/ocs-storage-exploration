@@ -7,11 +7,12 @@ ENV UV_LINK_MODE=copy
 # Prevent Python from writing .pyc files at runtime
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# curl is only needed by the healthcheck below; every dependency ships a manylinux wheel.
+# curl is needed by the healthcheck below. Every dependency ships a manylinux wheel, but rasterio's
+# links against the system expat rather than bundling it, and this base image does not carry one.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends curl
+    apt-get install -y --no-install-recommends curl libexpat1
 
 RUN groupadd --gid 999 ocs && \
     useradd --create-home --shell /usr/sbin/nologin --uid 999 --gid 999 ocs
@@ -22,7 +23,8 @@ COPY pyproject.toml uv.lock .python-version ./
 COPY README.md LICENSE ./
 COPY src/ src/
 
-# No extras: rioxarray is only needed by the raster-io import path, which the service does not use.
+# No extras to name: rioxarray became a runtime dependency when the ingest endpoints started reading
+# GeoTIFF and COG files, so the image that serves them has to carry it.
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 

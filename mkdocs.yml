@@ -6,6 +6,9 @@ repo_name: mortenoh/ocs-storage-exploration
 
 theme:
   name: material
+  # The default theme fetches Google Fonts on every page. The system font stack renders the same and
+  # keeps `make docs` working with no network at all.
+  font: false
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -44,9 +47,12 @@ nav:
       - Testing S3 locally: research/testing-s3-locally.md
   - Concepts:
       - Versioning: concepts/versioning.md
+      - Plugin framework: concepts/pluginkit.md
       - Backends and key layout: concepts/backends-and-layout.md
       - STAC catalog: concepts/stac-catalog.md
   - Guides:
+      - Offline quickstart: guides/offline-quickstart.md
+      - Real data: guides/real-data.md
       - Inspecting the data: guides/inspecting-the-data.md
       - API walkthrough: guides/api-walkthrough.md
   - Architecture: architecture.md

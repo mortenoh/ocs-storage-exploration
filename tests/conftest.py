@@ -23,6 +23,7 @@ from ocs_storage_exploration.storage.plugins import backend_for_scheme
 from ocs_storage_exploration.storage.protocols import StorageBackend
 from ocs_storage_exploration.storage.service import StorageService
 from ocs_storage_exploration.storage.service_async import AsyncStorageService
+from tests.ingest_helpers import SAMPLES_DIRECTORY
 
 # The environment is read at import time: the isolated_environment fixture clears every
 # OCS_STORAGE_ variable before a test runs, so a fixture body would only ever see the defaults.
@@ -145,6 +146,19 @@ def async_storage_service(storage_service: StorageService) -> AsyncStorageServic
 @pytest.fixture
 def client(settings: Settings) -> Iterator[TestClient]:
     with TestClient(create_app(settings=settings)) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def ingest_settings(settings: Settings) -> Settings:
+    # The autouse fixture runs every test from tmp_path, so the committed samples are named absolutely
+    # and the ingest root is the directory they live in.
+    return settings.model_copy(update={"ingest_roots": [SAMPLES_DIRECTORY]})
+
+
+@pytest.fixture
+def ingest_client(ingest_settings: Settings) -> Iterator[TestClient]:
+    with TestClient(create_app(settings=ingest_settings)) as test_client:
         yield test_client
 
 

@@ -88,6 +88,12 @@ class RasterContractError(StorageError):
     status_code: ClassVar[int] = 422
 
 
+class IngestPathError(StorageError):
+    """Raised when an ingest path escapes the configured ingest roots or matches no file."""
+
+    status_code: ClassVar[int] = 400
+
+
 class FeatureIdentityError(StorageError):
     """Raised when feature identifiers are missing, null or duplicated."""
 

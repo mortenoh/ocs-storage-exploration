@@ -12,6 +12,7 @@ import anyio.to_thread
 from ocs_storage_exploration.storage.catalog_async import AsyncObjectCatalog
 from ocs_storage_exploration.storage.errors import StorageTimeoutError
 from ocs_storage_exploration.storage.protocols import AsyncCatalog, StorageBackend
+from ocs_storage_exploration.storage.raster.ingest import RasterIngestPlan, ingest_raster_files
 from ocs_storage_exploration.storage.raster.repository import (
     DEFAULT_APPEND_MESSAGE,
     DEFAULT_CREATE_MESSAGE,
@@ -29,6 +30,7 @@ from ocs_storage_exploration.storage.schemas import (
     GridSpecification,
     ItemType,
     PublicationResult,
+    RasterIngestResult,
     RasterQuerySummary,
     RasterVersion,
     RasterWriteResult,
@@ -48,6 +50,7 @@ from ocs_storage_exploration.storage.vector.collection import (
     VectorReadHandle,
     VectorTableSchema,
 )
+from ocs_storage_exploration.storage.vector.ingest import VectorIngestPlan, ingest_vector_file
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -153,6 +156,18 @@ class AsyncRasterRepository:
         return await self._runner.run(
             lambda: self._repository.append(dataset_identifier, dataset, message=message),
             description=f"appending to coverage {dataset_identifier!r}",
+        )
+
+    async def ingest(self, dataset_identifier: str, plan: RasterIngestPlan) -> RasterIngestResult:
+        """Write the files of an ingest plan as one coverage, creating it and appending the rest in order.
+
+        The whole plan runs as one operation rather than one per file: it spends a single limiter token
+        for a sequence of writes that have to stay in order anyway, and the timeout then bounds the
+        ingest a caller is waiting on rather than each file inside it.
+        """
+        return await self._runner.run(
+            lambda: ingest_raster_files(self._repository, dataset_identifier, plan),
+            description=f"ingesting {len(plan.files)} files into coverage {dataset_identifier!r}",
         )
 
     async def describe(
@@ -305,6 +320,13 @@ class AsyncVectorCollectionStore:
                 publish=publish,
             ),
             description=f"writing collection {collection_identifier!r}",
+        )
+
+    async def ingest(self, collection_identifier: str, plan: VectorIngestPlan) -> VectorWriteResult:
+        """Read one local vector file and write it as the next version of a collection."""
+        return await self._runner.run(
+            lambda: ingest_vector_file(self._store, collection_identifier, plan),
+            description=f"ingesting {plan.path.name!r} into collection {collection_identifier!r}",
         )
 
     async def read(

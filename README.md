@@ -14,11 +14,16 @@ migration path, not to become a production service.
 ## Quick start
 
 ```bash
-make install
-make test
+make offline    # everything that needs the network: deps, samples, images, DuckDB extensions
+make demo       # ingest the real sample datasets into ./data
 make run
 curl http://127.0.0.1:8000/health
 ```
+
+`make offline` is the only step that needs a connection. Everything after it,
+including the tests and the documentation site, works with no network at all:
+[the offline quickstart](docs/guides/offline-quickstart.md) is the numbered
+copy-paste version, with the expected output of each step.
 
 The service answers a JSON API under `/api/v1` and a STAC catalog under `/stac`:
 
@@ -29,8 +34,10 @@ The service answers a JSON API under `/api/v1` and a STAC catalog under `/stac`:
 | `GET /api/v1/datasets` | List catalog records, optionally filtered by item type |
 | `GET`, `DELETE /api/v1/datasets/{id}` | Read or delete one record, whichever engine owns the bytes |
 | `POST /api/v1/raster/{id}`, `/append`, `/publish` | Write, extend and publish a coverage |
+| `POST /api/v1/raster/{id}/ingest` | Read local GeoTIFF, COG, NetCDF or Zarr files as one coverage |
 | `GET /api/v1/raster/{id}/query`, `/versions` | Summarise a window; list the snapshots |
 | `POST /api/v1/vector/{id}`, `/publish` | Write and publish a version of a collection |
+| `POST /api/v1/vector/{id}/ingest` | Read a local GeoJSON or GeoParquet file as the next version |
 | `GET /api/v1/vector/{id}/features` | Read features by envelope, clause and column |
 | `GET /stac` | STAC landing page with `conformsTo` and one child link per dataset |
 | `GET /stac/collections`, `/stac/collections/{id}` | Every record, or one, projected onto a STAC Collection |
@@ -44,7 +51,10 @@ an `OCS_STORAGE_` environment variable, and nested object storage settings use a
 
 | Target | What it does |
 | --- | --- |
-| `make install` | Install every dependency including the optional extras |
+| `make install` | Install every dependency into the virtual environment |
+| `make offline` | Run every step that needs the network, so the rest works offline |
+| `make samples` | Download and clip the sample files; needs the network, once |
+| `make demo` | Ingest every sample into the configured backend; offline |
 | `make lint` | Run ruff format, ruff check, mypy and pyright |
 | `make test` | Run the test suite, excluding the tests marked `s3` |
 | `make test-s3` | Start rustfs, run the `s3`-marked tests against it, then stop it again |
@@ -54,16 +64,16 @@ an `OCS_STORAGE_` environment variable, and nested object storage settings use a
 | `make docs-build` | Build the documentation site in strict mode |
 | `make docker-build` | Build the service image for both compose profiles |
 | `make docker-run` | Alias for `make docker-run-file` |
-| `make docker-run-file` | Run the service on the filesystem backend on port 8000, in the foreground; Ctrl-C stops it |
-| `make docker-run-s3` | Run the service on the S3 backend with rustfs on port 8001, in the foreground; Ctrl-C stops it |
-| `make docker-down` | Stop and remove the containers of both profiles, after an interrupted run |
+| `make docker-run-file` | Run the service on the filesystem backend on port 8000, in the foreground; Ctrl-C stops and removes it |
+| `make docker-run-s3` | Run the service on the S3 backend with rustfs on port 8001, in the foreground; Ctrl-C stops and removes it |
 | `make clean` | Remove caches and build output |
 
 No target leaves anything running. `make docker-run-file` and `make docker-run-s3`
-run `docker compose up` in the foreground, so Ctrl-C stops the stack, and
-`make docker-down` is the cleanup for a run that was interrupted some other way.
-`make test-s3` starts rustfs, runs the tests and stops rustfs again even when a
-test fails, and it reports pytest's exit code.
+run `docker compose up` in the foreground under a shell trap that runs
+`docker compose down` however the run ends, so Ctrl-C stops and removes the
+containers and the network and `docker ps -a` is empty afterwards. `make test-s3`
+starts rustfs, runs the tests and stops rustfs again even when a test fails, and
+it reports pytest's exit code.
 
 ## Running it in Docker
 
@@ -78,10 +88,20 @@ the filesystem backend with `./data` bind-mounted, and `s3` runs the same image
 on the S3 backend next to a rustfs endpoint. The two API services use different
 host ports so they never collide.
 
+## Real data
+
+`samples/` holds three small real files (DHIS2 organisation units, Natural Earth
+lakes, a WorldPop population grid) and `make samples` downloads two more (14 days
+of CHIRPS v3.0 rainfall clipped to Sierra Leone, and the geoBoundaries ADM2
+areas). `make demo` ingests all five, and
+[the real data guide](docs/guides/real-data.md) explains what they are, what the
+ingest does to them and how to point the two ingest endpoints at your own files.
+
 ## Documentation
 
 The research notes, the architecture write-up and the generated API reference live at
 [mortenoh.github.io/ocs-storage-exploration](https://mortenoh.github.io/ocs-storage-exploration).
+`make docs` serves the same site locally, with no network.
 
 ## License
 

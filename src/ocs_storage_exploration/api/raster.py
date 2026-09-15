@@ -7,16 +7,22 @@ from typing import Annotated, Final
 
 from fastapi import APIRouter, Query, status
 
-from ocs_storage_exploration.api.dependencies import AsyncStorageServiceDependency
+from ocs_storage_exploration.api.dependencies import AsyncStorageServiceDependency, SettingsDependency
 from ocs_storage_exploration.api.parameters import BoundingBoxQuery, parse_bbox
 from ocs_storage_exploration.api.schemas import (
     AppendRasterRequest,
     CreateRasterRequest,
+    IngestRasterRequest,
     PublishRequest,
     RasterVersionListResponse,
 )
 from ocs_storage_exploration.storage.raster import VersionSelector
-from ocs_storage_exploration.storage.schemas import PublicationResult, RasterQuerySummary, RasterWriteResult
+from ocs_storage_exploration.storage.schemas import (
+    PublicationResult,
+    RasterIngestResult,
+    RasterQuerySummary,
+    RasterWriteResult,
+)
 
 router = APIRouter(prefix="/api/v1/raster", tags=["raster"])
 
@@ -65,6 +71,21 @@ async def append_raster(
         return result
     await storage.raster.publish(dataset_identifier, snapshot_identifier=result.snapshot_identifier)
     return result.model_copy(update={"published": True})
+
+
+@router.post(
+    "/{dataset_identifier}/ingest",
+    status_code=status.HTTP_201_CREATED,
+    summary="Ingest local raster files into a coverage",
+)
+async def ingest_raster(
+    dataset_identifier: str,
+    request: IngestRasterRequest,
+    storage: AsyncStorageServiceDependency,
+    settings: SettingsDependency,
+) -> RasterIngestResult:
+    """Read local GeoTIFF, COG, NetCDF or Zarr files below the ingest roots and write them as one coverage."""
+    return await storage.raster.ingest(dataset_identifier, request.to_plan(settings))
 
 
 @router.get("/{dataset_identifier}/query", summary="Summarise a window of a coverage")

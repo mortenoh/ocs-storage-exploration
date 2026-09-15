@@ -10,7 +10,7 @@ import xarray
 from geojson_pydantic import FeatureCollection
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from ocs_storage_exploration.settings import get_settings
+from ocs_storage_exploration.settings import Settings, get_settings
 from ocs_storage_exploration.storage.addresses import SchemeName
 from ocs_storage_exploration.storage.errors import (
     CrsError,
@@ -19,6 +19,11 @@ from ocs_storage_exploration.storage.errors import (
     RasterContractError,
 )
 from ocs_storage_exploration.storage.raster import TimeStep, build_synthetic_cube, build_timestamps
+from ocs_storage_exploration.storage.raster.ingest import (
+    DEFAULT_FILENAME_DATE_PATTERN,
+    RasterIngestPlan,
+    build_raster_ingest_plan,
+)
 from ocs_storage_exploration.storage.schemas import (
     BackendDescription,
     BoundingBox,
@@ -30,6 +35,7 @@ from ocs_storage_exploration.storage.schemas import (
     normalise_license,
 )
 from ocs_storage_exploration.storage.vector import DEFAULT_CRS, VectorReadHandle, crs_identifier, require_crs
+from ocs_storage_exploration.storage.vector.ingest import VectorIngestPlan, build_vector_ingest_plan
 
 TIME_STEP_ATTRIBUTE: Final[str] = "time_step"
 TIME_STEP_VALUES: Final[frozenset[str]] = frozenset(step.value for step in TimeStep)
@@ -37,6 +43,8 @@ MAXIMUM_TIMESTEP_COUNT: Final[int] = 512
 MAXIMUM_GRID_SIDE: Final[int] = 4096
 WORLD_BBOX: Final[BoundingBox] = BoundingBox(minimum_x=-180.0, minimum_y=-90.0, maximum_x=180.0, maximum_y=90.0)
 DEFAULT_START_TIME: Final[datetime] = datetime(2020, 1, 1, tzinfo=UTC)
+FilenameTimestamps = Literal["from-filename"]
+FILENAME_TIMESTAMPS: Final[FilenameTimestamps] = "from-filename"
 
 GridSide = Annotated[int, Field(ge=1, le=MAXIMUM_GRID_SIDE)]
 
@@ -157,6 +165,106 @@ class AppendRasterRequest(BaseModel):
             variable=record.variables[0],
             timestamps=timestamps[record.timestep_count :],
             seed=self.seed,
+        )
+
+
+class IngestRasterRequest(BaseModel):
+    """Request naming the local raster files to read, and the timestamp each of them stands for."""
+
+    files: list[str] = Field(min_length=1)
+    variable: str = Field(min_length=1)
+    # Either the file names carry the timestamps, or the request lists one timestamp per file, or
+    # `timestamp` names the single one a static raster such as a population grid stands for.
+    timestamps: FilenameTimestamps | list[datetime] = FILENAME_TIMESTAMPS
+    timestamp: datetime | None = None
+    filename_date_pattern: str = DEFAULT_FILENAME_DATE_PATTERN
+    bbox: BoundingBox | None = None
+    title: str | None = None
+    license: str | None = None
+    attribution: str | None = None
+    overwrite: bool = False
+    publish: bool = False
+
+    @field_validator("license")
+    @classmethod
+    def check_license(cls, value: str | None) -> str | None:
+        """Refuse a licence that is neither an SPDX identifier nor an SPDX expression."""
+        return normalise_license(value)
+
+    @field_validator("attribution")
+    @classmethod
+    def check_attribution(cls, value: str | None) -> str | None:
+        """Trim the attribution string, treating a blank one as absent."""
+        return normalise_attribution(value)
+
+    @model_validator(mode="after")
+    def check_timestamp_selector(self) -> Self:
+        """Refuse a request that names both an explicit timestamp list and a single timestamp."""
+        if self.timestamp is not None and not isinstance(self.timestamps, str):
+            raise ValueError("ingest takes either timestamps or timestamp, not both")
+        return self
+
+    def to_plan(self, settings: Settings) -> RasterIngestPlan:
+        """Resolve the requested globs against the ingest roots and pair every file with its timestamp."""
+        listed = None if isinstance(self.timestamps, str) else self.timestamps
+        return build_raster_ingest_plan(
+            files=self.files,
+            variable=self.variable,
+            roots=settings.ingest_roots,
+            timestamps=listed,
+            timestamp=self.timestamp,
+            filename_date_pattern=self.filename_date_pattern,
+            bbox=self.bbox,
+            title=self.title,
+            license=self.license,
+            attribution=self.attribution,
+            overwrite=self.overwrite,
+            publish=self.publish,
+        )
+
+
+class IngestVectorRequest(BaseModel):
+    """Request naming the local GeoJSON or GeoParquet file to write as the next version of a collection."""
+
+    path: str = Field(min_length=1)
+    identifier_property: str = Field(default="id", min_length=1)
+    selectable_columns: tuple[str, ...] = ()
+    crs: str = DEFAULT_CRS
+    title: str | None = None
+    license: str | None = None
+    attribution: str | None = None
+    publish: bool = False
+
+    @field_validator("crs")
+    @classmethod
+    def check_crs(cls, value: str) -> str:
+        """Refuse a coordinate reference system that pyproj cannot parse."""
+        return validate_crs(value)
+
+    @field_validator("license")
+    @classmethod
+    def check_license(cls, value: str | None) -> str | None:
+        """Refuse a licence that is neither an SPDX identifier nor an SPDX expression."""
+        return normalise_license(value)
+
+    @field_validator("attribution")
+    @classmethod
+    def check_attribution(cls, value: str | None) -> str | None:
+        """Trim the attribution string, treating a blank one as absent."""
+        return normalise_attribution(value)
+
+    def to_plan(self, settings: Settings) -> VectorIngestPlan:
+        """Resolve the requested path against the ingest roots and record the metadata of the write."""
+        return build_vector_ingest_plan(
+            path=self.path,
+            roots=settings.ingest_roots,
+            identifier_property=self.identifier_property,
+            selectable_columns=self.selectable_columns,
+            crs=self.crs,
+            title=self.title,
+            license=self.license,
+            attribution=self.attribution,
+            publish=self.publish,
         )
 
 

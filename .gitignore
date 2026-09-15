@@ -126,5 +126,8 @@ cython_debug/
 data/
 .rustfs/
 
+# Samples fetched by `make samples`; the committed ones beside them stay in git
+samples/downloaded/
+
 # Claude Code local settings
 .claude/

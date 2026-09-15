@@ -42,15 +42,22 @@ it costs, and what to do about it.
   raster, an etag-conditional pointer object for vector. No renames, and
   rollback is the same call with an older target.
 - A synthetic raster and vector round trip over HTTP, so the model can be
-  exercised without any OCS data.
+  exercised without any OCS data, and a real one beside it: CHIRPS rainfall,
+  WorldPop population, DHIS2 organisation units and geoBoundaries areas ingested
+  from files through the same engines.
 - A STAC catalog at `/stac` that is a projection of the same records rather than
   a second index: coverages with the datacube extension, feature collections
   with the table extension, and only what is published.
 
 ## Running it
 
+Going offline? [The offline quickstart](guides/offline-quickstart.md) is the
+numbered copy-paste sequence, with the expected output of every step:
+`make offline` once while online, then everything else with no network.
+
 ```bash
-make install      # uv sync --all-extras
+make offline      # the one online step: deps, samples, images, DuckDB extensions
+make demo         # ingest the real sample datasets into ./data
 make run          # uvicorn on http://localhost:8000
 make test         # pytest, S3 tests skipped by default
 make test-s3      # start rustfs, run the S3-marked tests, stop rustfs again
@@ -61,7 +68,8 @@ make docs         # build and serve these docs
 `make coverage` produces a coverage report. `make test-s3` is self-contained: it
 starts rustfs, runs everything marked `s3` against it and stops it again even
 when a test fails. `make docker-run-file` and `make docker-run-s3` run the
-service itself in a container, in the foreground, so Ctrl-C stops the stack.
+service itself in a container, in the foreground under a trap, so Ctrl-C stops
+and removes the stack and nothing is left behind.
 
 Once the service is up, `GET /health` and `GET /api/v1/backends` confirm which
 backend is active — the backend description never contains a secret. The raster
@@ -81,7 +89,10 @@ handles a backend yields, the `OCS_STORAGE_` settings and the key layout on S3,
 and [the STAC catalog](concepts/stac-catalog.md) covers the projection of a
 record onto a Collection and why only published versions are advertised.
 
-Two more are meant to be followed with a terminal open: the
+Four more are meant to be followed with a terminal open: the
+[offline quickstart](guides/offline-quickstart.md) prepares a machine and then
+runs everything without a network, [real data](guides/real-data.md) covers the
+five sample datasets and the two ingest endpoints, the
 [API walkthrough](guides/api-walkthrough.md) exercises every endpoint with
 `curl`, and [inspecting the data](guides/inspecting-the-data.md) opens what it
 wrote with Icechunk, xarray, geopandas, pyarrow and DuckDB.
@@ -111,8 +122,9 @@ so instead of guessing.
 
 ## Status
 
-Second pass. The storage model, both engines, all three backends and the HTTP
-surface are implemented and tested, and the whole suite also runs against a
-local rustfs endpoint. [The roadmap](roadmap.md) lists what is delivered and
-what would come next, starting with a STAC catalog over the same records.
-Nothing here is a migration; it is the argument for one.
+Seventh pass. The storage model, both engines, all three backends, the STAC
+projection, the async surface and the ingest of real files are implemented and
+tested, and the whole suite also runs against a local rustfs endpoint.
+[The roadmap](roadmap.md) lists what is delivered and what would come next,
+starting with fetching a period rather than only reading a file that is already
+on the machine. Nothing here is a migration; it is the argument for one.

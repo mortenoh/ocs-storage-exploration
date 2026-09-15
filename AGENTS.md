@@ -61,9 +61,13 @@ class AddressResolver:
 
 - Never hand-edit the dependency tables in `pyproject.toml`.
 - Add runtime dependencies with `uv add <package>`.
-- Add optional dependencies with `uv add --optional raster-io <package>`.
+- Add optional dependencies with `uv add --optional <extra> <package>`.
+  There is no extra today: rioxarray became a runtime dependency when the ingest
+  endpoints started reading GeoTIFF and COG files.
 - Add development dependencies with `uv add --dev <package>`.
 - Install everything with `make install` (`uv sync --all-extras`).
+- `make offline` is the one target that needs the network: it runs `install`,
+  `samples`, `docker-build`, pulls rustfs and warms the DuckDB extensions.
 
 ## Layout
 
@@ -87,9 +91,12 @@ src/ocs_storage_exploration/
     service.py        StorageService composing the backend, the catalog and both engines
     service_async.py  AsyncStorageService: native catalog reads, bounded worker threads
     backends/         filesystem, memory and S3 backends, their plugins and the plugin manager
-    raster/           Icechunk and GeoZarr engine
-    vector/           GeoParquet engine
+    raster/           Icechunk and GeoZarr engine, including ingest.py for real files
+    vector/           GeoParquet engine, including ingest.py for real files
+    paths.py          ingest path and glob resolution, bounded by Settings.ingest_roots
 tests/                pytest suite, parametrised over the filesystem, memory and s3 backends
+scripts/              fetch_samples.py (make samples) and demo.py (make demo)
+samples/              real sample files in git; samples/downloaded/ is fetched and gitignored
 docs/                 mkdocs sources
 examples/plugins/     external plugin packages, deliberately not installed
 ```
@@ -117,7 +124,11 @@ examples/plugins/     external plugin packages, deliberately not installed
   S3 parameter carries the marker, so `pytest -m s3` runs the whole suite
   against the live endpoint.
 - Never leave a container running. `make docker-run-file` and `make docker-run-s3`
-  run in the foreground; `make docker-down` cleans up after an interrupted run.
+  run `docker compose up` in the foreground under a `trap ... EXIT` that runs
+  `docker compose down`, so Ctrl-C stops and removes the containers and the
+  network. Check with `docker ps -a` after a run: it must be empty.
+- Tests that need the files `make samples` downloads are marked `samples` and
+  skip themselves when those files are absent, so `make test` is green either way.
 - obstore and Icechunk talk to S3 through Rust, bypassing botocore, so moto and
   `mock_aws` cannot intercept their requests. Use the local rustfs endpoint instead.
 - Never disable Icechunk conditional writes to make a test pass.

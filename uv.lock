@@ -1058,15 +1058,11 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyproj" },
     { name = "pystac" },
+    { name = "rioxarray" },
     { name = "shapely" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "xarray" },
     { name = "zarr" },
-]
-
-[package.optional-dependencies]
-raster-io = [
-    { name = "rioxarray" },
 ]
 
 [package.dev-dependencies]
@@ -1102,13 +1098,12 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.15" },
     { name = "pyproj", specifier = ">=3.7" },
     { name = "pystac", specifier = ">=1.10" },
-    { name = "rioxarray", marker = "extra == 'raster-io'", specifier = ">=0.23" },
+    { name = "rioxarray", specifier = ">=0.23" },
     { name = "shapely", specifier = ">=2.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.41" },
     { name = "xarray", specifier = ">=2026.7" },
     { name = "zarr", specifier = ">=3.3,<4" },
 ]
-provides-extras = ["raster-io"]
 
 [package.metadata.requires-dev]
 dev = [

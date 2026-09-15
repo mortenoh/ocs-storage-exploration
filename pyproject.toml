@@ -40,6 +40,7 @@ dependencies = [
     "pydantic-settings>=2.15",
     "pyproj>=3.7",
     "pystac>=1.10",
+    "rioxarray>=0.23",
     "shapely>=2.1",
     "uvicorn[standard]>=0.41",
     "xarray>=2026.7",
@@ -54,11 +55,6 @@ Documentation = "https://mortenoh.github.io/ocs-storage-exploration"
 
 [project.scripts]
 ocs-storage-exploration = "ocs_storage_exploration.__main__:main"
-
-[project.optional-dependencies]
-raster-io = [
-    "rioxarray>=0.23",
-]
 
 [build-system]
 requires = ["uv_build>=0.12.0,<0.13.0"]
@@ -113,10 +109,13 @@ testpaths = ["tests"]
 norecursedirs = [".git", ".venv", "__pycache__", "site"]
 markers = [
     "s3: marks tests that need a live S3 endpoint (deselect with '-m \"not s3\"')",
+    "samples: marks tests that need the files `make samples` downloads, and skip without them",
 ]
 filterwarnings = [
     "ignore:Using `httpx` with `starlette.testclient` is deprecated:Warning",
     "ignore:The anyio.abc.BlockingPortal alias is deprecated:Warning",
+    # rioxarray builds its affine transforms with `*`; the warning is theirs, not ours.
+    "ignore::PendingDeprecationWarning:rioxarray.*",
 ]
 addopts = "-m 'not s3'"
 
@@ -156,7 +155,7 @@ module = ["geopandas.*", "pyarrow.*"]
 ignore_missing_imports = true
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "scripts"]
 extraPaths = ["examples/plugins/ocs-storage-null/src"]
 exclude = ["**/.venv"]
 pythonVersion = "3.13"
