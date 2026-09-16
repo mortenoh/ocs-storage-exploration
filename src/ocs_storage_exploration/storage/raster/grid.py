@@ -136,6 +136,10 @@ def apply_geozarr_attributes(dataset: xarray.Dataset, grid: GridSpecification) -
     }
     for name in decorated.data_vars:
         decorated[name].attrs[GRID_MAPPING_ATTRIBUTE] = SPATIAL_REFERENCE_NAME
+        # The fill value belongs on the variable, so a reader of one snapshot never has to consult a
+        # record that describes the newest write instead.
+        if grid.nodata_value is not None:
+            decorated[name].attrs.setdefault(NODATA_ATTRIBUTE, float(grid.nodata_value))
     decorated.attrs.update(grid.attributes)
     decorated.attrs[PROJECTION_CODE_ATTRIBUTE] = projection_code(grid.crs)
     decorated.attrs[SPATIAL_BBOX_ATTRIBUTE] = list(grid.bbox.as_tuple())

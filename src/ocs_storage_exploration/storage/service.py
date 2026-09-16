@@ -9,7 +9,7 @@ from pluginkit import PluginManager
 
 from ocs_storage_exploration.storage.backends import default_plugin_manager
 from ocs_storage_exploration.storage.catalog import ObjectCatalog
-from ocs_storage_exploration.storage.errors import ItemTypeMismatchError
+from ocs_storage_exploration.storage.errors import DatasetNotFoundError, ItemTypeMismatchError
 from ocs_storage_exploration.storage.plugins import (
     backend_for_scheme,
     description_for_scheme,
@@ -28,6 +28,13 @@ from ocs_storage_exploration.storage.vector.collection import VectorCollectionSt
 
 if TYPE_CHECKING:
     from ocs_storage_exploration.settings import Settings
+
+
+def require_live_record(record: Dataset, dataset_identifier: str) -> Dataset:
+    """Refuse a record whose dataset is being deleted, which is already gone as far as a reader is concerned."""
+    if record.is_deleting:
+        raise DatasetNotFoundError(f"dataset {dataset_identifier!r} is being deleted")
+    return record
 
 
 def require_coverage_record(record: Dataset, dataset_identifier: str) -> CoverageDataset:
@@ -87,15 +94,15 @@ class StorageService:
 
     def get_dataset(self, dataset_identifier: str) -> Dataset:
         """Read one dataset record or raise DatasetNotFoundError."""
-        return self.catalog.require(dataset_identifier)
+        return require_live_record(self.catalog.require(dataset_identifier), dataset_identifier)
 
     def require_coverage(self, dataset_identifier: str) -> CoverageDataset:
         """Read the record of a coverage, refusing a dataset of another item type."""
-        return require_coverage_record(self.catalog.require(dataset_identifier), dataset_identifier)
+        return require_coverage_record(self.get_dataset(dataset_identifier), dataset_identifier)
 
     def require_collection(self, dataset_identifier: str) -> FeatureDataset:
         """Read the record of a vector collection, refusing a dataset of another item type."""
-        return require_collection_record(self.catalog.require(dataset_identifier), dataset_identifier)
+        return require_collection_record(self.get_dataset(dataset_identifier), dataset_identifier)
 
     def delete_record(self, record: Dataset) -> Dataset:
         """Delete a dataset through the engine its item type names and return the record that was deleted."""
@@ -109,5 +116,9 @@ class StorageService:
         return record
 
     def delete_dataset(self, dataset_identifier: str) -> Dataset:
-        """Read the record of a dataset and delete it through the engine its item type names."""
+        """Read the record of a dataset and delete it through the engine its item type names.
+
+        The record is read raw rather than through ``get_dataset``: a deletion that did not finish
+        leaves a record marked as deleting, and deleting again is how that deletion is completed.
+        """
         return self.delete_record(self.catalog.require(dataset_identifier))

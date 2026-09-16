@@ -10,6 +10,7 @@ from icechunk.xarray import to_icechunk
 from pyproj import CRS
 
 from ocs_storage_exploration.settings import Settings
+from ocs_storage_exploration.storage.addresses import StorageAddress
 from ocs_storage_exploration.storage.catalog import ObjectCatalog
 from ocs_storage_exploration.storage.errors import (
     DatasetAlreadyExistsError,
@@ -17,6 +18,7 @@ from ocs_storage_exploration.storage.errors import (
     QuerySizeGuardError,
     RasterContractError,
 )
+from ocs_storage_exploration.storage.keys import raster_prefix
 from ocs_storage_exploration.storage.protocols import StorageBackend
 from ocs_storage_exploration.storage.raster import (
     PROJECTION_CODE_ATTRIBUTE,
@@ -29,11 +31,20 @@ from ocs_storage_exploration.storage.raster import (
     build_synthetic_cube,
     build_timestamps,
 )
-from ocs_storage_exploration.storage.schemas import BoundingBox, CoverageDataset, GridSpecification
+from ocs_storage_exploration.storage.schemas import (
+    BoundingBox,
+    CoverageDataset,
+    DatasetLifecycle,
+    GridSpecification,
+)
 
 IDENTIFIER = "roundtrip"
 VARIABLE = "temperature"
 START = datetime(2020, 1, 1)
+
+
+class SweepInterrupted(Exception):
+    """Failure standing for a deletion that stopped while it was emptying the dataset prefix."""
 
 
 def build_grid() -> GridSpecification:
@@ -94,7 +105,7 @@ def test_create_then_read_round_trips_values_and_dimensions(
     assert record.timestep_count == 3
     assert record.temporal is not None
     assert record.temporal.start == START
-    assert record.address.endswith("raster/roundtrip")
+    assert record.storage_key == "raster/roundtrip"
 
 
 def test_read_side_carries_the_coordinate_reference_system(
@@ -217,13 +228,105 @@ def test_create_refuses_dimensions_in_the_wrong_order(raster_repository: RasterR
         raster_repository.create(IDENTIFIER, grid, transposed)
 
 
-def test_delete_removes_the_record_before_the_bytes(raster_repository: RasterRepository, grid: GridSpecification):
+def mark_deleting(catalog: ObjectCatalog) -> None:
+    """Leave the coverage in the state a deletion that stopped before its sweep leaves behind."""
+    entry = catalog.require_entry(IDENTIFIER)
+    catalog.put(entry.record.model_copy(update={"lifecycle": DatasetLifecycle.DELETING}), revision=entry.revision)
+
+
+def test_delete_marks_the_record_before_it_sweeps_the_repository(
+    raster_repository: RasterRepository,
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+    grid: GridSpecification,
+    monkeypatch: pytest.MonkeyPatch,
+):
     raster_repository.create(IDENTIFIER, grid, build_cube(grid))
+    observed: dict[str, CoverageDataset | None] = {}
+    sweep = storage_backend.delete_prefix
+
+    def watching_sweep(address: StorageAddress) -> int:
+        record = catalog.get(IDENTIFIER)
+        observed["record"] = record if isinstance(record, CoverageDataset) else None
+        return sweep(address)
+
+    monkeypatch.setattr(storage_backend, "delete_prefix", watching_sweep)
 
     raster_repository.delete(IDENTIFIER)
 
+    # The record outlives the sweep, so a writer that arrives in between is told a deletion is running
+    # instead of finding no record at all and writing into a prefix that is about to be emptied.
+    marked = observed["record"]
+    assert marked is not None
+    assert marked.lifecycle is DatasetLifecycle.DELETING
+    assert marked.is_deleting is True
+    assert catalog.get(IDENTIFIER) is None
     with pytest.raises(DatasetNotFoundError), raster_repository.read(IDENTIFIER, version=VersionSelector.DRAFT):
         pass
+
+
+def test_a_create_after_a_deletion_that_crashed_mid_sweep_inherits_no_history(
+    raster_repository: RasterRepository,
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+    grid: GridSpecification,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid))
+    raster_repository.append(IDENTIFIER, build_cube(grid, count=2, start=datetime(2020, 1, 4), seed=1))
+    sweep = storage_backend.delete_prefix
+
+    def crashing_sweep(address: StorageAddress) -> int:
+        monkeypatch.setattr(storage_backend, "delete_prefix", sweep)
+        raise SweepInterrupted("the sweep stopped half way")
+
+    monkeypatch.setattr(storage_backend, "delete_prefix", crashing_sweep)
+    with pytest.raises(SweepInterrupted):
+        raster_repository.delete(IDENTIFIER)
+
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid, count=1))
+
+    # The create took the deletion over and swept first, so the reused identifier starts from an empty
+    # repository: its whole history is the initialisation snapshot and the write that just landed.
+    assert len(raster_repository.versions(IDENTIFIER)) == 2
+    record = catalog.require(IDENTIFIER)
+    assert isinstance(record, CoverageDataset)
+    assert record.is_deleting is False
+    assert record.timestep_count == 1
+
+
+def test_a_second_delete_finishes_a_deletion_that_stopped_before_its_sweep(
+    raster_repository: RasterRepository,
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+    grid: GridSpecification,
+):
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid))
+    mark_deleting(catalog)
+
+    raster_repository.delete(IDENTIFIER)
+
+    assert catalog.get(IDENTIFIER) is None
+    assert storage_backend.list_keys(raster_repository.repository_address(IDENTIFIER)) == []
+
+
+def test_a_coverage_being_deleted_is_absent_for_reads_publications_and_listings(
+    raster_repository: RasterRepository,
+    catalog: ObjectCatalog,
+    grid: GridSpecification,
+):
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid))
+    raster_repository.publish(IDENTIFIER)
+    mark_deleting(catalog)
+
+    with pytest.raises(DatasetNotFoundError), raster_repository.read(IDENTIFIER):
+        pass
+    with pytest.raises(DatasetNotFoundError):
+        raster_repository.publish(IDENTIFIER)
+
+    assert catalog.list_datasets() == []
+    # The raw record is still there, which is what lets a later delete or create finish the deletion.
+    assert catalog.get(IDENTIFIER) is not None
 
 
 def test_read_refuses_an_unknown_dataset(raster_repository: RasterRepository):
@@ -260,7 +363,7 @@ def test_read_falls_back_to_the_first_multiscale_group(
         CoverageDataset(
             dataset_identifier=identifier,
             title="Multiscale",
-            address=address.as_uri(),
+            storage_key=raster_prefix(identifier),
             grid=grid,
             variables=(VARIABLE,),
             timestep_count=3,
@@ -393,3 +496,55 @@ def test_recreating_a_deleted_coverage_starts_a_fresh_history(
     # Only the initialisation snapshot and the write above: the deleted history must not come back.
     assert len(versions) == 2
     assert versions[0].message == "written again"
+
+
+def assert_the_store_and_the_record_still_hold_three_timesteps(
+    raster_repository: RasterRepository,
+    catalog: ObjectCatalog,
+) -> None:
+    with raster_repository.read(IDENTIFIER, version=VersionSelector.DRAFT) as handle:
+        assert handle.dataset.sizes["t"] == 3
+    record = catalog.require(IDENTIFIER)
+    assert isinstance(record, CoverageDataset)
+    assert record.timestep_count == 3
+
+
+def test_append_refuses_timestamps_that_precede_the_committed_time_axis(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+    catalog: ObjectCatalog,
+):
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid, count=3))
+
+    with pytest.raises(RasterContractError, match="extend the committed time axis"):
+        raster_repository.append(IDENTIFIER, build_cube(grid, count=2, start=datetime(2019, 12, 1), seed=1))
+
+    assert_the_store_and_the_record_still_hold_three_timesteps(raster_repository, catalog)
+
+
+def test_append_refuses_timestamps_the_store_already_holds(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+    catalog: ObjectCatalog,
+):
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid, count=3))
+
+    with pytest.raises(RasterContractError, match="extend the committed time axis"):
+        raster_repository.append(IDENTIFIER, build_cube(grid, count=2, start=datetime(2020, 1, 3), seed=1))
+
+    assert_the_store_and_the_record_still_hold_three_timesteps(raster_repository, catalog)
+
+
+def test_append_refuses_a_cube_whose_own_timestamps_do_not_increase(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+    catalog: ObjectCatalog,
+):
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid, count=3))
+    reversed_cube = build_cube(grid, count=2, start=datetime(2020, 1, 4), seed=1)
+    reversed_cube = reversed_cube.assign_coords({"t": reversed_cube["t"].values[::-1]})
+
+    with pytest.raises(RasterContractError, match="strictly increase"):
+        raster_repository.append(IDENTIFIER, reversed_cube)
+
+    assert_the_store_and_the_record_still_hold_three_timesteps(raster_repository, catalog)

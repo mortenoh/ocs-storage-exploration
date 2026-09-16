@@ -17,6 +17,7 @@ from ocs_storage_exploration.storage.schemas import (
     BoundingBox,
     CatalogEntry,
     CoverageDataset,
+    DatasetLifecycle,
     FeatureDataset,
     FeatureDetail,
     GridSpecification,
@@ -32,7 +33,7 @@ def build_coverage(identifier: str = "temperature", title: str = "Daily temperat
     return CoverageDataset(
         dataset_identifier=identifier,
         title=title,
-        address=f"memory://memory/ocs/raster/{identifier}",
+        storage_key=f"raster/{identifier}",
         bbox=BBOX,
         grid=GridSpecification(shape=(4, 8), bbox=BBOX, crs="EPSG:4326", nodata_value=-9999.0),
         variables=("temperature",),
@@ -45,7 +46,7 @@ def build_feature(identifier: str = "districts") -> FeatureDataset:
     return FeatureDataset(
         dataset_identifier=identifier,
         title="Districts",
-        address=f"memory://memory/ocs/vector/{identifier}",
+        storage_key=f"vector/{identifier}",
         bbox=BBOX,
         crs="EPSG:4326",
         features=FeatureDetail(identifier_property="id", feature_count=12, geometry_types=("Polygon",)),
@@ -210,3 +211,19 @@ def test_the_record_address_is_below_the_base_prefix(catalog: ObjectCatalog) -> 
 
     assert address.key == f"{catalog.backend.base_prefix}/catalog/datasets/temperature.json"
     assert catalog.backend is not None
+
+
+def test_list_datasets_skips_a_record_being_deleted_while_get_still_reads_it(catalog: ObjectCatalog) -> None:
+    catalog.put(build_coverage(), create=True)
+    catalog.put(build_feature(), create=True)
+    entry = catalog.require_entry("districts")
+    catalog.put(entry.record.model_copy(update={"lifecycle": DatasetLifecycle.DELETING}), revision=entry.revision)
+
+    listed = catalog.list_datasets()
+
+    assert [record.dataset_identifier for record in listed] == ["temperature"]
+    assert catalog.list_datasets(ItemType.FEATURE) == []
+    # A deletion that stopped half way has to be findable, or nothing could ever finish it.
+    marked = catalog.require("districts")
+    assert marked.is_deleting is True
+    assert catalog.get("districts") is not None

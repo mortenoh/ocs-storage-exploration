@@ -47,13 +47,12 @@ jobs:
           path: coverage.xml
           retention-days: 7
 
-  # Optional: the s3-marked tests need a live endpoint. rustfs takes its credentials as command
+  # Required: the s3-marked tests need a live endpoint. rustfs takes its credentials as command
   # line flags and pre-creates the bucket in its entrypoint, neither of which a GitHub Actions
   # service container can express, so the job starts it from compose.yml instead, exactly as
-  # `make test-s3` does locally. It never fails the build.
+  # `make test-s3` does locally. A failure here fails the build.
   s3:
     runs-on: ubuntu-latest
-    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v7
@@ -77,4 +76,4 @@ jobs:
 
       - name: Stop rustfs
         if: ${{ always() }}
-        run: docker compose down --remove-orphans
+        run: docker compose down rustfs --remove-orphans

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from functools import partial
 from typing import Annotated, Final
 
 from fastapi import APIRouter, Query, status
@@ -15,6 +16,7 @@ from ocs_storage_exploration.api.schemas import (
     IngestRasterRequest,
     PublishRequest,
     RasterVersionListResponse,
+    assert_cube_size,
 )
 from ocs_storage_exploration.storage.raster import VersionSelector
 from ocs_storage_exploration.storage.schemas import (
@@ -40,13 +42,22 @@ async def create_raster(
     dataset_identifier: str,
     request: CreateRasterRequest,
     storage: AsyncStorageServiceDependency,
+    settings: SettingsDependency,
 ) -> RasterWriteResult:
     """Generate a synthetic cube, write it as a new coverage and publish it when the request asks for it."""
+    # The guard belongs to the application that was asked, so it runs here rather than in a schema
+    # validator, and it runs before anything allocates the cells it is counting.
+    assert_cube_size(
+        "requested cube",
+        request.shape,
+        request.timestep_count,
+        max_cube_cells=settings.max_cube_cells,
+    )
     grid = request.to_grid()
     result = await storage.raster.create(
         dataset_identifier,
         grid,
-        request.to_cube(grid),
+        partial(request.to_cube, grid),
         title=request.title,
         license=request.license,
         attribution=request.attribution,
@@ -63,10 +74,17 @@ async def append_raster(
     dataset_identifier: str,
     request: AppendRasterRequest,
     storage: AsyncStorageServiceDependency,
+    settings: SettingsDependency,
 ) -> RasterWriteResult:
     """Continue the time axis of a coverage with more synthetic timesteps."""
     record = await storage.require_coverage(dataset_identifier)
-    result = await storage.raster.append(dataset_identifier, request.to_cube(record))
+    assert_cube_size(
+        f"append to {dataset_identifier!r}",
+        record.grid.shape,
+        request.timestep_count,
+        max_cube_cells=settings.max_cube_cells,
+    )
+    result = await storage.raster.append(dataset_identifier, partial(request.to_cube, record))
     if not request.publish:
         return result
     await storage.raster.publish(dataset_identifier, snapshot_identifier=result.snapshot_identifier)

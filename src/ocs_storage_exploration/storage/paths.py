@@ -12,6 +12,10 @@ from ocs_storage_exploration.storage.errors import IngestPathError
 # A pattern carrying one of these is expanded as a glob; anything else is taken as a literal path.
 GLOB_CHARACTERS: Final[re.Pattern[str]] = re.compile(r"[*?\[]")
 
+# A store with one of these suffixes is a directory the readers open as one dataset, so it is
+# ingestible even though it is not a file. A directory with any other name stays refused.
+DIRECTORY_STORE_SUFFIXES: Final[frozenset[str]] = frozenset({".zarr"})
+
 
 def resolve_ingest_roots(roots: Sequence[Path], *, working_directory: Path | None = None) -> tuple[Path, ...]:
     """Return the ingest roots as absolute directories, resolved against the working directory."""
@@ -77,14 +81,21 @@ def _expand_pattern(pattern: str, base: Path) -> list[Path]:
         # A literal path is resolved rather than globbed, so a missing file is reported as missing
         # instead of as a pattern that matched nothing.
         resolved = (candidate if candidate.is_absolute() else base / candidate).resolve()
-        return [resolved] if resolved.is_file() else []
+        return [resolved] if _is_ingestible(resolved) else []
     if candidate.is_absolute():
         root = Path(candidate.anchor)
         relative = candidate.relative_to(root)
     else:
         root = base
         relative = candidate
-    return sorted(match.resolve() for match in root.glob(str(relative)) if match.is_file())
+    return sorted(match.resolve() for match in root.glob(str(relative)) if _is_ingestible(match))
+
+
+def _is_ingestible(path: Path) -> bool:
+    """Return whether a path names a readable file or one of the directory stores a reader opens whole."""
+    if path.is_file():
+        return True
+    return path.is_dir() and path.suffix.lower() in DIRECTORY_STORE_SUFFIXES
 
 
 def _assert_inside_roots(path: Path, roots: Sequence[Path], pattern: str) -> None:

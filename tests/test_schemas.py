@@ -14,6 +14,7 @@ from ocs_storage_exploration.storage.schemas import (
     BoundingBox,
     CoverageDataset,
     Dataset,
+    DatasetLifecycle,
     FeatureDataset,
     FeatureDetail,
     GridSpecification,
@@ -32,7 +33,7 @@ def build_coverage() -> CoverageDataset:
     return CoverageDataset(
         dataset_identifier="temperature",
         title="Daily temperature",
-        address="file:///srv/data/ocs/raster/temperature",
+        storage_key="raster/temperature",
         bbox=BBOX,
         grid=GridSpecification(shape=(4, 8), bbox=BBOX, crs="EPSG:4326", nodata_value=-9999.0),
         variables=("temperature",),
@@ -45,7 +46,7 @@ def build_feature() -> FeatureDataset:
     return FeatureDataset(
         dataset_identifier="districts",
         title="Districts",
-        address="file:///srv/data/ocs/vector/districts",
+        storage_key="vector/districts",
         bbox=BBOX,
         crs="EPSG:4326",
         features=FeatureDetail(
@@ -177,3 +178,40 @@ def test_the_licence_and_attribution_default_to_absent() -> None:
 
     assert coverage.license is None
     assert coverage.attribution is None
+
+
+def test_a_record_is_live_unless_a_deletion_marked_it() -> None:
+    record = build_coverage()
+
+    assert record.lifecycle is DatasetLifecycle.LIVE
+    assert record.is_deleting is False
+
+
+def test_a_deleting_record_round_trips_through_the_dataset_union() -> None:
+    marked = build_feature().model_copy(update={"lifecycle": DatasetLifecycle.DELETING})
+
+    restored = DATASET_ADAPTER.validate_json(DATASET_ADAPTER.dump_json(marked))
+
+    assert restored.lifecycle is DatasetLifecycle.DELETING
+    assert restored.is_deleting is True
+    assert DATASET_ADAPTER.dump_python(marked, mode="json")["lifecycle"] == "deleting"
+
+
+def test_an_unknown_lifecycle_is_refused() -> None:
+    payload = DATASET_ADAPTER.dump_python(build_feature(), mode="json") | {"lifecycle": "half-deleted"}
+
+    with pytest.raises(ValidationError):
+        DATASET_ADAPTER.validate_python(payload)
+
+
+@pytest.mark.parametrize(
+    "storage_key",
+    ["/raster/temperature", "raster/../../escape", "raster//temperature", ""],
+    ids=["absolute", "climbs-out", "empty-segment", "empty"],
+)
+def test_a_storage_key_that_is_not_a_relative_object_key_is_refused(storage_key: str) -> None:
+    payload = build_coverage().model_dump()
+    payload["storage_key"] = storage_key
+
+    with pytest.raises(ValidationError, match="storage key"):
+        CoverageDataset.model_validate(payload)

@@ -6,8 +6,8 @@ copy of anything — nothing is written when a collection is requested, and ther
 is no index to keep in sync.
 
 What it projects is the stored dataset, not the catalog record. The record
-contributes identity alone: the identifier, the title, the licence, the
-attribution and the address the links are built from. Everything a client would
+contributes identity alone: the identifier, the title and the storage key the
+asset and link hrefs are built from. Everything a client would
 act on — the extents, the variables, the coordinate reference system, the row
 count and the columns — is read from the version being advertised:
 `RasterRepository.describe` for a coverage, the version metadata sidecar and the
@@ -75,7 +75,8 @@ failing.
 
 Assets:
 
-- `icechunk`, whose href is the record's address URI and whose media type is
+- `icechunk`, whose href is the record's storage key resolved against the
+  backend that is serving, and whose media type is
   `application/vnd.zarr; version=3`. There is no registered media type for an
   Icechunk repository, and inventing `application/vnd.zarr+icechunk` would be a
   string no client matches; the repository is a Zarr v3 store, so it is
@@ -162,7 +163,8 @@ frame.
 Assets:
 
 - `data`, the GeoParquet object of the advertised version, at
-  `{address}/versions/vNNNNN/data.parquet` with media type
+  `{storage_key}/versions/vNNNNN/data.parquet` resolved against the backend that
+  is serving, with media type
   `application/x-parquet` (pystac's `MediaType.PARQUET`) and role `data`. The
   version directory name is the same one the pointer object names, so the href
   is stable until the pointer moves.
@@ -227,13 +229,21 @@ The advertised version is on the collection as `ocs:version`.
 
 ## Licence and attribution
 
-Both live on the record, not on the projection: `license` is an SPDX identifier,
-an SPDX expression or `proprietary`, validated loosely enough to accept
-`CC-BY-4.0`, `Apache-2.0 OR MIT` and `proprietary` while refusing a sentence of
-prose. `attribution` is free text.
+`license` is an SPDX identifier, an SPDX expression or `proprietary`, validated
+loosely enough to accept `CC-BY-4.0`, `Apache-2.0 OR MIT` and `proprietary`
+while refusing a sentence of prose. `attribution` is free text.
+
+Both belong to the version being advertised rather than to the record. A feature
+collection reads them from the metadata sidecar of the version it advertises and
+a coverage from the metadata of the Icechunk commit that wrote the snapshot, so
+a draft written under other terms cannot change what the published version
+promises, and a rollback takes the earlier terms back with it; the record is the
+fallback only when no version or snapshot can be read at all. A create declares
+the terms its own commit carries, and an append carries forward the terms of the
+snapshot it extends.
 
 `license` maps onto the collection's `license` field, falling back to `other`
-when the record declares none — STAC 1.1 requires the field and `other` is its
+when none is declared — STAC 1.1 requires the field and `other` is its
 spelling for "not an SPDX identifier". `attribution` becomes a single entry in
 `providers` with the roles `producer` and `licensor`, because attribution under
 CC-BY is a licence condition rather than a courtesy, and `providers` is the only
@@ -246,10 +256,10 @@ append that does not name them keeps what the earlier record held.
 
 ## What is still record-shaped
 
-Identity only: the identifier, the title, the licence, the attribution and the
-address the asset and link hrefs are built from. Nothing a client would compute
-against comes from the record while the store can be read, and when it cannot,
-the record is the documented fallback rather than the source.
+Identity only: the identifier, the title and the storage key the asset and link
+hrefs are built from. Nothing a client would compute against comes from the
+record while the store can be read, and when it cannot, the record is the
+documented fallback rather than the source.
 
 ## Validation
 

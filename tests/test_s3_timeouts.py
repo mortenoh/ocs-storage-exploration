@@ -89,7 +89,7 @@ def test_a_catalog_put_gives_up_instead_of_hanging(unreachable_service: StorageS
     record = CoverageDataset(
         dataset_identifier=COVERAGE,
         title="Unreachable",
-        address=f"s3://ocs-storage-exploration/unreachable/raster/{COVERAGE}",
+        storage_key=f"raster/{COVERAGE}",
         bbox=BBOX,
         grid=GridSpecification(shape=(4, 6), bbox=BBOX, crs="EPSG:4326"),
         variables=("temperature",),

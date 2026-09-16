@@ -11,7 +11,8 @@ from typing import Annotated, Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from ocs_storage_exploration.storage.addresses import SchemeName
+from ocs_storage_exploration.storage.addresses import SchemeName, validate_object_key
+from ocs_storage_exploration.storage.errors import StorageAddressError
 
 # A loose shape check rather than a lookup against the SPDX list: one SPDX-style identifier, or several joined
 # by the SPDX operators. It accepts "CC-BY-4.0" and "proprietary" and refuses a sentence of prose,
@@ -43,11 +44,26 @@ def normalise_attribution(value: str | None) -> str | None:
     return value.strip() or None
 
 
+def normalise_storage_key(value: str) -> str:
+    """Refuse a storage key that is not a plain object key relative to the base prefix of a backend."""
+    try:
+        return validate_object_key(value)
+    except StorageAddressError as error:
+        raise ValueError(f"storage key must be a relative object key: {value!r}") from error
+
+
 class ItemType(StrEnum):
     """Discriminator separating gridded coverages from vector features."""
 
     COVERAGE = "coverage"
     FEATURE = "feature"
+
+
+class DatasetLifecycle(StrEnum):
+    """Whether a record stands for a dataset that exists or for one whose deletion is under way."""
+
+    LIVE = "live"
+    DELETING = "deleting"
 
 
 class StorageFormat(StrEnum):
@@ -154,14 +170,31 @@ class DatasetBase(BaseModel):
 
     dataset_identifier: str
     title: str
-    address: str
+    # The key of the dataset below the base prefix of the backend, which is what backend.address takes.
+    # A record holding an absolute URI would name the root it happened to be written under, so the same
+    # bytes served from a container, from another machine or from S3 would advertise a root that is gone.
+    storage_key: str
     schema_version: str = "1"
+    # A deletion marks the record before it sweeps the objects, so the record is what tells a
+    # concurrent writer that the prefix it is about to write into is being emptied.
+    lifecycle: DatasetLifecycle = DatasetLifecycle.LIVE
     created_at: datetime = Field(default_factory=current_timestamp)
     updated_at: datetime = Field(default_factory=current_timestamp)
     bbox: BoundingBox | None = None
     license: str | None = None
     attribution: str | None = None
     publication: Publication = Field(default_factory=Publication)
+
+    @property
+    def is_deleting(self) -> bool:
+        """Report whether this record stands for a deletion under way rather than a live dataset."""
+        return self.lifecycle is DatasetLifecycle.DELETING
+
+    @field_validator("storage_key")
+    @classmethod
+    def validate_storage_key(cls, value: str) -> str:
+        """Refuse a storage key that is absolute or climbs out of the backend it is read against."""
+        return normalise_storage_key(value)
 
     @field_validator("license")
     @classmethod

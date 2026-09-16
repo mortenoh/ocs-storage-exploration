@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime
 from typing import Any, NoReturn
 
-import numpy
 import pytest
 from fastapi.testclient import TestClient
 
+from ocs_storage_exploration.api import schemas as api_schemas
 from ocs_storage_exploration.api.schemas import TIME_STEP_ATTRIBUTE, AppendRasterRequest
-from ocs_storage_exploration.storage.errors import QuerySizeGuardError, RasterContractError
+from ocs_storage_exploration.main import create_app
+from ocs_storage_exploration.settings import Settings
+from ocs_storage_exploration.storage.errors import RasterContractError
 from ocs_storage_exploration.storage.schemas import (
     BoundingBox,
     CoverageDataset,
@@ -34,6 +37,24 @@ CREATE_BODY: dict[str, Any] = {
 
 def refuse_allocation(*arguments: Any, **keywords: Any) -> NoReturn:
     raise AssertionError("the cube was allocated before the guard refused the request")
+
+
+def refuse_cube_allocation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the router fail loudly if it builds a cube instead of refusing the request first."""
+    monkeypatch.setattr(api_schemas, "build_synthetic_cube", refuse_allocation)
+
+
+def record_cube_threads(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record the thread every synthetic cube is built on, building it as usual."""
+    threads: list[str] = []
+    build = api_schemas.build_synthetic_cube
+
+    def record(*arguments: Any, **keywords: Any) -> Any:
+        threads.append(threading.current_thread().name)
+        return build(*arguments, **keywords)
+
+    monkeypatch.setattr(api_schemas, "build_synthetic_cube", record)
+    return threads
 
 
 def create_coverage(client: TestClient, **overrides: Any) -> dict[str, Any]:
@@ -262,7 +283,7 @@ def test_an_append_request_falls_back_to_a_daily_step_for_an_unreadable_one() ->
     record = CoverageDataset(
         dataset_identifier=IDENTIFIER,
         title=IDENTIFIER,
-        address="memory://memory/ocs/raster/coverage-api",
+        storage_key="raster/coverage-api",
         publication=Publication(),
         grid=GridSpecification(
             shape=(2, 2),
@@ -284,7 +305,7 @@ def test_an_append_request_refuses_a_coverage_without_a_time_axis() -> None:
     record = CoverageDataset(
         dataset_identifier=IDENTIFIER,
         title=IDENTIFIER,
-        address="memory://memory/ocs/raster/coverage-api",
+        storage_key="raster/coverage-api",
         grid=GridSpecification(
             shape=(2, 2),
             bbox=BoundingBox(minimum_x=0.0, minimum_y=0.0, maximum_x=2.0, maximum_y=2.0),
@@ -316,7 +337,7 @@ def test_an_oversized_create_is_refused_before_the_cube_is_allocated(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(numpy.random, "default_rng", refuse_allocation)
+    refuse_cube_allocation(monkeypatch)
 
     response = client.post(
         f"/api/v1/raster/{IDENTIFIER}",
@@ -328,26 +349,48 @@ def test_an_oversized_create_is_refused_before_the_cube_is_allocated(
     assert client.get(f"/api/v1/datasets/{IDENTIFIER}").status_code == 404
 
 
-def test_an_oversized_append_request_is_refused_before_the_cube_is_allocated(
+def test_an_oversized_append_is_refused_before_the_cube_is_allocated(
+    settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    record = CoverageDataset(
-        dataset_identifier=IDENTIFIER,
-        title=IDENTIFIER,
-        address="memory://memory/ocs/raster/coverage-api",
-        grid=GridSpecification(
-            shape=(4096, 4096),
-            bbox=BoundingBox(minimum_x=0.0, minimum_y=0.0, maximum_x=4096.0, maximum_y=4096.0),
-            crs="EPSG:4326",
-        ),
-        variables=(VARIABLE,),
-        temporal=TemporalExtent(start=datetime(2020, 1, 1), end=datetime(2020, 1, 2)),
-        timestep_count=2,
-    )
-    monkeypatch.setattr(numpy.random, "default_rng", refuse_allocation)
+    with TestClient(create_app(settings=settings.model_copy(update={"max_cube_cells": 1000}))) as guarded:
+        create_coverage(guarded)
+        refuse_cube_allocation(monkeypatch)
 
-    with pytest.raises(QuerySizeGuardError, match="more than the"):
-        AppendRasterRequest(timestep_count=512).to_cube(record)
+        response = guarded.post(f"/api/v1/raster/{IDENTIFIER}/append", json={"timestep_count": 512})
+
+    assert response.status_code == 413
+    assert response.json()["error"] == "QuerySizeGuardError"
+
+
+def test_the_cube_guard_reads_the_limit_of_the_application_that_was_asked(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    refuse_cube_allocation(monkeypatch)
+
+    with TestClient(create_app(settings=settings.model_copy(update={"max_cube_cells": 1}))) as guarded:
+        response = guarded.post(f"/api/v1/raster/{IDENTIFIER}", json=CREATE_BODY)
+
+    assert response.status_code == 413
+    assert response.json()["error"] == "QuerySizeGuardError"
+
+
+def test_two_applications_with_different_cube_limits_answer_the_same_body_differently(
+    settings: Settings,
+) -> None:
+    with TestClient(create_app(settings=settings.model_copy(update={"max_cube_cells": 1}))) as guarded:
+        refused = guarded.post(f"/api/v1/raster/{IDENTIFIER}", json=CREATE_BODY)
+    with TestClient(create_app(settings=settings)) as permissive:
+        accepted = permissive.post(f"/api/v1/raster/{IDENTIFIER}", json=CREATE_BODY)
+
+    assert refused.status_code == 413
+    assert accepted.status_code == 201
+
+
+def test_the_request_schemas_never_read_the_process_wide_settings() -> None:
+    # The guard belongs to the application that was asked, which a module level get_settings() ignores.
+    assert not hasattr(api_schemas, "get_settings")
 
 
 def test_publishing_the_initialisation_snapshot_is_refused(client: TestClient) -> None:
@@ -372,3 +415,18 @@ def test_a_query_without_a_published_version_is_refused(client: TestClient) -> N
     assert response.status_code == 404
     assert response.json()["error"] == "SnapshotNotFoundError"
     assert client.get(f"/api/v1/raster/{IDENTIFIER}/query", params={"version": "draft"}).status_code == 200
+
+
+def test_a_synthetic_cube_is_allocated_on_a_worker_thread(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    threads = record_cube_threads(monkeypatch)
+
+    create_coverage(client)
+    assert client.post(f"/api/v1/raster/{IDENTIFIER}/append", json={"timestep_count": 1}).status_code == 200
+
+    # "AnyIO worker thread" is the name anyio gives the threads the runner bounds; the event loop
+    # would be anything else, and allocating there blocks every other request for the whole cube.
+    assert len(threads) == 2
+    assert all(name.startswith("AnyIO worker thread") for name in threads)

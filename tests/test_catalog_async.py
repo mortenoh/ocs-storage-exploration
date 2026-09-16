@@ -18,6 +18,7 @@ from ocs_storage_exploration.storage.schemas import (
     BoundingBox,
     CatalogEntry,
     CoverageDataset,
+    DatasetLifecycle,
     FeatureDataset,
     FeatureDetail,
     GridSpecification,
@@ -33,7 +34,7 @@ def build_coverage(identifier: str = "temperature", title: str = "Daily temperat
     return CoverageDataset(
         dataset_identifier=identifier,
         title=title,
-        address=f"memory://memory/ocs/raster/{identifier}",
+        storage_key=f"raster/{identifier}",
         bbox=BBOX,
         grid=GridSpecification(shape=(4, 8), bbox=BBOX, crs="EPSG:4326", nodata_value=-9999.0),
         variables=("temperature",),
@@ -46,7 +47,7 @@ def build_feature(identifier: str = "districts") -> FeatureDataset:
     return FeatureDataset(
         dataset_identifier=identifier,
         title="Districts",
-        address=f"memory://memory/ocs/vector/{identifier}",
+        storage_key=f"vector/{identifier}",
         bbox=BBOX,
         crs="EPSG:4326",
         features=FeatureDetail(identifier_property="id", feature_count=12, geometry_types=("Polygon",)),
@@ -187,3 +188,21 @@ def test_the_record_address_is_below_the_base_prefix(async_catalog: AsyncObjectC
     address = async_catalog.record_address("temperature")
 
     assert address.key == f"{async_catalog.backend.base_prefix}/catalog/datasets/temperature.json"
+
+
+async def test_list_datasets_skips_a_record_being_deleted_while_get_still_reads_it(
+    async_catalog: AsyncObjectCatalog,
+) -> None:
+    await async_catalog.put(build_coverage(), create=True)
+    await async_catalog.put(build_feature(), create=True)
+    entry = await async_catalog.require_entry("districts")
+    await async_catalog.put(
+        entry.record.model_copy(update={"lifecycle": DatasetLifecycle.DELETING}),
+        revision=entry.revision,
+    )
+
+    listed = await async_catalog.list_datasets()
+
+    assert [record.dataset_identifier for record in listed] == ["temperature"]
+    assert await async_catalog.list_datasets(ItemType.FEATURE) == []
+    assert (await async_catalog.require("districts")).is_deleting is True

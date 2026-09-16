@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Final, TypeVar
 
 import anyio
 import anyio.to_thread
@@ -41,6 +42,7 @@ from ocs_storage_exploration.storage.service import (
     StorageService,
     require_collection_record,
     require_coverage_record,
+    require_live_record,
 )
 from ocs_storage_exploration.storage.vector.collection import (
     DEFAULT_CRS,
@@ -65,21 +67,46 @@ if TYPE_CHECKING:
 
 ResultT = TypeVar("ResultT")
 
+type RasterCubeSource = xarray.Dataset | Callable[[], xarray.Dataset]
+
+LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
+
+# How long a shutdown waits for the threads of abandoned calls. It is deliberately not the storage
+# timeout: that one is sized for the slowest legitimate call (180 seconds by default) and using it
+# here would hold a container in its shutdown grace period for minutes over a call nobody awaits.
+ABANDONED_DRAIN_SECONDS: Final[float] = 5.0
+
+
+def resolve_cube(source: RasterCubeSource) -> xarray.Dataset:
+    """Return the cube of a source, calling a deferred one so it is allocated wherever this runs."""
+    if callable(source):
+        return source()
+    return source
+
 
 class StorageOperationRunner:
     """Runs one blocking storage call at a time per limiter token, and never longer than the timeout.
 
     The limiter bounds how many engine calls are in flight at once, so a burst of requests cannot open
     more Icechunk sessions or Parquet readers than the deployment was sized for. The timeout bounds how
-    long a caller waits for a token and for the call itself. A call that times out is abandoned rather
-    than cancelled: no library here offers cancellation, so its thread runs to completion with its
-    result discarded, and its limiter token is released when the wait is abandoned.
+    long a caller waits for a token and for the call itself.
+
+    A call that outlives the timeout is abandoned rather than cancelled: no library here offers
+    cancellation, so its thread runs to completion with its result discarded. It keeps its limiter
+    token until that thread returns, so a wedged call occupies a slot instead of letting the next
+    caller start a second thread the deployment was never sized for. A caller still queued for a
+    token is cancelled outright, because nobody is waiting for the work any more.
     """
 
     def __init__(self, *, max_concurrent_operations: int, timeout_seconds: float) -> None:
         """Size the limiter and record the timeout every operation is bounded by."""
         self._limiter = anyio.CapacityLimiter(max_concurrent_operations)
+        # A call holds its operation token before it asks for a thread, so this second limiter of the
+        # same size can never block. It exists only to keep anyio's process-wide default thread
+        # limiter, which is sized for the whole program, out of this bound.
+        self._worker_limiter = anyio.CapacityLimiter(max_concurrent_operations)
         self._timeout_seconds = timeout_seconds
+        self._abandoned: set[asyncio.Task[Any]] = set()
 
     @property
     def limiter(self) -> anyio.CapacityLimiter:
@@ -91,18 +118,63 @@ class StorageOperationRunner:
         """Wall time one storage operation may spend waiting for a token and running."""
         return self._timeout_seconds
 
+    @property
+    def abandoned_count(self) -> int:
+        """How many timed-out calls still hold a worker thread and its limiter token."""
+        return len(self._abandoned)
+
     async def run(self, operation: Callable[[], ResultT], *, description: str) -> ResultT:
         """Run one blocking storage call on a worker thread, bounded by the limiter and the timeout."""
-        timeout = asyncio.timeout(self._timeout_seconds)
+        holding = asyncio.Event()
+        task = asyncio.ensure_future(self._hold_token_and_run(operation, holding))
         try:
-            async with timeout:
-                return await anyio.to_thread.run_sync(operation, abandon_on_cancel=True, limiter=self._limiter)
-        except TimeoutError as error:
-            if not timeout.expired():
-                raise
-            raise StorageTimeoutError(
-                f"{description} did not finish within {self._timeout_seconds} seconds",
-            ) from error
+            _, pending = await asyncio.wait({task}, timeout=self._timeout_seconds)
+        except asyncio.CancelledError:
+            self._stop_waiting(task, holding, description)
+            raise
+        if pending:
+            self._stop_waiting(task, holding, description)
+            raise StorageTimeoutError(f"{description} did not finish within {self._timeout_seconds} seconds")
+        return task.result()
+
+    async def aclose(self) -> None:
+        """Wait, with a bound, for the threads of the calls this runner abandoned."""
+        draining = set(self._abandoned)
+        if not draining:
+            return
+        await asyncio.wait(draining, timeout=ABANDONED_DRAIN_SECONDS)
+
+    async def _hold_token_and_run(self, operation: Callable[[], ResultT], holding: asyncio.Event) -> ResultT:
+        """Hold one limiter token for the whole life of a blocking call, the worker thread included."""
+        # The token is taken here rather than by `run_sync` so that it is this task that borrows it:
+        # a task abandoned with its thread still running gives the token back when the thread returns.
+        async with self._limiter:
+            holding.set()
+            return await anyio.to_thread.run_sync(operation, abandon_on_cancel=False, limiter=self._worker_limiter)
+
+    def _stop_waiting(self, task: asyncio.Task[Any], holding: asyncio.Event, description: str) -> None:
+        """Drop a call still queued for a token, and abandon one that already holds a worker thread."""
+        # The event loop keeps only a weak reference to a running task, so either branch has to hold one.
+        task.add_done_callback(self._release_abandoned)
+        if not holding.is_set():
+            # Nothing was borrowed and no thread was started, so the call can simply be dropped.
+            task.cancel()
+            return
+        # Cancelling now would hand the token to the next caller while the thread it was taken for is
+        # still running, which is how a limit of one ended up running four threads at once.
+        self._abandoned.add(task)
+        LOGGER.warning(
+            "%s did not finish within %s seconds and was abandoned; its worker thread keeps its limiter token",
+            description,
+            self._timeout_seconds,
+        )
+
+    def _release_abandoned(self, task: asyncio.Task[Any]) -> None:
+        """Forget an abandoned call once its thread returned, consuming whatever it raised."""
+        self._abandoned.discard(task)
+        if not task.cancelled():
+            # Nobody is left to receive it, and an unretrieved exception would be logged on collection.
+            task.exception()
 
 
 class AsyncRasterRepository:
@@ -122,7 +194,7 @@ class AsyncRasterRepository:
         self,
         dataset_identifier: str,
         grid: GridSpecification,
-        dataset: xarray.Dataset,
+        dataset: RasterCubeSource,
         *,
         title: str | None = None,
         license: str | None = None,
@@ -130,12 +202,17 @@ class AsyncRasterRepository:
         overwrite: bool = False,
         message: str = DEFAULT_CREATE_MESSAGE,
     ) -> RasterWriteResult:
-        """Write a coverage onto the main branch and record it in the catalog."""
+        """Write a coverage onto the main branch and record it in the catalog.
+
+        A caller that can defer building its cube passes a callable instead of a dataset: the cube is
+        then allocated on the worker thread, inside the limiter and the timeout, rather than on the
+        event loop of a caller that would block every other request while it fills the array.
+        """
         return await self._runner.run(
             lambda: self._repository.create(
                 dataset_identifier,
                 grid,
-                dataset,
+                resolve_cube(dataset),
                 title=title,
                 license=license,
                 attribution=attribution,
@@ -148,13 +225,13 @@ class AsyncRasterRepository:
     async def append(
         self,
         dataset_identifier: str,
-        dataset: xarray.Dataset,
+        dataset: RasterCubeSource,
         *,
         message: str = DEFAULT_APPEND_MESSAGE,
     ) -> RasterWriteResult:
         """Append timesteps to a coverage after checking that it matches what is already committed."""
         return await self._runner.run(
-            lambda: self._repository.append(dataset_identifier, dataset, message=message),
+            lambda: self._repository.append(dataset_identifier, resolve_cube(dataset), message=message),
             description=f"appending to coverage {dataset_identifier!r}",
         )
 
@@ -490,6 +567,10 @@ class AsyncStorageService:
         """Runner bounding every engine call of this facade."""
         return self._runner
 
+    async def aclose(self) -> None:
+        """Wait, with a bound, for the worker threads of every call this facade abandoned."""
+        await self._runner.aclose()
+
     async def run_blocking(self, operation: Callable[[], ResultT], *, description: str) -> ResultT:
         """Run one composed blocking storage call on a worker thread under the same limiter and timeout.
 
@@ -509,18 +590,22 @@ class AsyncStorageService:
 
     async def get_dataset(self, dataset_identifier: str) -> Dataset:
         """Read one dataset record or raise DatasetNotFoundError."""
-        return await self._catalog.require(dataset_identifier)
+        return require_live_record(await self._catalog.require(dataset_identifier), dataset_identifier)
 
     async def require_coverage(self, dataset_identifier: str) -> CoverageDataset:
         """Read the record of a coverage, refusing a dataset of another item type."""
-        return require_coverage_record(await self._catalog.require(dataset_identifier), dataset_identifier)
+        return require_coverage_record(await self.get_dataset(dataset_identifier), dataset_identifier)
 
     async def require_collection(self, dataset_identifier: str) -> FeatureDataset:
         """Read the record of a vector collection, refusing a dataset of another item type."""
-        return require_collection_record(await self._catalog.require(dataset_identifier), dataset_identifier)
+        return require_collection_record(await self.get_dataset(dataset_identifier), dataset_identifier)
 
     async def delete_dataset(self, dataset_identifier: str) -> Dataset:
-        """Read the record of a dataset and delete it through the engine its item type names."""
+        """Read the record of a dataset and delete it through the engine its item type names.
+
+        The record is read raw rather than through ``get_dataset``: a deletion that did not finish
+        leaves a record marked as deleting, and deleting again is how that deletion is completed.
+        """
         record = await self._catalog.require(dataset_identifier)
         return await self._runner.run(
             lambda: self._service.delete_record(record),

@@ -254,3 +254,75 @@ def test_a_grid_crossing_the_antimeridian_can_be_queried(
     # The window wraps the same way the grid does, so it covers the cells on both sides of the line.
     assert crossing.cell_count == 2 * 2
     assert crossing.mean != pytest.approx(eastern.mean)
+
+
+def test_a_draft_nodata_value_does_not_change_the_published_statistics(
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+    settings: Settings,
+):
+    repository = RasterRepository(storage_backend, catalog, settings)
+    grid = build_grid()
+    zeros = build_cube(grid, count=1)
+    zeros[VARIABLE].values[:] = 0.0
+    repository.create("zeros", grid, zeros)
+    repository.publish("zeros")
+    # The draft declares zero as its fill value; the snapshot on the published branch never did.
+    draft_grid = grid.model_copy(update={"nodata_value": 0.0})
+    repository.create("zeros", draft_grid, build_cube(draft_grid, count=1), overwrite=True)
+
+    summary = repository.query("zeros")
+
+    assert summary.minimum == 0.0
+    assert summary.maximum == 0.0
+    assert summary.mean == 0.0
+
+
+def write_jumbled_coverage(
+    repository: RasterRepository,
+    grid: GridSpecification,
+    monkeypatch: pytest.MonkeyPatch,
+) -> xarray.Dataset:
+    """Write a coverage whose time axis runs January then December, which only an unguarded append can build."""
+    repository.create("jumbled", grid, build_cube(grid, count=2))
+    earlier = build_synthetic_cube(
+        grid,
+        variable=VARIABLE,
+        timestamps=build_timestamps(datetime(2019, 12, 30), 2, TimeStep.DAY),
+        seed=1,
+    )
+    monkeypatch.setattr(repository, "_assert_appendable", lambda *arguments, **keywords: None)
+    repository.append("jumbled", earlier)
+    repository.publish("jumbled")
+    return earlier
+
+
+def test_a_query_on_a_non_monotonic_time_axis_reads_a_window_with_no_matching_label(
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    repository = RasterRepository(storage_backend, catalog, settings)
+    earlier = write_jumbled_coverage(repository, build_grid(), monkeypatch)
+
+    summary = repository.query("jumbled", start=datetime(2019, 12, 29), end=datetime(2019, 12, 31))
+
+    assert summary.timestep_count == 2
+    assert summary.cell_count == 2 * 4 * 6
+    assert summary.mean == pytest.approx(float(earlier[VARIABLE].values.mean()), abs=1e-5)
+
+
+def test_a_query_spanning_a_non_monotonic_time_axis_reads_every_timestep_inside_it(
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    repository = RasterRepository(storage_backend, catalog, settings)
+    write_jumbled_coverage(repository, build_grid(), monkeypatch)
+
+    summary = repository.query("jumbled", start=datetime(2019, 12, 30), end=datetime(2020, 1, 2))
+
+    assert summary.timestep_count == 4
+    assert summary.cell_count == 4 * 4 * 6

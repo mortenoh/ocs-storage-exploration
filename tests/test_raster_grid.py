@@ -8,6 +8,7 @@ from pyproj import CRS
 
 from ocs_storage_exploration.storage.errors import RasterContractError
 from ocs_storage_exploration.storage.raster import (
+    NODATA_ATTRIBUTE,
     PROJECTION_CODE_ATTRIBUTE,
     SPATIAL_BBOX_ATTRIBUTE,
     SPATIAL_REFERENCE_NAME,
@@ -143,3 +144,35 @@ def test_assert_finite_attributes_refuses_a_non_finite_value_inside_a_sequence()
 
     with pytest.raises(RasterContractError, match="limits"):
         assert_finite_attributes(cube)
+
+
+def build_single_step_cube(grid: GridSpecification):
+    return build_synthetic_cube(grid, variable=VARIABLE, timestamps=build_timestamps(datetime(2020, 1, 1), 1), seed=0)
+
+
+def test_apply_geozarr_attributes_stamps_the_nodata_value_the_grid_declares():
+    grid = build_grid()
+    cube = build_single_step_cube(grid)
+    assert NODATA_ATTRIBUTE not in cube[VARIABLE].attrs
+
+    decorated = apply_geozarr_attributes(cube, grid.model_copy(update={"nodata_value": -9999.0}))
+
+    assert decorated[VARIABLE].attrs[NODATA_ATTRIBUTE] == -9999.0
+
+
+def test_apply_geozarr_attributes_keeps_the_nodata_value_a_variable_already_carries():
+    grid = build_grid().model_copy(update={"nodata_value": -9999.0})
+    cube = build_single_step_cube(grid)
+    cube[VARIABLE].attrs[NODATA_ATTRIBUTE] = -1.0
+
+    decorated = apply_geozarr_attributes(cube, grid)
+
+    assert decorated[VARIABLE].attrs[NODATA_ATTRIBUTE] == -1.0
+
+
+def test_apply_geozarr_attributes_stamps_no_nodata_value_when_the_grid_declares_none():
+    grid = build_grid()
+
+    decorated = apply_geozarr_attributes(build_single_step_cube(grid), grid)
+
+    assert NODATA_ATTRIBUTE not in decorated[VARIABLE].attrs

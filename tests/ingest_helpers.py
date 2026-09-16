@@ -1,12 +1,16 @@
-"""Helpers for the ingest tests: the committed sample files and small GeoTIFFs written to tmp_path."""
+"""Helpers for the ingest tests: the committed sample files and small rasters written to tmp_path."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 
 import numpy
 import rioxarray
 import xarray
+
+from ocs_storage_exploration.storage.raster.ingest import NETCDF_ENGINE
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 SAMPLES_DIRECTORY = REPOSITORY_ROOT / "samples"
@@ -39,6 +43,109 @@ def write_geotiff(
         array.rio.write_nodata(nodata_value, inplace=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     array.rio.to_raster(path)
+    return path
+
+
+def write_scaled_geotiff(
+    path: Path,
+    *,
+    values: numpy.typing.NDArray[numpy.int16],
+    y_values: numpy.typing.NDArray[numpy.float64],
+    x_values: numpy.typing.NDArray[numpy.float64],
+    scale_factor: float,
+    add_offset: float = 0.0,
+    crs: str = "EPSG:4326",
+    nodata_value: int | None = None,
+) -> Path:
+    """Write one integer GeoTIFF carrying the rasterio scales and offsets a reader has to apply."""
+    assert rioxarray.__version__
+    array = xarray.DataArray(
+        values[None, :, :],
+        dims=("band", "y", "x"),
+        coords={"band": [1], "y": y_values, "x": x_values},
+    )
+    array.rio.write_crs(crs, inplace=True)
+    if nodata_value is not None:
+        array.rio.write_nodata(nodata_value, inplace=True)
+    # rioxarray reads the band scales and offsets from these tags and writes the values unchanged,
+    # which is exactly how a real scaled source is stored: raw integers plus the transform to apply.
+    array.attrs["scales"] = (scale_factor,)
+    array.attrs["offsets"] = (add_offset,)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    array.rio.to_raster(path)
+    return path
+
+
+def build_cube(
+    *,
+    values: numpy.typing.NDArray[numpy.float32],
+    y_values: numpy.typing.NDArray[numpy.float64],
+    x_values: numpy.typing.NDArray[numpy.float64],
+    timestamps: Sequence[datetime],
+    variable: str = "rain",
+    crs: str = "EPSG:4326",
+) -> xarray.Dataset:
+    """Build one small t, y and x cube with a written projection, for the NetCDF and Zarr helpers."""
+    array = xarray.DataArray(
+        values,
+        dims=("t", "y", "x"),
+        coords={
+            "t": numpy.array([numpy.datetime64(moment, "ns") for moment in timestamps]),
+            "y": y_values,
+            "x": x_values,
+        },
+        name=variable,
+    )
+    dataset = array.to_dataset()
+    dataset.rio.write_crs(crs, inplace=True)
+    return dataset
+
+
+def write_zarr_store(
+    path: Path,
+    *,
+    values: numpy.typing.NDArray[numpy.float32],
+    y_values: numpy.typing.NDArray[numpy.float64],
+    x_values: numpy.typing.NDArray[numpy.float64],
+    timestamps: Sequence[datetime],
+    variable: str = "rain",
+    crs: str = "EPSG:4326",
+) -> Path:
+    """Write one Zarr directory store holding a t, y and x cube, for the directory store tests."""
+    cube = build_cube(
+        values=values,
+        y_values=y_values,
+        x_values=x_values,
+        timestamps=timestamps,
+        variable=variable,
+        crs=crs,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cube.to_zarr(path, mode="w", consolidated=False)
+    return path
+
+
+def write_netcdf(
+    path: Path,
+    *,
+    values: numpy.typing.NDArray[numpy.float32],
+    y_values: numpy.typing.NDArray[numpy.float64],
+    x_values: numpy.typing.NDArray[numpy.float64],
+    timestamps: Sequence[datetime],
+    variable: str = "rain",
+    crs: str = "EPSG:4326",
+) -> Path:
+    """Write one NetCDF file holding a t, y and x cube, for the NetCDF ingest tests."""
+    cube = build_cube(
+        values=values,
+        y_values=y_values,
+        x_values=x_values,
+        timestamps=timestamps,
+        variable=variable,
+        crs=crs,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cube.to_netcdf(path, engine=NETCDF_ENGINE)
     return path
 
 

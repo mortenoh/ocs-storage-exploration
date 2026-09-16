@@ -246,6 +246,30 @@ foreground stack on <http://127.0.0.1:8001>; Ctrl-C stops and removes both.
 That one binds the API itself, so it is not the way to point a local `make
 demo` at rustfs; `docker compose up rustfs` is.
 
+### Who owns `./data` under Docker
+
+`make docker-run-file` bind mounts `./data` into the container, and the image
+runs as an unprivileged user. On Linux a bind mount keeps the host's ownership,
+so a container running as its own uid cannot write into a directory the host
+user owns, and the service fails on its first write. The target therefore
+creates `./data` and passes the caller's ids through to compose:
+
+```bash
+mkdir -p data
+OCS_UID=$(id -u) OCS_GID=$(id -g) docker compose --profile file up --build
+```
+
+`compose.yml` reads them as `user: "${OCS_UID:-999}:${OCS_GID:-999}"`, so a bare
+`docker compose --profile file up` still runs as the uid the image builds. Check
+either form with:
+
+```bash
+docker compose --profile file config | grep user:
+```
+
+macOS and Windows hide the problem: Docker Desktop maps ownership in its virtual
+machine, so any uid can write the mount there.
+
 ## 3. What needs the network
 
 Only these. Everything else in this repository is local.

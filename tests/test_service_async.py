@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import time
 from datetime import datetime
+from functools import partial
 from typing import Any
 
 import geopandas
@@ -23,6 +26,7 @@ from ocs_storage_exploration.storage.raster.repository import RasterRepository
 from ocs_storage_exploration.storage.schemas import (
     BoundingBox,
     CoverageDataset,
+    DatasetLifecycle,
     FeatureDataset,
     GridSpecification,
     ItemType,
@@ -33,6 +37,8 @@ from ocs_storage_exploration.storage.service_async import AsyncStorageService, S
 COVERAGE = "coverage-one"
 COLLECTION = "collection-one"
 VARIABLE = "temperature"
+START = datetime(2020, 1, 1)
+LATER = datetime(2020, 1, 3)
 
 
 def build_grid() -> GridSpecification:
@@ -43,11 +49,11 @@ def build_grid() -> GridSpecification:
     )
 
 
-def build_cube() -> Any:
+def build_cube(start: datetime = datetime(2020, 1, 1)) -> Any:
     return build_synthetic_cube(
         build_grid(),
         variable=VARIABLE,
-        timestamps=build_timestamps(datetime(2020, 1, 1), 2, TimeStep.DAY),
+        timestamps=build_timestamps(start, 2, TimeStep.DAY),
     )
 
 
@@ -92,12 +98,76 @@ async def test_the_runner_reports_a_timeout_as_a_storage_error() -> None:
 
     started = time.perf_counter()
     with pytest.raises(StorageTimeoutError) as failure:
-        await runner.run(lambda: time.sleep(2.0), description="sleeping")
+        await runner.run(lambda: time.sleep(0.5), description="sleeping")
     elapsed = time.perf_counter() - started
 
     assert "sleeping" in failure.value.message
     assert failure.value.status_code == 504
     assert elapsed < 1.0
+    await runner.aclose()
+
+
+async def test_a_timed_out_call_keeps_its_limiter_token_until_its_thread_finishes() -> None:
+    runner = StorageOperationRunner(max_concurrent_operations=1, timeout_seconds=0.05)
+    lock = threading.Lock()
+    observed = {"active": 0, "peak": 0}
+
+    def sleeping() -> None:
+        with lock:
+            observed["active"] += 1
+            observed["peak"] = max(observed["peak"], observed["active"])
+        try:
+            time.sleep(1.0)
+        finally:
+            with lock:
+                observed["active"] -= 1
+
+    for _ in range(4):
+        with pytest.raises(StorageTimeoutError):
+            await runner.run(sleeping, description="sleeping")
+    # The queued calls are cancelled while they wait for a token, so let those cancellations land.
+    await asyncio.sleep(0.01)
+
+    # Only the first call ever reached a thread: the other three waited for the token it still holds.
+    assert observed["peak"] == 1
+    assert runner.limiter.borrowed_tokens == 1
+    assert runner.abandoned_count == 1
+
+    await runner.aclose()
+
+
+async def test_a_caller_queued_behind_an_abandoned_call_still_times_out_within_the_budget() -> None:
+    runner = StorageOperationRunner(max_concurrent_operations=1, timeout_seconds=0.05)
+
+    with pytest.raises(StorageTimeoutError):
+        await runner.run(lambda: time.sleep(0.3), description="wedging")
+
+    started = time.perf_counter()
+    with pytest.raises(StorageTimeoutError):
+        await runner.run(lambda: None, description="queued")
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.5
+    await runner.aclose()
+
+
+async def test_aclose_drains_the_thread_of_an_abandoned_call() -> None:
+    runner = StorageOperationRunner(max_concurrent_operations=1, timeout_seconds=0.05)
+    finished = threading.Event()
+
+    def sleeping() -> None:
+        time.sleep(0.2)
+        finished.set()
+
+    with pytest.raises(StorageTimeoutError):
+        await runner.run(sleeping, description="sleeping")
+    assert runner.abandoned_count == 1
+
+    await runner.aclose()
+
+    assert finished.is_set()
+    assert runner.abandoned_count == 0
+    assert runner.limiter.borrowed_tokens == 0
 
 
 async def test_the_runner_lets_an_operation_raise_its_own_timeout_error() -> None:
@@ -146,7 +216,7 @@ async def test_require_coverage_and_require_collection_refuse_the_other_item_typ
 
 async def test_the_raster_engine_round_trips_through_the_facade(populated: AsyncStorageService) -> None:
     published = await populated.raster.publish(COVERAGE)
-    appended = await populated.raster.append(COVERAGE, build_cube())
+    appended = await populated.raster.append(COVERAGE, build_cube(datetime(2020, 1, 3)))
     versions = await populated.raster.versions(COVERAGE)
     summary = await populated.raster.query(COVERAGE, version=VersionSelector.DRAFT)
     description = await populated.raster.describe(COVERAGE, version=VersionSelector.DRAFT)
@@ -160,6 +230,25 @@ async def test_the_raster_engine_round_trips_through_the_facade(populated: Async
     assert description.variables == (VARIABLE,)
     assert attributes
     assert reconciled.publication.published is True
+
+
+async def test_the_raster_facade_builds_a_deferred_cube_on_the_worker_thread(
+    async_storage_service: AsyncStorageService,
+) -> None:
+    threads: list[str] = []
+
+    def deferred(start: datetime) -> Any:
+        threads.append(threading.current_thread().name)
+        return build_cube(start)
+
+    created = await async_storage_service.raster.create(COVERAGE, build_grid(), partial(deferred, START))
+    appended = await async_storage_service.raster.append(COVERAGE, partial(deferred, LATER))
+
+    assert created.timestep_count == 2
+    assert appended.timestep_count == 4
+    # The cube is allocated where the write runs, so it is inside the limiter and inside the timeout.
+    assert len(threads) == 2
+    assert all(name.startswith("AnyIO worker thread") for name in threads)
 
 
 async def test_the_vector_engine_round_trips_through_the_facade(populated: AsyncStorageService) -> None:
@@ -241,7 +330,7 @@ async def test_a_slow_engine_call_is_reported_as_a_timeout(
     settings: Settings, sample_features: geopandas.GeoDataFrame, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def slow_query(*arguments: Any, **keywords: Any) -> Any:
-        time.sleep(2.0)
+        time.sleep(0.5)
         raise AssertionError("the timeout should have answered long before this call returned")
 
     monkeypatch.setattr(RasterRepository, "query", slow_query)
@@ -250,6 +339,10 @@ async def test_a_slow_engine_call_is_reported_as_a_timeout(
     with pytest.raises(StorageTimeoutError):
         await service.raster.query(COVERAGE)
 
+    # The abandoned call still holds a worker thread, which the facade drains rather than leaking.
+    await service.aclose()
+    assert service.runner.abandoned_count == 0
+
 
 def test_the_memory_backend_is_the_default_of_the_helper_settings() -> None:
     # The facade reads its bounds from the settings it was built with, not from a process wide default.
@@ -257,3 +350,25 @@ def test_the_memory_backend_is_the_default_of_the_helper_settings() -> None:
 
     assert service.runner.limiter.total_tokens == 16
     assert service.runner.timeout_seconds == 180.0
+
+
+async def test_a_dataset_being_deleted_is_gone_for_readers_but_can_still_be_deleted(
+    populated: AsyncStorageService,
+) -> None:
+    entry = await populated.catalog.require_entry(COLLECTION)
+    await populated.catalog.put(
+        entry.record.model_copy(update={"lifecycle": DatasetLifecycle.DELETING}),
+        revision=entry.revision,
+    )
+
+    with pytest.raises(DatasetNotFoundError, match="being deleted"):
+        await populated.get_dataset(COLLECTION)
+    with pytest.raises(DatasetNotFoundError, match="being deleted"):
+        await populated.require_collection(COLLECTION)
+    assert [record.dataset_identifier for record in await populated.list_datasets()] == [COVERAGE]
+
+    # Deleting again is how a deletion that stopped half way is finished, so it reads the record raw.
+    deleted = await populated.delete_dataset(COLLECTION)
+
+    assert deleted.dataset_identifier == COLLECTION
+    assert await populated.catalog.get(COLLECTION) is None

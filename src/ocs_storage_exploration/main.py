@@ -40,12 +40,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         application.state.storage = service
         # Every route awaits the async facade; the sync service stays on the state because the STAC
         # projection takes one, and because the facade wraps it rather than replacing it.
-        application.state.storage_async = AsyncStorageService(service)
+        awaitable = AsyncStorageService(service)
+        application.state.storage_async = awaitable
         # The backend and the catalog stay on the state so a dependency that needs one handle
         # does not have to reach through the service.
         application.state.backend = service.backend
         application.state.catalog = service.catalog
-        yield
+        try:
+            yield
+        finally:
+            # A timed-out call keeps its worker thread and its limiter token; shutdown waits for them
+            # rather than tearing the loop down while a write is still touching the object store.
+            await awaitable.aclose()
 
     application = FastAPI(
         title=APPLICATION_TITLE,

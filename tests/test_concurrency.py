@@ -16,7 +16,9 @@ from fastapi.testclient import TestClient
 from ocs_storage_exploration.api import backends, datasets, health, raster, stac, vector
 from ocs_storage_exploration.main import create_app
 from ocs_storage_exploration.settings import Settings
-from ocs_storage_exploration.storage.addresses import StorageScheme
+from ocs_storage_exploration.storage.addresses import StorageAddress, StorageScheme
+from ocs_storage_exploration.storage.backends.base import BaseStorageBackend
+from ocs_storage_exploration.storage.errors import BackendUnavailableError
 from ocs_storage_exploration.storage.raster.repository import RasterRepository
 
 COVERAGE = "concurrent-coverage"
@@ -49,10 +51,27 @@ VECTOR_BODY: dict[str, Any] = {
         ],
     },
 }
+RECREATED_VECTOR_BODY: dict[str, Any] = {
+    "title": "Demo districts, again",
+    "publish": True,
+    "feature_collection": {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"id": "bergen"},
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[5.2, 60.3], [5.5, 60.3], [5.5, 60.5], [5.2, 60.5], [5.2, 60.3]]],
+                },
+            },
+        ],
+    },
+}
 
 
 # A storage call slow enough that the timeout below always wins the race.
-SLOW_CALL_SECONDS = 2.0
+SLOW_CALL_SECONDS = 0.6
 TIMEOUT_BUDGET_SECONDS = 1.0
 CONCURRENCY_LIMIT = 2
 
@@ -160,3 +179,36 @@ def test_the_limiter_caps_how_many_engine_calls_run_at_once(
 
     assert [response.status_code for response in responses] == [200] * REQUEST_COUNT
     assert 0 < observed["peak"] <= CONCURRENCY_LIMIT
+
+
+def test_a_recreate_after_a_deletion_that_never_swept_inherits_nothing(
+    memory_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sweep = BaseStorageBackend.delete_prefix
+    pending = {"failure": True}
+
+    def failing_sweep(self: BaseStorageBackend, address: StorageAddress) -> int:
+        # Only the delete request fails; the sweep the recreate runs to take the deletion over works.
+        if pending["failure"]:
+            pending["failure"] = False
+            raise BackendUnavailableError("the object store went away mid sweep")
+        return sweep(self, address)
+
+    monkeypatch.setattr(BaseStorageBackend, "delete_prefix", failing_sweep)
+
+    with TestClient(create_app(settings=memory_settings)) as client:
+        assert client.post(f"/api/v1/vector/{COLLECTION}", json=VECTOR_BODY).status_code == 201
+        assert client.delete(f"/api/v1/datasets/{COLLECTION}").status_code == 503
+
+        assert client.post(f"/api/v1/vector/{COLLECTION}", json=RECREATED_VECTOR_BODY).status_code == 201
+        recreated = client.get(f"/api/v1/vector/{COLLECTION}/features")
+        stale = client.get(f"/api/v1/vector/{COLLECTION}/features", params={"version": 1})
+
+    # The recreated collection starts from an empty prefix: the dead collection left no version behind
+    # for it to serve, and nothing of it is reachable under the identifier that was reused.
+    assert recreated.status_code == 200
+    assert recreated.json()["version"] == 1
+    assert [feature["properties"]["id"] for feature in recreated.json()["features"]] == ["bergen"]
+    assert stale.status_code == 200
+    assert [feature["properties"]["id"] for feature in stale.json()["features"]] == ["bergen"]

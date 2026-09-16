@@ -146,6 +146,40 @@ is refused before anything is opened:
   machine. See [real data](guides/real-data.md) and
   [the offline quickstart](guides/offline-quickstart.md).
 
+**Pass 8: second review.** A second review, run after the real-data pass,
+found thirteen more places where the prototype held in the happy path and not
+under a second writer, a rollback or an unusual input, and one more came from
+reading the demo output. All fourteen are closed, each with a regression test
+that was red before the fix:
+
+- A raster write is staged on a scratch branch and `main` is fast-forwarded only
+  after the catalog compare-and-swap succeeds, so a losing writer never touches
+  the draft; an Icechunk commit conflict answers 409 rather than 500.
+- Deletion is a reservation: the record is marked `deleting` under a
+  compare-and-swap, the prefix is swept, and the record goes last, so a reused
+  identifier never inherits the objects of the dataset it replaced.
+- A timed-out storage call keeps its limiter token until its thread returns, so
+  the concurrency bound holds under timeouts, and queued callers time out waiting
+  for a token instead of starting more threads.
+- Scaled GeoTIFFs are decoded on open and the nodata sentinel is recorded in the
+  decoded units; NetCDF has an engine (`h5netcdf`) and a test; Zarr directory
+  stores resolve through the ingest path resolver.
+- The synthetic cube is built on the worker thread inside the limiter and the
+  timeout, and the cube size guard reads the settings of the application that
+  was asked rather than a process-wide default.
+- Nodata, licence and attribution are facts of the selected snapshot or version:
+  the grid stamps nodata on every variable, commit metadata carries the raster
+  licence, and the STAC projection reads both from the advertised version.
+- An append must strictly extend the time axis, and a time window is selected
+  by mask rather than by label slice, so a non-monotonic axis can no longer be
+  written or misread.
+- Records hold a backend-relative storage key rather than an absolute URI, so a
+  data directory mounted elsewhere or moved to another machine serves correct
+  hrefs.
+- The filesystem Docker profile runs as the host user over the bind mount, the
+  rustfs lifecycle in `make test-s3` installs its cleanup trap before starting
+  the container, and the S3 job in CI is required.
+
 ## Next
 
 1. **Fetching as well as reading.** The ingest reads what is already on the
@@ -161,8 +195,9 @@ is refused before anything is opened:
    with a presigned URL, proxying the bytes, and pointing clients at
    `icechunk.http_storage()` against a read-only endpoint. OCS's
    `serve_icechunk_file` is a `FileResponse` passthrough and does not port. The
-   STAC `icechunk` asset hands out the record's address URI today, which is the
-   right answer only for a client that can reach the object store itself.
+   STAC `icechunk` asset hands out the repository URI the record's storage key
+   resolves to today, which is the right answer only for a client that can reach
+   the object store itself.
 4. **A derived catalog index for large listings.** One object per dataset is
    right for writes and wrong for listing thousands; an index needs a builder,
    an invalidation rule and etag-guarded listing so a stale page is detectable.

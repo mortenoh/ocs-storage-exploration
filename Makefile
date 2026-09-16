@@ -87,13 +87,15 @@ test:
 	@$(UV) run pytest -q
 
 # rustfs is always stopped again, including when pytest fails, and the pytest exit code is kept.
+# The trap is installed before `up --wait`, in the same recipe shell, so a container that never turns
+# healthy is torn down too rather than left behind by a recipe line that failed before the trap existed.
 # rustfs runs as uid 10001; Linux Docker creates the ./.rustfs bind mount as root 755, so make it writable first.
 test-s3:
 	@echo ">>> Running the s3-marked tests against rustfs"
 	@mkdir -p .rustfs && chmod a+rwx .rustfs
-	@docker compose up -d --wait rustfs
 	@set -e; \
-	trap 'docker compose down rustfs' EXIT; \
+	trap 'docker compose down rustfs --remove-orphans' EXIT; \
+	docker compose up -d --wait rustfs; \
 	OCS_STORAGE_S3__ENDPOINT_URL=$(S3_ENDPOINT_URL) \
 	OCS_STORAGE_S3__BUCKET=$(S3_BUCKET) \
 	OCS_STORAGE_S3__REGION=$(S3_REGION) \
@@ -132,11 +134,14 @@ docker-run: docker-run-file
 
 # The stack runs in the foreground and the trap runs `down` however the run ends, so Ctrl-C leaves
 # neither a container nor a network behind. `docker ps -a` is empty afterwards.
+# ./data is bind mounted into the container, so the container runs as the host user that owns it;
+# without this the service cannot write its catalog on Linux, where the bind mount keeps host ids.
 docker-run-file:
 	@echo ">>> Running the service on the filesystem backend at http://127.0.0.1:8000"
+	@mkdir -p data
 	@set -e; \
 	trap 'docker compose --profile file down' EXIT; \
-	docker compose --profile file up --build --abort-on-container-exit
+	OCS_UID=$$(id -u) OCS_GID=$$(id -g) docker compose --profile file up --build --abort-on-container-exit
 
 # rustfs runs as uid 10001; Linux Docker creates the ./.rustfs bind mount as root 755, so make it writable first.
 docker-run-s3:

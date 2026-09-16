@@ -55,7 +55,7 @@ def build_record(title: str = "Conflict coverage") -> CoverageDataset:
     return CoverageDataset(
         dataset_identifier=COVERAGE,
         title=title,
-        address=f"s3://bucket/ocs/raster/{COVERAGE}",
+        storage_key=f"raster/{COVERAGE}",
         created_at=now,
         updated_at=now,
         bbox=build_grid().bbox,

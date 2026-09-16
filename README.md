@@ -88,6 +88,12 @@ the filesystem backend with `./data` bind-mounted, and `s3` runs the same image
 on the S3 backend next to a rustfs endpoint. The two API services use different
 host ports so they never collide.
 
+Because `./data` is bind-mounted and a bind mount keeps the host's ownership on
+Linux, `make docker-run-file` creates the directory and passes `OCS_UID` and
+`OCS_GID` to compose, which the `api` service reads as
+`user: "${OCS_UID:-999}:${OCS_GID:-999}"`. A bare `docker compose --profile file
+up` still runs as the uid the image builds.
+
 ## Real data
 
 `samples/` holds three small real files (DHIS2 organisation units, Natural Earth

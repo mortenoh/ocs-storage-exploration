@@ -289,6 +289,16 @@ part of a key, and addresses reject empty, `.` and `..` segments, backslashes an
 any URI userinfo. No engine builds a path itself, so there is one place where
 traversal and credential leakage are prevented.
 
+A catalog record holds a key, never a root. `storage_key` is exactly what
+`backend.address(...)` takes, `raster/{dataset_identifier}` or
+`vector/{dataset_identifier}`, without the base prefix and without a scheme, and
+it is validated as an object key so an absolute or climbing one never reaches a
+record. The absolute URI is built at serve time from the backend that is running,
+so the same record serves `file:///app/data/ocs/...` inside a container,
+`file:///srv/data/ocs/...` on the host and `s3://bucket/ocs/...` on S3. A record
+that stored the URI it was written under would name a root that does not exist
+anywhere else, which is what moving a data directory used to break.
+
 [Inspecting the data](../guides/inspecting-the-data.md) walks the same layout on
 disk, and [versioning](versioning.md) explains the `vNNNNN` numbering and the
 pointer objects.

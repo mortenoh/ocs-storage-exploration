@@ -1,10 +1,11 @@
 # Findings
 
-The executive summary of this exploration for the OCS team. Six passes stand
+The executive summary of this exploration for the OCS team. Eight passes stand
 behind it: the storage model, the S3 backend and Docker, the STAC catalog, a
 hardening review that found eleven ways the prototype was right in the happy
 path and wrong under a second writer and closed them all, pluggable backends,
-and an async surface over bounded S3 clients. Every claim about OCS is cited as
+an async surface over bounded S3 clients, real-data ingestion, and a second
+review that closed fourteen more findings the same way. Every claim about OCS is cited as
 a `file:line` against [the checkout](research/ocs-storage-today.md).
 
 ## TLDR
@@ -27,8 +28,8 @@ dataset, no real ingestion source, and no file large enough to make row-group
 pruning or pyramids measurable. The fixtures are cheap enough to run the whole
 suite once per backend.
 Addresses, keys, schemas, both catalogues, both engines and the API are
-parametrised over all three. The default run is 771 tests at about 95 percent
-statement and branch coverage; 300 of them carry the `s3` marker and run again
+parametrised over all three. The default run is 906 tests at about 93 percent
+statement and branch coverage; 344 of them carry the `s3` marker and run again
 against rustfs `1.0.0-rc.6` under `make test-s3`, which starts the container and
 stops it again even when a test fails.
 

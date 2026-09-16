@@ -83,15 +83,26 @@ is where that split is decided:
 Two bounds apply to every engine call. An `anyio.CapacityLimiter` sized by
 `OCS_STORAGE_MAX_CONCURRENT_STORAGE_OPERATIONS` (16) caps how many run at once,
 so a burst of requests cannot open more Icechunk sessions or Parquet readers
-than the deployment was sized for. An `asyncio.timeout` sized by
+than the deployment was sized for. A timeout sized by
 `OCS_STORAGE_STORAGE_OPERATION_TIMEOUT_SECONDS` (180) caps how long a caller
 waits for a token and for the call itself, and answers `StorageTimeoutError`
 (504) when it expires.
 
 A call that times out is abandoned rather than cancelled: no library here offers
-cancellation, so its thread runs to completion with the result discarded, and
-its limiter token is released when the wait is abandoned. Abandoning a thread is
-the expensive outcome, which is why the S3 clients carry their own bounds. The
+cancellation, so its thread runs to completion with the result discarded. It
+keeps its limiter token until that thread returns, so a wedged call goes on
+occupying a slot rather than handing it to the next caller while its own thread
+is still running — releasing the token there is how a limit of one ended up
+with four threads in the store at once. Callers queued behind it wait for a
+token and get the same 504, which is the honest answer: the deployment is at its
+limit. `StorageOperationRunner.abandoned_count` reports how many such calls are
+outstanding, and the application lifespan awaits `AsyncStorageService.aclose()`
+so shutdown drains them, with a bound, instead of tearing the loop down under a
+thread that is still writing. A caller still queued for a token when its timeout
+expires is cancelled outright instead: it borrowed nothing and started nothing.
+
+Abandoning a thread is the expensive outcome, which is why the S3 clients carry
+their own bounds. The
 [timeouts and retries](concepts/backends-and-layout.md#timeouts-and-retries) of
 the backend bound each request and its retries, so a hung connection becomes a
 failed request rather than a stuck thread; the facade's timeout bounds the whole

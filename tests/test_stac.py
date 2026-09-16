@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import shutil
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import geopandas
 import pytest
 
+from ocs_storage_exploration.settings import Settings
+from ocs_storage_exploration.storage.addresses import StorageScheme
 from ocs_storage_exploration.storage.errors import SnapshotNotFoundError
 from ocs_storage_exploration.storage.raster import TimeStep, build_synthetic_cube, build_timestamps
 from ocs_storage_exploration.storage.schemas import BoundingBox, GridSpecification
@@ -394,6 +398,9 @@ def test_a_coverage_whose_store_cannot_be_read_falls_back_to_its_record(
     assert payload["extent"]["temporal"]["interval"] == [["2020-01-01T00:00:00Z", "2020-01-03T00:00:00Z"]]
     assert payload["cube:variables"] == {VARIABLE: {"dimensions": ["t", "y", "x"], "type": "data"}}
     assert payload["ocs:snapshot_identifier"]
+    # With no snapshot to read, the record is the documented fallback for the licence too.
+    assert payload["license"] == "CC-BY-4.0"
+    assert payload["providers"] == [{"name": "Open Climate Service", "roles": ["producer", "licensor"]}]
 
 
 def test_a_collection_whose_parquet_cannot_be_read_falls_back_to_its_record(
@@ -414,3 +421,87 @@ def test_a_collection_whose_parquet_cannot_be_read_falls_back_to_its_record(
     assert payload["table:primary_geometry"] == "geometry"
     assert "data" not in payload["assets"]
     assert "ocs:version" not in payload
+    # With no version to read, the record is the documented fallback for the licence too.
+    assert payload["license"] == "proprietary"
+    assert payload["providers"] == [{"name": "Statistics Norway", "roles": ["producer", "licensor"]}]
+
+
+def test_the_collection_licence_follows_the_published_version_not_the_newest_write(
+    storage_service: StorageService,
+    sample_features: geopandas.GeoDataFrame,
+) -> None:
+    write_collection(
+        storage_service,
+        sample_features,
+        license="CC-BY-4.0",
+        attribution="Open Climate Service",
+    )
+    storage_service.vector.write(
+        COLLECTION,
+        sample_features,
+        identifier_property="id",
+        license="proprietary",
+        attribution="Statistics Norway",
+    )
+
+    payload = project(storage_service, COLLECTION)
+    record = storage_service.require_collection(COLLECTION)
+
+    # The record tracks the newest write; the collection advertises the terms the published bytes
+    # were written under, which is what a client that downloads them is bound by.
+    assert record.license == "proprietary"
+    assert record.attribution == "Statistics Norway"
+    assert payload["ocs:version"] == 1
+    assert payload["license"] == "CC-BY-4.0"
+    assert payload["providers"] == [{"name": "Open Climate Service", "roles": ["producer", "licensor"]}]
+
+
+def test_the_coverage_licence_follows_the_published_snapshot_not_the_newest_write(
+    storage_service: StorageService,
+) -> None:
+    write_coverage(storage_service, license="CC-BY-4.0", attribution="Open Climate Service")
+    grid = build_grid()
+    storage_service.raster.create(
+        COVERAGE,
+        grid,
+        build_synthetic_cube(grid, variable=VARIABLE, timestamps=build_timestamps(START, 3, TimeStep.DAY), seed=1),
+        overwrite=True,
+        license="proprietary",
+        attribution="Statistics Norway",
+    )
+
+    payload = project(storage_service, COVERAGE)
+    record = storage_service.require_coverage(COVERAGE)
+
+    # The record tracks the newest write; the collection advertises the terms the published snapshot
+    # was committed under, which is what a client that opens that branch is bound by.
+    assert record.license == "proprietary"
+    assert record.attribution == "Statistics Norway"
+    assert payload["license"] == "CC-BY-4.0"
+    assert payload["providers"] == [{"name": "Open Climate Service", "roles": ["producer", "licensor"]}]
+
+
+def test_a_data_directory_that_moved_serves_asset_hrefs_from_its_new_root(
+    tmp_path: Path,
+    sample_features: geopandas.GeoDataFrame,
+) -> None:
+    first = tmp_path / "first"
+    written = StorageService.from_settings(
+        Settings(backend=StorageScheme.FILE, data_directory=first, base_prefix="ocs"),
+    )
+    write_coverage(written)
+    write_collection(written, sample_features)
+    second = tmp_path / "second"
+    shutil.copytree(first, second)
+
+    moved = StorageService.from_settings(
+        Settings(backend=StorageScheme.FILE, data_directory=second, base_prefix="ocs"),
+    )
+    coverage = build_collection(moved.get_dataset(COVERAGE), base_url=BASE_URL, service=moved)
+    collection = build_collection(moved.get_dataset(COLLECTION), base_url=BASE_URL, service=moved)
+
+    # A record holds a key below the backend and never a root, so the same bytes served from another
+    # directory, or from inside a container, advertise where they actually are.
+    root = f"file://{second.resolve()}/ocs/"
+    assert coverage["assets"]["icechunk"]["href"].startswith(root)
+    assert collection["assets"]["data"]["href"].startswith(root)

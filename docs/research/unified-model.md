@@ -17,7 +17,12 @@ never be smuggled into a stored record. Credentials live in settings as
 
 This is the direct answer to `ingestions/artifact_paths.py`, whose `to_absolute`
 treats `s3://bucket/key` as a relative path and rejoins it under the data root.
-A URI that round-trips through a record is a URI when it comes back.
+A record stores no URI at all: it holds `storage_key`, the key below the base
+prefix that `backend.address(...)` takes, and the absolute URI is built at serve
+time from the backend that is running. That mirrors OCS's `to_portable` rather
+than its `to_absolute`, and it is what lets the same `./data` directory be
+served from a host, from `/app/data` inside a container and from an S3 bucket
+without rewriting a single record.
 
 ## Backend and catalogue
 
@@ -89,10 +94,12 @@ that says what to narrow. The thresholds themselves are placeholders.
 
 ## Ordering
 
-Commit the bytes, then write the record. Delete the record, then delete the
-bytes. Both orders prefer orphan bytes to a dangling record: orphan bytes cost
-storage and are found by a prefix listing, a dangling record is a dataset that
-appears in every listing and fails on open.
+Commit the bytes, then write the record. Mark the record as deleting, sweep the
+bytes, then delete the record. Both orders prefer orphan bytes to a dangling
+record: orphan bytes cost storage and are found by a prefix listing, a dangling
+record is a dataset that appears in every listing and fails on open. The
+deletion order also stops a writer reusing the identifier from filling a prefix
+that is about to be swept, which deleting the record first allowed.
 
 ## Key layout
 
@@ -119,7 +126,7 @@ Flat, prefix-addressable, no directory semantics assumed.
 | `stac/media_types.py:107` | `RasterRepository.root_attributes()` |
 | `_swap_store` at `ingestions/services.py:897` | `reset_branch("published", ..., from_snapshot_id=)` |
 | `recover_interrupted_swap` | deleted; nothing to recover |
-| `ArtifactRecord.path` + `artifact_paths.to_absolute` | `StorageAddress` URI in the record |
+| `ArtifactRecord.path` + `artifact_paths.to_absolute` | `storage_key` in the record, resolved to a `StorageAddress` when served |
 | 16 `ArtifactFormat.ICECHUNK` comparisons | one exhaustive `match` on `item_type` |
 | `records.json` under portalocker | `ObjectCatalog`, one object per dataset, create or revision CAS |
 | `gdf.to_parquet(path)` at `openeo/jobs.py:1585` | `VectorCollectionStore.write(...)` |
@@ -159,10 +166,11 @@ Flat, prefix-addressable, no directory semantics assumed.
   second writer that moved the record on makes the loser answer 409 rather than
   overwrite it. No engine uses the unconditional overwrite any more.
 - Nothing a client acts on is projected from a record. The STAC collection takes
-  identity, title, licence and attribution from the record and everything else
-  from the version being advertised, so an unpublished append no longer widens
-  the published temporal extent and a draft written in another frame no longer
-  changes the published coordinate reference system.
+  identity, title and the storage key from the record and everything else,
+  licence and attribution included, from the version being advertised, so an
+  unpublished append no longer widens the published temporal extent and a draft
+  written in another frame or under other terms no longer changes what the
+  published bytes advertise.
 - The service is awaited from the outside and multi-threaded on the inside, and
   says so. Every route is an `async def` awaiting `AsyncStorageService`, which
   answers catalogue reads natively through obstore and runs every blocking

@@ -82,8 +82,18 @@ real once `make demo` has run.
 ## What normalisation does to a file
 
 `storage/raster/ingest.py` mirrors the rules the Open Climate Service applies to
-a fetched period, so a file that works there works here. In order, because the
-order matters:
+a fetched period, so a file that works there works here.
+
+Before any of the rules below, the file is read through a decoding reader:
+GeoTIFF and COG are opened with `mask_and_scale=True`, and NetCDF and Zarr
+decode CF attributes by default. A source that stores raw integers next to a
+scale factor and an offset is therefore read in the units it declares, so a cell
+holding 100 in a file with a scale of 0.1 and an offset of 5 arrives as 15.0.
+That is also the one change of dtype ingest makes: a scaled integer source
+becomes a floating point array, because the decoded values do not fit the
+integer type the file used.
+
+Then, in order, because the order matters:
 
 1. Two dimensional `lon` and `lat` helper coordinates are dropped: they are not
    the spatial axes and they confuse both the rename below and rioxarray.
@@ -101,7 +111,10 @@ order matters:
 7. `y` is reversed if it ascends, together with its rows, so row 0 is the
    northernmost row. Consumers assume this and never check.
 8. The nodata sentinel is masked to NaN and kept as a finite `nodata` attribute,
-   so a reader can still tell an absent cell from an unrepresentable one.
+   so a reader can still tell an absent cell from an unrepresentable one. The
+   sentinel is recorded in the same units as the values around it: a file that
+   declares -1 with a scale of 0.1 and an offset of 5 records 4.9, not -1, so
+   the attribute and the array never disagree about what an absent cell meant.
 9. A raster with no time axis gets the single timestep the request names.
 10. The variable is transposed onto `(t, y, x)`, the CF encoding is dropped, and
     any attribute that is not a finite JSON value is dropped, because Icechunk
@@ -112,6 +125,34 @@ shape, its cell centres grown by half a cell into a bounding box, its dtype, its
 nodata value and its projection. Nothing about the grid is taken from the
 request, so an ingest cannot declare a grid the file does not have. An axis that
 is not regular, or that holds a single cell, is refused rather than guessed at.
+
+## Formats and the readers behind them
+
+| Source | Suffixes | Reader |
+| --- | --- | --- |
+| GeoTIFF and COG | `.tif`, `.tiff`, `.cog`, `.gtiff` | rioxarray on rasterio, with `mask_and_scale=True` |
+| NetCDF | `.nc`, `.nc4`, `.cdf`, `.netcdf` | xarray on `h5netcdf`, pinned by name |
+| Zarr | `.zarr` | xarray on zarr |
+
+Two of those need a word.
+
+**NetCDF needs an engine.** xarray ships no NetCDF reader of its own, so this
+project depends on `h5netcdf[h5py]` and names it explicitly rather than letting
+xarray guess: a guess in a deployment that has none raises a bare `ValueError`
+that reaches the client as a 500. A deployment built without the engine answers
+501 and says which engine is missing, and a file that is malformed rather than
+unreadable answers 422.
+
+**A Zarr store is a directory, not a file.** `samples/cube.zarr` is a directory
+of chunks and metadata, which the path resolver accepts because `.zarr` is a
+directory store rather than because directories are allowed; any other directory
+is still refused. A literal path and a glob both work, so
+`{"files": ["samples/*.zarr"]}` resolves the stores under `samples/`.
+
+Note: a scaled integer source ingested before the decoding reader landed was
+stored in raw counts, with a sentinel to match. Re-ingest it with
+`"overwrite": true` to replace it; there is no in-place fix-up, because the raw
+values and the decoded ones are different data.
 
 ## Bring your own data
 
@@ -138,7 +179,7 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/raster/my-rainfall/ingest \
 
 | Field | Meaning |
 | --- | --- |
-| `files` | Paths or globs, resolved against the working directory, expanded and refused outside the ingest roots. GeoTIFF, COG, NetCDF and Zarr |
+| `files` | Paths or globs, resolved against the working directory, expanded and refused outside the ingest roots. GeoTIFF, COG, NetCDF and Zarr; a `.zarr` store is a directory and resolves as one |
 | `variable` | The name the variable is written under, whatever the file called it |
 | `timestamps` | `"from-filename"` (the default), or an explicit list of ISO timestamps, one per resolved file |
 | `timestamp` | One ISO timestamp instead, for a single static file such as a population grid |

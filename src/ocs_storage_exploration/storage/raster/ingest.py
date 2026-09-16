@@ -13,10 +13,11 @@ from typing import Any, Final, cast
 import numpy
 import rioxarray  # noqa: F401  # imported for the .rio accessor the GeoTIFF path and clip_box use
 import xarray
+import xarray.backends
 from numpy.typing import NDArray
 from pyproj import CRS
 
-from ocs_storage_exploration.storage.errors import RasterContractError
+from ocs_storage_exploration.storage.errors import BackendNotSupportedError, RasterContractError
 from ocs_storage_exploration.storage.paths import relative_to_working_directory, resolve_ingest_paths
 from ocs_storage_exploration.storage.raster.grid import (
     MAXIMUM_LONGITUDE,
@@ -50,6 +51,11 @@ TIME_AXIS_NAMES: Final[tuple[str, ...]] = ("t", "time", "valid_time", "date", "t
 GEOTIFF_SUFFIXES: Final[frozenset[str]] = frozenset({".tif", ".tiff", ".cog", ".gtiff"})
 NETCDF_SUFFIXES: Final[frozenset[str]] = frozenset({".nc", ".nc4", ".cdf", ".netcdf"})
 ZARR_SUFFIXES: Final[frozenset[str]] = frozenset({".zarr"})
+
+# The one NetCDF reader this project installs. xarray ships none of its own, so a deployment without
+# it is reported as an unsupported backend rather than as a malformed file. The literal type is what
+# lets a caller hand the name straight to the xarray readers and writers, which take a Literal.
+NETCDF_ENGINE: Final = "h5netcdf"
 
 # Attributes that describe how a file was encoded rather than what it holds. Carrying them into Zarr
 # would make a reader decode the values a second time, so they are dropped with the encoding.
@@ -182,7 +188,7 @@ def open_raster_file(
     """Open one GeoTIFF, COG, NetCDF or Zarr file and normalise it onto the coverage contract."""
     opened = _open_source(path)
     try:
-        return normalise_for_contract(
+        normalised = normalise_for_contract(
             opened,
             variable=variable,
             timestamp=timestamp,
@@ -192,6 +198,9 @@ def open_raster_file(
             y_dimension=y_dimension,
             x_dimension=x_dimension,
         )
+        # The NetCDF and Zarr readers stay lazy, and the source is closed below, so the values are
+        # read here rather than left as a handle onto a store that is gone by the time it is written.
+        return normalised.load()
     finally:
         opened.close()
 
@@ -330,12 +339,14 @@ def _open_source(path: Path) -> xarray.Dataset | xarray.DataArray:
     """Open one raster file with the reader its suffix names."""
     suffix = path.suffix.lower()
     if suffix in GEOTIFF_SUFFIXES:
-        opened = rioxarray.open_rasterio(path)
+        # mask_and_scale applies the band scale factor and offset, so a scaled integer source is read
+        # in the units it declares rather than in raw counts. It also masks the fill value to NaN.
+        opened = rioxarray.open_rasterio(path, mask_and_scale=True)
         if isinstance(opened, list):
             raise RasterContractError(f"{path.name!r} holds several subdatasets, which ingest does not split")
         return opened
     if suffix in NETCDF_SUFFIXES:
-        return xarray.open_dataset(path, decode_coords="all")
+        return _open_netcdf(path)
     if suffix in ZARR_SUFFIXES:
         opened_zarr: xarray.Dataset = xarray.open_zarr(path, decode_coords="all")
         return opened_zarr
@@ -343,6 +354,18 @@ def _open_source(path: Path) -> xarray.Dataset | xarray.DataArray:
         f"{path.name!r} has no readable raster suffix: expected one of "
         f"{sorted(GEOTIFF_SUFFIXES | NETCDF_SUFFIXES | ZARR_SUFFIXES)}",
     )
+
+
+def _open_netcdf(path: Path) -> xarray.Dataset:
+    """Open one NetCDF file with the pinned engine, reporting a deployment without it as unsupported."""
+    if NETCDF_ENGINE not in xarray.backends.list_engines():
+        raise BackendNotSupportedError(
+            f"reading {path.name!r} needs the {NETCDF_ENGINE!r} xarray engine, which this deployment does not install",
+        )
+    try:
+        return xarray.open_dataset(path, engine=NETCDF_ENGINE, decode_coords="all")
+    except (ValueError, OSError) as error:
+        raise RasterContractError(f"{path.name!r} could not be read as NetCDF: {error}") from error
 
 
 def _drop_curvilinear_coordinates(
@@ -499,16 +522,27 @@ def _mask_nodata(dataset: xarray.Dataset, *, variable: str, nodata_value: float 
 
 
 def _declared_nodata(array: xarray.DataArray) -> float | None:
-    """Return the fill value a variable declares, from rioxarray or from its own attributes."""
-    for candidate in (array.rio.nodata, array.rio.encoded_nodata):
-        number = _finite_number(candidate)
-        if number is not None:
-            return number
+    """Return the fill value a variable declares, in the decoded units the ingested values carry."""
+    # A decoded source leaves its sentinel behind in raw units under `encoded_nodata`, so it is read
+    # first and put through the same scaling as the values; `nodata` on such an array is only NaN.
+    encoded = _finite_number(array.rio.encoded_nodata)
+    if encoded is not None:
+        return _decode_number(encoded, array.encoding)
+    number = _finite_number(array.rio.nodata)
+    if number is not None:
+        return number
     for key in ("_FillValue", "missing_value", NODATA_ATTRIBUTE):
         number = _finite_number(array.attrs.get(key))
         if number is not None:
             return number
     return None
+
+
+def _decode_number(raw: float, encoding: Mapping[Any, Any]) -> float:
+    """Apply the scale factor and offset a source was encoded with to one raw number."""
+    scale = _finite_number(encoding.get("scale_factor"))
+    offset = _finite_number(encoding.get("add_offset"))
+    return raw * (1.0 if scale is None else scale) + (0.0 if offset is None else offset)
 
 
 def _stamp_timestamp(dataset: xarray.Dataset, timestamp: datetime | None, *, time_dimension: str) -> xarray.Dataset:

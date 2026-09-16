@@ -7,12 +7,20 @@ from pathlib import Path
 
 import numpy
 import pytest
+import xarray
+import xarray.backends
 from fastapi.testclient import TestClient
 
 from ocs_storage_exploration.settings import Settings
-from ocs_storage_exploration.storage.errors import RasterContractError
-from ocs_storage_exploration.storage.raster import NODATA_ATTRIBUTE, PROJECTION_CODE_ATTRIBUTE, SPATIAL_REFERENCE_NAME
+from ocs_storage_exploration.storage.errors import BackendNotSupportedError, RasterContractError
+from ocs_storage_exploration.storage.raster import (
+    NODATA_ATTRIBUTE,
+    PROJECTION_CODE_ATTRIBUTE,
+    SPATIAL_REFERENCE_NAME,
+    VersionSelector,
+)
 from ocs_storage_exploration.storage.raster.ingest import (
+    NETCDF_ENGINE,
     build_raster_ingest_plan,
     grid_from_dataset,
     ingest_raster_files,
@@ -20,7 +28,16 @@ from ocs_storage_exploration.storage.raster.ingest import (
     timestamp_from_filename,
 )
 from ocs_storage_exploration.storage.service import StorageService
-from tests.ingest_helpers import CHIRPS_DIRECTORY, SAMPLES_DIRECTORY, WORLDPOP_FILE, ramp, write_geotiff
+from tests.ingest_helpers import (
+    CHIRPS_DIRECTORY,
+    SAMPLES_DIRECTORY,
+    WORLDPOP_FILE,
+    ramp,
+    write_geotiff,
+    write_netcdf,
+    write_scaled_geotiff,
+    write_zarr_store,
+)
 
 WORLDPOP_TIMESTAMP = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -89,6 +106,113 @@ def test_nodata_is_masked_and_recorded_as_a_finite_attribute(tmp_path: Path) -> 
     assert dataset["rain"].encoding == {}
 
 
+def test_a_scaled_geotiff_is_decoded_before_it_is_stored(tmp_path: Path) -> None:
+    path = write_scaled_geotiff(
+        tmp_path / "scaled.tif",
+        values=numpy.full((2, 3), 100, dtype="int16"),
+        y_values=numpy.array([2.5, 1.5]),
+        x_values=numpy.array([10.5, 11.5, 12.5]),
+        scale_factor=0.1,
+        add_offset=5.0,
+    )
+    dataset = open_raster_file(path, variable="rain", timestamp=datetime(2024, 1, 1, tzinfo=UTC))
+    # 100 raw is 100 * 0.1 + 5 in the units the file declares, and that is what a reader has to see.
+    assert dataset["rain"].values[0, 0, 0] == pytest.approx(15.0)
+    assert numpy.issubdtype(numpy.dtype(dataset["rain"].dtype), numpy.floating)
+    assert grid_from_dataset(dataset, variable="rain").data_type.startswith("float")
+
+
+def test_a_scaled_nodata_sentinel_is_recorded_in_decoded_units(tmp_path: Path) -> None:
+    values = numpy.full((2, 3), 100, dtype="int16")
+    values[0, 0] = -1
+    path = write_scaled_geotiff(
+        tmp_path / "scaled-nodata.tif",
+        values=values,
+        y_values=numpy.array([2.5, 1.5]),
+        x_values=numpy.array([10.5, 11.5, 12.5]),
+        scale_factor=0.1,
+        add_offset=5.0,
+        nodata_value=-1,
+    )
+    dataset = open_raster_file(path, variable="rain", timestamp=datetime(2024, 1, 1, tzinfo=UTC))
+    assert bool(numpy.isnan(dataset["rain"].values[0, 0, 0]))
+    # The sentinel is recorded in the same units as the values it stood among, not in raw counts.
+    assert dataset["rain"].attrs[NODATA_ATTRIBUTE] == pytest.approx(-1 * 0.1 + 5.0)
+    assert dataset["rain"].values[0, 0, 1] == pytest.approx(15.0)
+
+
+def test_a_netcdf_file_round_trips_through_ingest(tmp_path: Path) -> None:
+    values = ramp(2, 3).reshape(1, 2, 3)
+    path = write_netcdf(
+        tmp_path / "rain-2024-01-01.nc",
+        values=values,
+        y_values=numpy.array([2.5, 1.5]),
+        x_values=numpy.array([10.5, 11.5, 12.5]),
+        timestamps=[datetime(2024, 1, 1)],
+    )
+    dataset = open_raster_file(path, variable="rain")
+    assert tuple(str(name) for name in dataset["rain"].dims) == ("t", "y", "x")
+    assert dataset.sizes["t"] == 1
+    assert dataset["t"].values[0] == numpy.datetime64("2024-01-01T00:00:00", "ns")
+    assert list(numpy.asarray(dataset["rain"].values[0, 0, :])) == list(values[0, 0, :])
+    assert grid_from_dataset(dataset, variable="rain").crs == "EPSG:4326"
+
+
+def test_a_netcdf_file_without_its_engine_is_reported_as_unsupported(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = write_netcdf(
+        tmp_path / "rain-2024-01-01.nc",
+        values=ramp(2, 3).reshape(1, 2, 3),
+        y_values=numpy.array([2.5, 1.5]),
+        x_values=numpy.array([10.5, 11.5, 12.5]),
+        timestamps=[datetime(2024, 1, 1)],
+    )
+    monkeypatch.setattr(xarray.backends, "list_engines", lambda: {"rasterio": None, "store": None, "zarr": None})
+    with pytest.raises(BackendNotSupportedError, match=NETCDF_ENGINE):
+        open_raster_file(path, variable="rain")
+
+
+def test_the_netcdf_engine_is_installed() -> None:
+    assert NETCDF_ENGINE in xarray.backends.list_engines()
+
+
+def test_an_unreadable_netcdf_file_is_a_contract_error(tmp_path: Path) -> None:
+    path = tmp_path / "rain-2024-01-01.nc"
+    path.write_bytes(b"not a netcdf file at all")
+    with pytest.raises(RasterContractError, match="NetCDF"):
+        open_raster_file(path, variable="rain")
+
+
+def test_a_zarr_directory_store_is_ingested_end_to_end(storage_service: StorageService, tmp_path: Path) -> None:
+    store = write_zarr_store(
+        tmp_path / "cube-2024-03-05.zarr",
+        values=ramp(2, 6).reshape(2, 2, 3),
+        y_values=numpy.array([2.5, 1.5]),
+        x_values=numpy.array([10.5, 11.5, 12.5]),
+        timestamps=[datetime(2024, 3, 5), datetime(2024, 3, 6)],
+    )
+    plan = build_raster_ingest_plan(
+        files=[str(store)],
+        variable="rain",
+        roots=[tmp_path],
+        working_directory=tmp_path,
+        publish=True,
+    )
+    assert plan.files == (store.resolve(),)
+
+    result = ingest_raster_files(storage_service.raster, "cube-from-zarr", plan)
+    assert result.timestep_count == 2
+    assert result.variables == ("rain",)
+    assert result.published is True
+
+    description = storage_service.raster.describe("cube-from-zarr")
+    assert description.shape == (2, 3)
+    assert description.temporal_start == datetime(2024, 3, 5)
+    assert description.temporal_end == datetime(2024, 3, 6)
+
+
 def test_projection_is_written_as_spatial_ref_and_projection_code(tmp_path: Path) -> None:
     path = write_geotiff(
         tmp_path / "projected.tif",
@@ -144,6 +268,32 @@ def test_a_glob_is_expanded_in_timestamp_order(tmp_path: Path) -> None:
         "rain-2024-01-03.tif",
     ]
     assert plan.timestamps == (datetime(2024, 1, 1), datetime(2024, 1, 2), datetime(2024, 1, 3))
+
+
+def test_an_ingest_of_duplicate_timestamps_is_refused(storage_service: StorageService, tmp_path: Path) -> None:
+    for name in ("first.tif", "second.tif"):
+        write_geotiff(
+            tmp_path / name,
+            values=ramp(2, 2),
+            y_values=numpy.array([2.5, 1.5]),
+            x_values=numpy.array([10.5, 11.5]),
+        )
+    plan = build_raster_ingest_plan(
+        files=["first.tif", "second.tif"],
+        variable="rain",
+        roots=[tmp_path],
+        working_directory=tmp_path,
+        timestamps=[datetime(2024, 1, 1), datetime(2024, 1, 1)],
+    )
+
+    with pytest.raises(RasterContractError, match="does not extend the committed time axis"):
+        ingest_raster_files(storage_service.raster, "duplicate-timestamps", plan)
+
+    # The create landed and the append that repeated its timestamp did not, so the store holds the
+    # first file alone rather than a time axis a label window cannot be read on.
+    description = storage_service.raster.describe("duplicate-timestamps", version=VersionSelector.DRAFT)
+    assert description.timestep_count == 1
+    assert description.temporal_end == datetime(2024, 1, 1)
 
 
 def test_explicit_timestamps_must_match_the_file_count(tmp_path: Path) -> None:

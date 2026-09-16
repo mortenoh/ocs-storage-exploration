@@ -430,9 +430,11 @@ ocs/vector/districts-demo/versions/v00001/metadata.json
 That is the layout
 [backends and key layout](../concepts/backends-and-layout.md) specifies, keys
 rather than directories, with the Icechunk repository laid out by Icechunk
-itself below its own prefix. The record addresses come back as
-`s3://ocs-storage-exploration/ocs/vector/districts-demo` rather than a path, so
-a record read on another host still points at the same bytes.
+itself below its own prefix. A record holds only the key below the base prefix,
+`vector/districts-demo`, and the absolute URI is built when it is served, so the
+same record answers `s3://ocs-storage-exploration/ocs/vector/districts-demo`
+here and `file:///app/data/ocs/vector/districts-demo` inside the filesystem
+container.
 
 ## Error shape
 

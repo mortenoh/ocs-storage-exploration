@@ -20,6 +20,8 @@ from ocs_storage_exploration.storage.raster import TimeStep, build_synthetic_cub
 from ocs_storage_exploration.storage.schemas import (
     BoundingBox,
     CoverageDataset,
+    Dataset,
+    DatasetLifecycle,
     FeatureDataset,
     GridSpecification,
     ItemType,
@@ -138,3 +140,30 @@ def test_delete_dataset_routes_a_collection_to_the_vector_engine(populated: Stor
 def test_delete_dataset_reports_an_unknown_identifier(populated: StorageService) -> None:
     with pytest.raises(DatasetNotFoundError):
         populated.delete_dataset("absent")
+
+
+def mark_deleting(service: StorageService, dataset_identifier: str) -> Dataset:
+    """Leave one dataset in the state a deletion that stopped before its sweep leaves behind."""
+    entry = service.catalog.require_entry(dataset_identifier)
+    marked = entry.record.model_copy(update={"lifecycle": DatasetLifecycle.DELETING})
+    service.catalog.put(marked, revision=entry.revision)
+    return marked
+
+
+def test_a_dataset_being_deleted_is_gone_for_readers_but_can_still_be_deleted(
+    populated: StorageService,
+) -> None:
+    mark_deleting(populated, COVERAGE)
+    mark_deleting(populated, COLLECTION)
+
+    with pytest.raises(DatasetNotFoundError, match="being deleted"):
+        populated.get_dataset(COVERAGE)
+    with pytest.raises(DatasetNotFoundError, match="being deleted"):
+        populated.require_coverage(COVERAGE)
+    with pytest.raises(DatasetNotFoundError, match="being deleted"):
+        populated.require_collection(COLLECTION)
+    assert populated.list_datasets() == []
+
+    # Deleting again is how a deletion that stopped half way is finished, so it reads the record raw.
+    assert populated.delete_dataset(COLLECTION).dataset_identifier == COLLECTION
+    assert populated.catalog.get(COLLECTION) is None

@@ -25,6 +25,7 @@ from shapely.geometry.base import BaseGeometry
 from ocs_storage_exploration.storage.addresses import StorageAddress
 from ocs_storage_exploration.storage.errors import (
     CrsError,
+    DatasetNotFoundError,
     FeatureCountGuardError,
     FeatureIdentityError,
     ItemTypeMismatchError,
@@ -58,6 +59,7 @@ from ocs_storage_exploration.storage.objects import (
 from ocs_storage_exploration.storage.protocols import Catalog, StorageBackend
 from ocs_storage_exploration.storage.schemas import (
     BoundingBox,
+    DatasetLifecycle,
     FeatureDataset,
     ItemType,
     Publication,
@@ -286,6 +288,12 @@ class VectorCollectionStore:
         """Write a frame as the next version of a collection and optionally publish it right away."""
         identifier = validate_dataset_identifier(collection_identifier)
         existing = self._existing_collection(identifier)
+        if existing is not None and existing.record.is_deleting:
+            # The prefix this write is about to fill is being emptied. Finishing that deletion first is
+            # the only way to write into a prefix nobody else is sweeping; the write then creates the
+            # record conditionally, so a second writer doing the same thing loses at the create.
+            self._complete_deletion(existing)
+            existing = None
         prepared = self._prepare_frame(frame, identifier_property=identifier_property)
         declared = self._validate_selectable_columns(prepared, selectable_columns)
         previous = None if existing is None else existing.record
@@ -481,12 +489,20 @@ class VectorCollectionStore:
         return None if pointer is None else pointer.version
 
     def delete(self, collection_identifier: str) -> int:
-        """Delete the catalog record of a collection first, then every object below its prefix."""
+        """Mark the record of a collection as deleting, sweep every object below its prefix, then drop it.
+
+        The record goes last rather than first: while it is there and marked, a concurrent writer is
+        told a deletion is running instead of finding no record at all and writing into a prefix that
+        is about to be emptied. A deletion that stops half way leaves the marked record behind, and
+        deleting again, or writing the collection again, finishes it.
+        """
         identifier = validate_dataset_identifier(collection_identifier)
-        self._require_collection(identifier)
-        self._catalog.delete(identifier)
-        self._pointer_etags.pop(identifier, None)
-        return self._backend.delete_prefix(self._backend.address(vector_prefix(identifier)))
+        # Read raw: a record already marked as deleting is exactly what this call is here to finish.
+        entry = self._collection_entry(identifier)
+        reserved = self._reserve_deletion(entry)
+        removed = self._sweep(identifier)
+        self._drop_reserved_record(identifier, reserved)
+        return removed
 
     def _list_versions(self, collection_identifier: str, *, completed_only: bool) -> list[int]:
         """List the version numbers below the versions prefix, optionally only those with a metadata sidecar."""
@@ -632,7 +648,7 @@ class VectorCollectionStore:
         return FeatureDataset(
             dataset_identifier=identifier,
             title=title or (previous.title if previous is not None else identifier),
-            address=self._backend.address(vector_prefix(identifier)).as_uri(),
+            storage_key=vector_prefix(identifier),
             created_at=previous.created_at if previous is not None else metadata.written_at,
             updated_at=metadata.written_at,
             bbox=metadata.bbox,
@@ -652,12 +668,60 @@ class VectorCollectionStore:
             raise ItemTypeMismatchError(f"dataset {identifier!r} is not a vector collection")
         return CollectionEntry(record=entry.record, revision=entry.revision)
 
-    def _require_collection(self, identifier: str) -> CollectionEntry:
-        """Read the catalog entry of a collection and refuse anything that is not a vector dataset."""
+    def _collection_entry(self, identifier: str) -> CollectionEntry:
+        """Read the catalog entry of a collection, including one whose deletion is under way."""
         entry = self._catalog.require_entry(identifier)
         if not isinstance(entry.record, FeatureDataset):
             raise ItemTypeMismatchError(f"dataset {identifier!r} is not a vector collection")
         return CollectionEntry(record=entry.record, revision=entry.revision)
+
+    def _require_collection(self, identifier: str) -> CollectionEntry:
+        """Read the catalog entry of a live collection, refusing another item type or a deletion under way."""
+        entry = self._collection_entry(identifier)
+        if entry.record.is_deleting:
+            raise DatasetNotFoundError(f"collection {identifier!r} is being deleted")
+        return entry
+
+    def _sweep(self, identifier: str) -> int:
+        """Delete every object below the prefix of a collection and forget the pointer etag of this thread."""
+        removed = self._backend.delete_prefix(self._backend.address(vector_prefix(identifier)))
+        self._pointer_etags.pop(identifier, None)
+        return removed
+
+    def _reserve_deletion(self, entry: CollectionEntry) -> str | None:
+        """Mark a record as deleting under compare-and-swap, or report that another deleter got there first."""
+        identifier = entry.record.dataset_identifier
+        if entry.record.is_deleting:
+            return entry.revision
+        marked = entry.record.model_copy(
+            update={"lifecycle": DatasetLifecycle.DELETING, "updated_at": current_timestamp()},
+        )
+        try:
+            self._catalog.put(marked, revision=entry.revision)
+        except PublicationConflictError:
+            # Another deleter marked it first, or a writer changed it. Sweeping is still correct and
+            # idempotent, but dropping a record this call never reserved is not, so it is left alone.
+            return None
+        reserved = self._catalog.get_entry(identifier)
+        return None if reserved is None else reserved.revision
+
+    def _drop_reserved_record(self, identifier: str, reserved: str | None) -> None:
+        """Delete the record of a swept collection, leaving alone one that was reclaimed in the meantime."""
+        if reserved is None:
+            return
+        entry = self._catalog.get_entry(identifier)
+        # Object stores offer no conditional delete, so this is a read followed by a delete rather than
+        # one compare-and-swap. It refuses the outcome that matters: erasing the record of a collection
+        # that was written again under the same identifier while this deletion was sweeping.
+        if entry is None or entry.revision != reserved:
+            return
+        self._catalog.delete(identifier)
+
+    def _complete_deletion(self, entry: CollectionEntry) -> None:
+        """Finish a deletion that stopped half way, so the caller can start from an empty prefix."""
+        identifier = entry.record.dataset_identifier
+        self._sweep(identifier)
+        self._drop_reserved_record(identifier, entry.revision)
 
     def _guard_unqualified_read(
         self,

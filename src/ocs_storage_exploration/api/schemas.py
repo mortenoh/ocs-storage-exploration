@@ -10,7 +10,7 @@ import xarray
 from geojson_pydantic import FeatureCollection
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from ocs_storage_exploration.settings import Settings, get_settings
+from ocs_storage_exploration.settings import Settings
 from ocs_storage_exploration.storage.addresses import SchemeName
 from ocs_storage_exploration.storage.errors import (
     CrsError,
@@ -58,15 +58,14 @@ def validate_crs(value: str) -> str:
     return value
 
 
-def assert_cube_size(dataset_label: str, shape: tuple[int, int], timestep_count: int) -> None:
-    """Refuse a cube larger than the configured guard before anything allocates one."""
+def assert_cube_size(dataset_label: str, shape: tuple[int, int], timestep_count: int, *, max_cube_cells: int) -> None:
+    """Refuse a cube larger than the guard of the application that was asked, before anything allocates one."""
     rows, columns = shape
     cell_count = rows * columns * timestep_count
-    allowed = get_settings().max_cube_cells
-    if cell_count > allowed:
+    if cell_count > max_cube_cells:
         raise QuerySizeGuardError(
             f"{dataset_label} of {rows} by {columns} cells over {timestep_count} timesteps holds "
-            f"{cell_count} cells, more than the {allowed} allowed",
+            f"{cell_count} cells, more than the {max_cube_cells} allowed",
         )
 
 
@@ -122,12 +121,6 @@ class CreateRasterRequest(BaseModel):
         """Trim the attribution string, treating a blank one as absent."""
         return normalise_attribution(value)
 
-    @model_validator(mode="after")
-    def check_cube_size(self) -> Self:
-        """Refuse a request whose cube would hold more cells than the guard allows."""
-        assert_cube_size("requested cube", self.shape, self.timestep_count)
-        return self
-
     def to_grid(self) -> GridSpecification:
         """Build the grid of this request, recording the time step so an append can continue the axis."""
         return GridSpecification(
@@ -156,7 +149,6 @@ class AppendRasterRequest(BaseModel):
         """Build the cube that continues the time axis of a coverage with the step its grid records."""
         if record.temporal is None or not record.variables:
             raise RasterContractError(f"coverage {record.dataset_identifier!r} has no time axis to continue")
-        assert_cube_size(f"append to {record.dataset_identifier!r}", record.grid.shape, self.timestep_count)
         step = resolve_time_step(record.grid.attributes.get(TIME_STEP_ATTRIBUTE))
         # The axis is regular, so the continuation is the tail of the same series rebuilt one span longer.
         timestamps = build_timestamps(record.temporal.start, record.timestep_count + self.timestep_count, step)

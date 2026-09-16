@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
+import numpy
 import pytest
 from fastapi.testclient import TestClient
 
@@ -14,7 +16,7 @@ from ocs_storage_exploration.storage.paths import (
     resolve_ingest_paths,
     resolve_ingest_roots,
 )
-from tests.ingest_helpers import SAMPLES_DIRECTORY
+from tests.ingest_helpers import SAMPLES_DIRECTORY, ramp, write_zarr_store
 
 
 @pytest.fixture
@@ -25,6 +27,13 @@ def sample_tree(tmp_path: Path) -> Path:
     (root / "two.tif").write_bytes(b"two")
     (root / "nested" / "three.tif").write_bytes(b"three")
     (tmp_path / "outside.tif").write_bytes(b"outside")
+    write_zarr_store(
+        root / "cube.zarr",
+        values=ramp(2, 2).reshape(1, 2, 2),
+        y_values=numpy.array([2.5, 1.5]),
+        x_values=numpy.array([10.5, 11.5]),
+        timestamps=[datetime(2024, 1, 1)],
+    )
     return root
 
 
@@ -63,6 +72,17 @@ def test_an_absolute_path_inside_the_roots_is_allowed(sample_tree: Path, tmp_pat
 def test_a_directory_is_not_a_file(sample_tree: Path, tmp_path: Path) -> None:
     with pytest.raises(IngestPathError, match="no readable file matches"):
         resolve_ingest_paths(["samples/nested"], roots=[sample_tree], working_directory=tmp_path)
+
+
+def test_a_zarr_directory_store_resolves_as_a_literal_path(sample_tree: Path, tmp_path: Path) -> None:
+    resolved = resolve_ingest_path("samples/cube.zarr", roots=[sample_tree], working_directory=tmp_path)
+    assert resolved == (sample_tree / "cube.zarr").resolve()
+    assert resolved.is_dir()
+
+
+def test_a_zarr_directory_store_resolves_through_a_glob(sample_tree: Path, tmp_path: Path) -> None:
+    resolved = resolve_ingest_paths(["samples/*.zarr"], roots=[sample_tree], working_directory=tmp_path)
+    assert [path.name for path in resolved] == ["cube.zarr"]
 
 
 def test_without_a_root_nothing_may_be_read(sample_tree: Path, tmp_path: Path) -> None:

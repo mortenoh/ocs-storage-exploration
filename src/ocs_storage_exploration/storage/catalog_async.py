@@ -91,11 +91,12 @@ class AsyncObjectCatalog:
         return entry
 
     async def list_datasets(self, item_type: ItemType | None = None) -> list[Dataset]:
-        """List dataset records, optionally filtered by item type."""
+        """List dataset records, optionally filtered by item type, skipping datasets being deleted."""
         datasets: list[Dataset] = []
         async for identifier in self.iter_identifiers():
             dataset = await self.get(identifier)
-            if dataset is None:
+            if dataset is None or dataset.is_deleting:
+                # A deletion marks its record before it sweeps; from here on the dataset is gone.
                 continue
             if item_type is None or dataset.item_type is item_type:
                 datasets.append(dataset)

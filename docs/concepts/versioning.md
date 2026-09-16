@@ -7,11 +7,45 @@ API hides the difference behind one vocabulary: write, publish, roll back.
 
 ## Raster: one Icechunk commit per write
 
-Every `POST /api/v1/raster/{id}` and `POST /api/v1/raster/{id}/append` opens a
-writable session on the `main` branch, writes with `to_icechunk` and commits.
-The commit identifier is the version, and it is what the write answers as
-`snapshot_identifier`. Nothing else in the repository changes, so `main` is the
-draft history: every write is visible there immediately, published or not.
+Every `POST /api/v1/raster/{id}` and `POST /api/v1/raster/{id}/append` writes
+with `to_icechunk` and commits. The commit identifier is the version, and it is
+what the write answers as `snapshot_identifier`. Nothing else in the repository
+changes, so `main` is the draft history: every accepted write is visible there
+immediately, published or not.
+
+### A write is staged before it becomes the draft
+
+The commit does not land on `main` directly. Writing there would mean that a
+write whose catalog record is refused has already changed what every reader of
+the draft sees, and two writers racing one identifier would leave the loser's
+cube in the store under the winner's record. A write therefore runs on a scratch
+branch of its own:
+
+```python
+branch = f"write-{uuid4().hex}"
+repository.create_branch(branch, previous)          # previous is the tip main had
+session = repository.writable_session(branch)
+...                                                  # to_icechunk, then commit
+snapshot = session.commit(message)
+catalog.put(record, create=True)                     # or put(record, revision=...)
+repository.reset_branch(MAIN_BRANCH, snapshot, from_snapshot_id=previous)
+```
+
+`RasterRepository._staged_commit` is that sequence, and the scratch branch is
+deleted in a `finally` either way, so a failed write leaves no branch behind.
+
+The catalog claim in the middle is the arbiter. A create claims the record with
+obstore's create mode and an overwrite or an append claims it with a
+compare-and-swap against the revision it read, so exactly one of two racing
+writers gets past it. The loser raises before `main` has moved: its cube sits on
+a scratch branch that is deleted immediately and is reachable from nothing.
+
+Only after the claim succeeds does `main` move, and it moves as a fast-forward
+under its own compare-and-swap: `from_snapshot_id=previous` is the tip the write
+was staged on, so a commit that landed on `main` in between is not overwritten.
+That reset is the one Icechunk conflict a caller can still see, and it is
+reported as 409 rather than escaping as a 500. When it happens the record is
+already one write ahead of the store, which the next reconciliation repairs.
 
 `GET /api/v1/raster/{id}/versions` walks `Repository.ancestry(branch="main")`
 newest first and marks the snapshot the published branch points at:
@@ -82,6 +116,33 @@ rewrites its `publication` block from the branch tip, and both `publish()` and
 `versions()` call it first, so the next call after an interrupted publication
 repairs the record.
 
+The same call also rewrites the extents. `timestep_count`, `variables` and
+`temporal` are read back from `describe(version=draft)` and written to the
+record whenever they disagree, because a write that claimed the record and then
+lost the fast-forward onto `main` leaves exactly that disagreement. A repository
+that holds only its initialisation snapshot has nothing to read back, so the
+extents of its record are left alone rather than blanked.
+
+### An append must extend the time axis
+
+An append is refused unless its timestamps strictly increase and its first one
+is later than every timestamp already committed. The check reads the snapshot
+the append is staged on, not whatever `main` points at when it runs, so a
+concurrent write cannot slip between the check and the commit.
+
+The reason is that Zarr has no notion of an ordered dimension: appending an
+earlier block simply concatenates it, and the time axis is then unsorted. A
+label window over an unsorted axis is not an error message, it is wrong data. It
+returns the wrong timesteps for bounds the axis happens to hold and raises
+`KeyError` for every other bound. Refusing the append is the only point where
+that is cheap to prevent, so the contract lives there.
+
+Queries do not rely on it. `_apply_time_window` selects with a boolean mask and
+`isel`, the same way `_apply_spatial_window` handles a longitude axis wrapped
+across the antimeridian, so a store written before this guard existed still
+answers correctly, and an empty window falls to the existing size guard rather
+than to a `KeyError`.
+
 ### Metadata comes from the store, not from the record
 
 A query and a description read their grid from the snapshot they opened:
@@ -96,6 +157,13 @@ the bounds from changing what a published query reports.
 returns that reading as a `RasterStoreDescription`, so anything that projects a
 coverage, the STAC collection included, can describe the snapshot it actually
 serves.
+
+The fill value is part of that reading. `apply_geozarr_attributes` stamps the
+`nodata` attribute the grid declares onto every data variable as it is written,
+unless the variable already carries one, so a query excludes the fill cells of
+the snapshot it opened. Nothing falls back to the record: a draft that declares
+zero as its fill value would otherwise make a published query over genuine zeros
+report no statistics at all.
 
 ## Vector: one Parquet file per version
 
@@ -199,6 +267,40 @@ Old versions are never collected. There is no expiry pass for vector data in
 this pass: deleting a collection deletes every version below its prefix, and
 anything finer is a retention policy that does not exist yet.
 
+## Deleting a dataset marks the record before it sweeps
+
+Deletion used to remove the catalog record first and then empty the prefix. That
+order has a window: between the two, the dataset looks like it never existed, so
+a writer using the same identifier starts writing into a prefix that is about to
+be swept, and the sweep then erases what it wrote.
+
+The record now goes last. A delete reads the record raw, marks it
+`lifecycle: "deleting"` under a compare-and-swap, sweeps every object below the
+dataset prefix - `ocs/raster/{id}/` for a coverage, `ocs/vector/{id}/` for a
+collection - and only then deletes the record, and only if the record is still
+the one it reserved. A record marked `deleting` is a deletion in progress, not a
+dataset: listings skip it, and reads, publications and the STAC projection
+answer 404. Deleting and writing read it raw, because they are the two calls
+that can finish it.
+
+That makes the state after a crash recoverable rather than ambiguous. A delete
+that stops after the mark leaves a marked record and some objects behind, and
+either a second delete or a write of the same identifier finishes the sweep and
+drops the record before doing its own work. A write that takes a deletion over
+then creates its record conditionally, so two writers taking over the same
+deletion meet at that conditional create and exactly one of them wins.
+
+One window is left, and it is the one an object store cannot close. There is no
+conditional delete, so dropping the record is a read followed by a delete rather
+than one compare-and-swap, and the sweep itself is a listing followed by a
+delete. A writer that takes a deletion over while the original deleter is still
+between those two steps can have its new objects removed by that deleter's
+sweep: the record survives, because the deleter refuses to delete a record it
+did not reserve, but the data under it does not. Closing that needs a lease
+rather than a marker, which this pass does not have. What the marker buys is the
+common case: a reused identifier never inherits the versions of the dataset it
+replaced.
+
 ## Side by side
 
 | | Raster (Icechunk) | Vector (GeoParquet) |
@@ -206,6 +308,7 @@ anything finer is a retention policy that does not exist yet.
 | Unit of a version | A commit on `main`, named by snapshot identifier | A directory `versions/vNNNNN` holding one Parquet file |
 | Where history lives | Inside the repository: ancestry of `main` | In the object listing of the versions prefix |
 | How a version number is claimed | The commit identifier is assigned by Icechunk | `reservation.json` created with `mode="create"` before the write |
+| Where a write lands first | A scratch branch `write-{uuid}`, fast-forwarded onto `main` after the record is claimed | Its own `versions/vNNNNN` directory, which no other write can name |
 | When a version counts as written | The commit returns | `metadata.json` exists next to the Parquet |
 | Where a reader takes its metadata | The snapshot it opened | The `metadata.json` of the version it selected |
 | Publish mechanism | `reset_branch("published", target, from_snapshot_id=previous)` | `current.json` written with etag compare-and-swap |

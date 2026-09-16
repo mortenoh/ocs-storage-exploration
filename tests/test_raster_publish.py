@@ -26,12 +26,14 @@ from ocs_storage_exploration.storage.raster import (
     build_synthetic_cube,
     build_timestamps,
 )
+from ocs_storage_exploration.storage.raster import repository as repository_module
 from ocs_storage_exploration.storage.schemas import (
     BoundingBox,
     CoverageDataset,
     Dataset,
     GridSpecification,
     ItemType,
+    TemporalExtent,
 )
 
 IDENTIFIER = "publish"
@@ -294,12 +296,17 @@ def test_two_raster_creates_racing_one_record_lose_the_conditional_create(
     # Freeze the empty catalog the racing writer saw before the first create landed.
     monkeypatch.setattr(racing, "_existing_entry", lambda dataset_identifier, *, overwrite: None)
 
+    winning = build_cube(grid)
+
     with pytest.raises(DatasetAlreadyExistsError):
         racing.create(IDENTIFIER, grid, build_cube(grid, seed=1))
 
     record = catalog.require(IDENTIFIER)
     assert isinstance(record, CoverageDataset)
     assert record.title == IDENTIFIER
+    # The losing writer staged its cube on a scratch branch, so the draft still holds the winner's.
+    with raster_repository.read(IDENTIFIER, version=VersionSelector.DRAFT) as handle:
+        assert numpy.allclose(handle.dataset[VARIABLE].values, winning[VARIABLE].values)
 
 
 def test_a_stale_raster_record_loses_the_compare_and_swap(
@@ -326,3 +333,129 @@ def test_a_stale_raster_record_loses_the_compare_and_swap(
     record = catalog.require(IDENTIFIER)
     assert isinstance(record, CoverageDataset)
     assert record.timestep_count == 5
+    with raster_repository.read(IDENTIFIER, version=VersionSelector.DRAFT) as handle:
+        assert handle.dataset.sizes["t"] == 5
+
+
+def test_a_commit_racing_the_draft_branch_is_reported_as_a_conflict(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+    storage_backend: StorageBackend,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid, count=3))
+    address = raster_repository.repository_address(IDENTIFIER)
+    written = repository_module.to_icechunk
+    raced = {"done": False}
+
+    def to_icechunk_after_a_racing_commit(dataset: xarray.Dataset, session: Any, **keywords: Any) -> None:
+        if not raced["done"]:
+            raced["done"] = True
+            racing = icechunk.Repository.open(storage_backend.icechunk_storage(address))
+            racing.writable_session("main").commit("a racing writer moved the draft branch", allow_empty=True)
+        written(dataset, session, **keywords)
+
+    monkeypatch.setattr(repository_module, "to_icechunk", to_icechunk_after_a_racing_commit)
+
+    with pytest.raises(PublicationConflictError):
+        raster_repository.append(IDENTIFIER, build_cube(grid, count=2, start=datetime(2020, 1, 4), seed=1))
+
+
+def test_reconcile_rebuilds_the_extents_a_record_disagrees_with(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+    catalog: ObjectCatalog,
+):
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid, count=3))
+    entry = catalog.require_entry(IDENTIFIER)
+    assert isinstance(entry.record, CoverageDataset)
+    catalog.put(
+        entry.record.model_copy(
+            update={
+                "timestep_count": 99,
+                "variables": ("humidity",),
+                "temporal": TemporalExtent(start=datetime(1999, 1, 1), end=datetime(1999, 1, 2)),
+            },
+        ),
+        revision=entry.revision,
+    )
+
+    reconciled = raster_repository.reconcile_publication(IDENTIFIER)
+
+    assert reconciled.timestep_count == 3
+    assert reconciled.variables == (VARIABLE,)
+    assert reconciled.temporal is not None
+    assert reconciled.temporal.start == START
+    assert reconciled.temporal.end == datetime(2020, 1, 3)
+    stored = catalog.require(IDENTIFIER)
+    assert isinstance(stored, CoverageDataset)
+    assert stored.timestep_count == 3
+    assert stored.variables == (VARIABLE,)
+
+
+def test_reconcile_leaves_a_record_alone_when_the_store_holds_no_data_yet(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+):
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid, count=3))
+    # Everything below the prefix is gone, so the next open finds only an initialisation snapshot.
+    storage_backend.delete_prefix(raster_repository.repository_address(IDENTIFIER))
+
+    reconciled = raster_repository.reconcile_publication(IDENTIFIER)
+
+    assert reconciled.timestep_count == 3
+    assert reconciled.variables == (VARIABLE,)
+    assert catalog.get(IDENTIFIER) is not None
+
+
+def test_the_commit_metadata_carries_the_licence_of_the_snapshot_it_was_written_with(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+):
+    created = raster_repository.create(
+        IDENTIFIER,
+        grid,
+        build_cube(grid, count=3),
+        license="CC-BY-4.0",
+        attribution="Open Climate Service",
+    )
+    raster_repository.publish(IDENTIFIER, snapshot_identifier=created.snapshot_identifier)
+
+    raster_repository.append(IDENTIFIER, build_cube(grid, count=2, start=datetime(2020, 1, 4), seed=1))
+
+    # The terms live on the commit, and an append that declares none carries forward the ones it extends.
+    published = raster_repository.describe(IDENTIFIER, version=VersionSelector.PUBLISHED)
+    draft = raster_repository.describe(IDENTIFIER, version=VersionSelector.DRAFT)
+    assert published.license == "CC-BY-4.0"
+    assert published.attribution == "Open Climate Service"
+    assert draft.license == "CC-BY-4.0"
+    assert draft.attribution == "Open Climate Service"
+
+
+def test_a_draft_written_under_other_terms_leaves_the_published_snapshot_alone(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+):
+    created = raster_repository.create(
+        IDENTIFIER,
+        grid,
+        build_cube(grid),
+        license="CC-BY-4.0",
+        attribution="Open Climate Service",
+    )
+    raster_repository.publish(IDENTIFIER, snapshot_identifier=created.snapshot_identifier)
+
+    raster_repository.create(
+        IDENTIFIER,
+        grid,
+        build_cube(grid, seed=1),
+        overwrite=True,
+        license="proprietary",
+        attribution="Statistics Norway",
+    )
+
+    # The record tracks the newest write; each snapshot keeps the terms its own bytes were written under.
+    assert raster_repository.describe(IDENTIFIER, version=VersionSelector.PUBLISHED).license == "CC-BY-4.0"
+    assert raster_repository.describe(IDENTIFIER, version=VersionSelector.DRAFT).license == "proprietary"

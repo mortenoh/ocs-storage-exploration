@@ -184,7 +184,7 @@ def test_write_refuses_to_take_over_a_raster_record(
         CoverageDataset(
             dataset_identifier=COLLECTION,
             title="A raster",
-            address="memory://memory/ocs/raster/districts",
+            storage_key="raster/districts",
             grid=GridSpecification(shape=(2, 2), bbox=envelope, crs="EPSG:4326"),
             temporal=TemporalExtent(start=datetime(2026, 1, 1, tzinfo=UTC), end=datetime(2026, 1, 2, tzinfo=UTC)),
         ),

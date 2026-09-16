@@ -6,15 +6,17 @@ import geopandas
 import pytest
 
 from ocs_storage_exploration.settings import Settings
+from ocs_storage_exploration.storage.addresses import StorageAddress
 from ocs_storage_exploration.storage.catalog import ObjectCatalog
 from ocs_storage_exploration.storage.errors import (
+    DatasetAlreadyExistsError,
     DatasetNotFoundError,
     NothingToPublishError,
     SnapshotNotFoundError,
 )
 from ocs_storage_exploration.storage.keys import vector_data_key, vector_pointer_key, vector_version_prefix
 from ocs_storage_exploration.storage.protocols import StorageBackend
-from ocs_storage_exploration.storage.schemas import FeatureDataset, ItemType
+from ocs_storage_exploration.storage.schemas import DatasetLifecycle, FeatureDataset, ItemType
 from ocs_storage_exploration.storage.vector.collection import VectorCollectionStore
 
 COLLECTION = "districts"
@@ -153,3 +155,145 @@ def test_delete_refuses_an_unknown_collection(
 
     with pytest.raises(DatasetNotFoundError):
         store.delete(COLLECTION)
+
+
+def test_delete_marks_the_record_before_it_sweeps_the_objects(
+    two_versions: VectorCollectionStore,
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, FeatureDataset | None] = {}
+    sweep = storage_backend.delete_prefix
+
+    def watching_sweep(address: StorageAddress) -> int:
+        record = catalog.get(COLLECTION)
+        observed["record"] = record if isinstance(record, FeatureDataset) else None
+        return sweep(address)
+
+    monkeypatch.setattr(storage_backend, "delete_prefix", watching_sweep)
+
+    two_versions.delete(COLLECTION)
+
+    # The record outlives the sweep, so a writer that arrives in between is told a deletion is running
+    # instead of finding no record at all and writing into a prefix that is about to be emptied.
+    marked = observed["record"]
+    assert marked is not None
+    assert marked.lifecycle is DatasetLifecycle.DELETING
+    assert marked.is_deleting is True
+    assert catalog.get(COLLECTION) is None
+
+
+def mark_deleting(catalog: ObjectCatalog) -> None:
+    """Leave the collection in the state a deletion that stopped before its sweep leaves behind."""
+    entry = catalog.require_entry(COLLECTION)
+    catalog.put(entry.record.model_copy(update={"lifecycle": DatasetLifecycle.DELETING}), revision=entry.revision)
+
+
+def test_a_write_takes_over_a_deletion_that_stopped_before_its_sweep(
+    two_versions: VectorCollectionStore,
+    catalog: ObjectCatalog,
+    sample_features: geopandas.GeoDataFrame,
+) -> None:
+    mark_deleting(catalog)
+
+    result = two_versions.write(COLLECTION, sample_features.iloc[:3], identifier_property="id")
+
+    # The prefix was swept first, so the new collection starts at version 1 and serves none of the
+    # versions the dead one left behind.
+    assert result.version == 1
+    assert two_versions.versions(COLLECTION) == [1]
+    assert len(two_versions.read(COLLECTION).frame) == 3
+    record = catalog.get(COLLECTION)
+    assert record is not None
+    assert record.is_deleting is False
+
+
+def test_a_second_delete_finishes_a_deletion_that_stopped_before_its_sweep(
+    two_versions: VectorCollectionStore,
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+) -> None:
+    mark_deleting(catalog)
+
+    removed = two_versions.delete(COLLECTION)
+
+    assert removed >= 3
+    assert catalog.get(COLLECTION) is None
+    assert storage_backend.list_keys(storage_backend.address("vector", COLLECTION)) == []
+
+
+def test_delete_leaves_a_record_that_was_reclaimed_while_it_swept_alone(
+    two_versions: VectorCollectionStore,
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+    sample_features: geopandas.GeoDataFrame,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reclaiming = VectorCollectionStore(storage_backend, catalog, settings)
+    sweep = storage_backend.delete_prefix
+
+    def reclaimed_sweep(address: StorageAddress) -> int:
+        monkeypatch.setattr(storage_backend, "delete_prefix", sweep)
+        removed = sweep(address)
+        # Another writer takes the deletion over and writes the collection again under the same name.
+        reclaiming.write(COLLECTION, sample_features.iloc[:2], identifier_property="id")
+        return removed
+
+    monkeypatch.setattr(storage_backend, "delete_prefix", reclaimed_sweep)
+
+    two_versions.delete(COLLECTION)
+
+    record = catalog.get(COLLECTION)
+    assert record is not None
+    assert record.is_deleting is False
+    assert reclaiming.versions(COLLECTION) == [1]
+
+
+def test_two_writes_taking_over_the_same_deletion_meet_at_the_conditional_create(
+    two_versions: VectorCollectionStore,
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+    sample_features: geopandas.GeoDataFrame,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mark_deleting(catalog)
+    competitor = VectorCollectionStore(storage_backend, catalog, settings)
+    sweep = storage_backend.delete_prefix
+
+    def overtaken_sweep(address: StorageAddress) -> int:
+        monkeypatch.setattr(storage_backend, "delete_prefix", sweep)
+        removed = sweep(address)
+        # The other writer finishes the whole take-over while this one is still sweeping.
+        competitor.write(COLLECTION, sample_features.iloc[:2], identifier_property="id")
+        return removed
+
+    monkeypatch.setattr(storage_backend, "delete_prefix", overtaken_sweep)
+
+    with pytest.raises(DatasetAlreadyExistsError):
+        two_versions.write(COLLECTION, sample_features.iloc[:3], identifier_property="id")
+
+    # The record is the winner's, and the loser left only an unreferenced version behind.
+    record = catalog.get(COLLECTION)
+    assert isinstance(record, FeatureDataset)
+    assert record.features.feature_count == 2
+    assert len(competitor.read(COLLECTION, version=1).frame) == 2
+
+
+def test_a_collection_being_deleted_is_absent_for_reads_publications_and_listings(
+    two_versions: VectorCollectionStore,
+    catalog: ObjectCatalog,
+) -> None:
+    two_versions.publish(COLLECTION)
+    mark_deleting(catalog)
+
+    with pytest.raises(DatasetNotFoundError):
+        two_versions.read(COLLECTION)
+    with pytest.raises(DatasetNotFoundError):
+        two_versions.publish(COLLECTION)
+
+    assert catalog.list_datasets() == []
+    # The raw record is still there, which is what lets a later delete or write finish the deletion.
+    assert catalog.get(COLLECTION) is not None

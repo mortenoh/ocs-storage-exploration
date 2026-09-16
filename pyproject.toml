@@ -30,6 +30,7 @@ dependencies = [
     "fastapi>=0.121",
     "geojson-pydantic>=2.1",
     "geopandas>=1.1",
+    "h5netcdf[h5py]>=1.8",
     "icechunk>=2.2,<3",
     "numpy>=2.2",
     "obstore>=0.11",

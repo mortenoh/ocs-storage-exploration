@@ -104,6 +104,8 @@ class _CoverageFacts:
     y_dimension: str
     x_dimension: str
     shape: tuple[int, int]
+    license: str | None
+    attribution: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +120,8 @@ class _FeatureFacts:
     primary_geometry: str
     geometry_types: tuple[str, ...]
     column_types: dict[str, str]
+    license: str | None
+    attribution: str | None
 
 
 def catalog_href(base_url: str) -> str:
@@ -214,8 +218,8 @@ def _build_coverage_collection(
             spatial=pystac.SpatialExtent([list(wgs84_bounds(facts.bbox, facts.crs))]),
             temporal=_temporal_extent(facts.temporal),
         ),
-        license=record.license or DEFAULT_LICENSE,
-        providers=_providers(record),
+        license=facts.license or DEFAULT_LICENSE,
+        providers=_providers(facts.attribution),
     )
     datacube = DatacubeExtension.ext(collection, add_if_missing=True)
     datacube.dimensions = _cube_dimensions(facts)
@@ -226,7 +230,7 @@ def _build_coverage_collection(
     collection.add_asset(
         "icechunk",
         pystac.Asset(
-            href=record.address,
+            href=repository.backend.address(record.storage_key).as_uri(),
             title="Icechunk repository",
             media_type=ZARR_V3_MEDIA_TYPE,
             roles=["data"],
@@ -261,8 +265,8 @@ def _build_feature_collection(
             spatial=pystac.SpatialExtent([list(_feature_bounds(facts))]),
             temporal=_temporal_extent(None),
         ),
-        license=record.license or DEFAULT_LICENSE,
-        providers=_providers(record),
+        license=facts.license or DEFAULT_LICENSE,
+        providers=_providers(facts.attribution),
     )
     table = TableExtension.ext(collection, add_if_missing=True)
     table.primary_geometry = facts.primary_geometry
@@ -274,7 +278,7 @@ def _build_feature_collection(
         collection.add_asset(
             "data",
             pystac.Asset(
-                href=_parquet_href(record, facts.version),
+                href=_parquet_href(store.backend.address(record.storage_key), facts.version),
                 title="GeoParquet data",
                 media_type=PARQUET_MEDIA_TYPE,
                 roles=["data"],
@@ -312,15 +316,15 @@ def _temporal_extent(temporal: TemporalExtent | None) -> pystac.TemporalExtent:
     return pystac.TemporalExtent([interval])
 
 
-def _providers(record: Dataset) -> list[pystac.Provider] | None:
-    """Return the provider carrying the attribution of a record, or None when it declares none."""
-    if record.attribution is None:
+def _providers(attribution: str | None) -> list[pystac.Provider] | None:
+    """Return the provider carrying an attribution, or None when there is none to credit."""
+    if attribution is None:
         return None
     # Attribution is a licence condition under CC-BY rather than a courtesy, and `providers` is the
     # only collection-level field STAC defines for naming the party that has to be credited.
     return [
         pystac.Provider(
-            name=record.attribution,
+            name=attribution,
             roles=[pystac.ProviderRole.PRODUCER, pystac.ProviderRole.LICENSOR],
         ),
     ]
@@ -342,7 +346,13 @@ def _coverage_facts(record: CoverageDataset, repository: RasterRepository) -> _C
             y_dimension=grid.y_dimension,
             x_dimension=grid.x_dimension,
             shape=grid.shape,
+            license=record.license,
+            attribution=record.attribution,
         )
+    # Every field describes the snapshot that was opened rather than the newest write, which the record
+    # tracks. The licence and the attribution are part of that: they are the terms the advertised bytes
+    # were committed under, and a draft written under other terms must not change what a published
+    # snapshot promises.
     return _CoverageFacts(
         snapshot_identifier=description.snapshot_identifier,
         variables=description.variables,
@@ -354,6 +364,8 @@ def _coverage_facts(record: CoverageDataset, repository: RasterRepository) -> _C
         y_dimension=description.y_dimension,
         x_dimension=description.x_dimension,
         shape=description.shape,
+        license=description.license,
+        attribution=description.attribution,
     )
 
 
@@ -391,10 +403,14 @@ def _feature_facts(record: FeatureDataset, store: VectorCollectionStore) -> _Fea
             primary_geometry=detail.primary_geometry,
             geometry_types=detail.geometry_types,
             column_types={},
+            license=record.license,
+            attribution=record.attribution,
         )
     metadata, table = advertised
     # Every field describes the advertised version rather than the newest write, which the record
-    # tracks and which would overstate a collection rolled back to an older version.
+    # tracks and which would overstate a collection rolled back to an older version. The licence and
+    # the attribution are part of that: they are the terms the advertised bytes were written under,
+    # and a draft written under other terms must not change what a published version promises.
     return _FeatureFacts(
         version=metadata.version,
         crs=metadata.crs,
@@ -404,6 +420,8 @@ def _feature_facts(record: FeatureDataset, store: VectorCollectionStore) -> _Fea
         primary_geometry=metadata.primary_geometry,
         geometry_types=metadata.geometry_types,
         column_types=table.column_types,
+        license=metadata.license,
+        attribution=metadata.attribution,
     )
 
 
@@ -496,7 +514,6 @@ def _feature_bounds(facts: _FeatureFacts) -> tuple[float, float, float, float]:
     return wgs84_bounds(facts.bbox, facts.crs)
 
 
-def _parquet_href(record: FeatureDataset, version: int) -> str:
+def _parquet_href(address: StorageAddress, version: int) -> str:
     """Return the URI of the GeoParquet object of one version of a feature collection."""
-    address = StorageAddress.from_uri(record.address)
     return address.joined("versions", format_vector_version(version), VECTOR_DATA_NAME).as_uri()

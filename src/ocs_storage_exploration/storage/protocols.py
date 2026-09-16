@@ -98,7 +98,7 @@ class Catalog(Protocol):
         ...
 
     def list_datasets(self, item_type: ItemType | None = None) -> list[Dataset]:
-        """List dataset records, optionally filtered by item type."""
+        """List dataset records, optionally filtered by item type, skipping datasets being deleted."""
         ...
 
     def delete(self, identifier: str) -> None:
@@ -135,7 +135,7 @@ class AsyncCatalog(Protocol):
         ...
 
     async def list_datasets(self, item_type: ItemType | None = None) -> list[Dataset]:
-        """List dataset records, optionally filtered by item type."""
+        """List dataset records, optionally filtered by item type, skipping datasets being deleted."""
         ...
 
     async def delete(self, identifier: str) -> None:
