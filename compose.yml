@@ -1,3 +1,23 @@
+# The environment the filesystem profile runs on, shared by the one-shot seed and the API that
+# serves what it wrote, so the two can never disagree about which backend they are talking to.
+x-file-environment: &file-environment
+  OCS_STORAGE_BACKEND: ${OCS_STORAGE_BACKEND:-file}
+  OCS_STORAGE_DATA_DIRECTORY: /app/data
+  OCS_STORAGE_BASE_PREFIX: ${OCS_STORAGE_BASE_PREFIX:-ocs}
+
+# The same for the s3 profile, pointed at the rustfs service by its network alias.
+x-s3-environment: &s3-environment
+  OCS_STORAGE_BACKEND: s3
+  OCS_STORAGE_BASE_PREFIX: ${OCS_STORAGE_BASE_PREFIX:-ocs}
+  OCS_STORAGE_S3__BUCKET: ${OCS_STORAGE_S3__BUCKET:-ocs-storage-exploration}
+  OCS_STORAGE_S3__PREFIX: ${OCS_STORAGE_BASE_PREFIX:-ocs}
+  OCS_STORAGE_S3__REGION: ${OCS_STORAGE_S3__REGION:-us-east-1}
+  OCS_STORAGE_S3__ENDPOINT_URL: http://rustfs:9000
+  OCS_STORAGE_S3__ALLOW_HTTP: "true"
+  OCS_STORAGE_S3__FORCE_PATH_STYLE: "true"
+  OCS_STORAGE_S3__ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY:-rustfsadmin}
+  OCS_STORAGE_S3__SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY:-rustfsadmin}
+
 services:
   # The service on the filesystem backend. Started by `make docker-run-file`, which runs it in
   # the foreground so Ctrl-C stops the stack.
@@ -14,12 +34,36 @@ services:
     env_file:
       - path: .env
         required: false
-    environment:
-      OCS_STORAGE_BACKEND: ${OCS_STORAGE_BACKEND:-file}
-      OCS_STORAGE_DATA_DIRECTORY: /app/data
-      OCS_STORAGE_BASE_PREFIX: ${OCS_STORAGE_BASE_PREFIX:-ocs}
+    environment: *file-environment
     volumes:
       - ./data:/app/data
+    # The API only comes up once the demo datasets are in ./data, so a fresh checkout answers
+    # /api/v1/datasets with five records rather than an empty list.
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+
+  # The one-shot seed of the filesystem profile: the same image, running the demo instead of the
+  # server, writing the five sample datasets into ./data and exiting.
+  seed:
+    profiles: ["file"]
+    build: .
+    container_name: ocs-storage-exploration-seed
+    user: "${OCS_UID:-999}:${OCS_GID:-999}"
+    command: ["ocs-storage-exploration-demo"]
+    restart: "no"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *file-environment
+      # The image carries src/ only, so the sample files arrive through the bind mount below and
+      # the ingest roots have to name the directory they are mounted at. The value is JSON: a list
+      # setting is parsed as JSON by pydantic-settings, and a comma-separated string is refused.
+      OCS_STORAGE_INGEST_ROOTS: '["samples","data"]'
+    volumes:
+      - ./data:/app/data
+      - ./samples:/app/samples:ro
 
   # The same image on the S3 backend, pointed at the rustfs service by its network alias.
   # It is published on 8001 so it never collides with `api` or with a local `make run`.
@@ -32,17 +76,30 @@ services:
     env_file:
       - path: .env
         required: false
+    environment: *s3-environment
+    depends_on:
+      rustfs:
+        condition: service_healthy
+      seed-s3:
+        condition: service_completed_successfully
+
+  # The one-shot seed of the s3 profile. It runs as the uid the image builds, because it writes
+  # into the bucket rather than into a bind mount, and it waits for rustfs to answer its health
+  # check so the bucket its entrypoint creates exists before the first PUT.
+  seed-s3:
+    profiles: ["s3"]
+    build: .
+    container_name: ocs-storage-exploration-seed-s3
+    command: ["ocs-storage-exploration-demo"]
+    restart: "no"
+    env_file:
+      - path: .env
+        required: false
     environment:
-      OCS_STORAGE_BACKEND: s3
-      OCS_STORAGE_BASE_PREFIX: ${OCS_STORAGE_BASE_PREFIX:-ocs}
-      OCS_STORAGE_S3__BUCKET: ${OCS_STORAGE_S3__BUCKET:-ocs-storage-exploration}
-      OCS_STORAGE_S3__PREFIX: ${OCS_STORAGE_BASE_PREFIX:-ocs}
-      OCS_STORAGE_S3__REGION: ${OCS_STORAGE_S3__REGION:-us-east-1}
-      OCS_STORAGE_S3__ENDPOINT_URL: http://rustfs:9000
-      OCS_STORAGE_S3__ALLOW_HTTP: "true"
-      OCS_STORAGE_S3__FORCE_PATH_STYLE: "true"
-      OCS_STORAGE_S3__ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY:-rustfsadmin}
-      OCS_STORAGE_S3__SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY:-rustfsadmin}
+      <<: *s3-environment
+      OCS_STORAGE_INGEST_ROOTS: '["samples","data"]'
+    volumes:
+      - ./samples:/app/samples:ro
     depends_on:
       rustfs:
         condition: service_healthy

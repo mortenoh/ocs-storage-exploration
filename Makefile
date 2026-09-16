@@ -40,8 +40,8 @@ help:
 	@echo "  docs            Alias for docs-serve"
 	@echo "  docker-build    Build the service image"
 	@echo "  docker-run      Alias for docker-run-file"
-	@echo "  docker-run-file Run the service on the filesystem backend in the foreground (Ctrl-C stops and removes it)"
-	@echo "  docker-run-s3   Run the service on the s3 backend with rustfs in the foreground (Ctrl-C stops and removes it)"
+	@echo "  docker-run-file Seed ./data and run the service on the filesystem backend in the foreground (Ctrl-C stops it)"
+	@echo "  docker-run-s3   Seed the bucket and run the service on the s3 backend with rustfs in the foreground (Ctrl-C stops it)"
 	@echo "  clean           Clean up temporary files"
 
 install:
@@ -61,7 +61,7 @@ offline: install samples docker-build
 	@echo ">>> Ready for offline use. Cached on this machine:"
 	@echo "    - the virtual environment in $(VENV_DIR) (uv sync --all-extras)"
 	@echo "    - the sample files in samples/ and samples/downloaded/"
-	@echo "    - the service images for the file and s3 compose profiles"
+	@echo "    - the service and seed images for the file and s3 compose profiles"
 	@echo "    - the rustfs image compose.yml pins"
 	@echo "    - the DuckDB spatial and httpfs extensions in ~/.duckdb"
 	@echo "    Next, offline: make demo, make run, make test, make docs"
@@ -72,7 +72,7 @@ samples:
 
 demo:
 	@echo ">>> Ingesting every sample into the $${OCS_STORAGE_BACKEND:-file} backend"
-	@$(UV) run python scripts/demo.py
+	@$(UV) run ocs-storage-exploration-demo
 
 lint:
 	@echo ">>> Running formatter and linter"
@@ -136,12 +136,15 @@ docker-run: docker-run-file
 # neither a container nor a network behind. `docker ps -a` is empty afterwards.
 # ./data is bind mounted into the container, so the container runs as the host user that owns it;
 # without this the service cannot write its catalog on Linux, where the bind mount keeps host ids.
+# The flag is --abort-on-container-failure rather than --abort-on-container-exit: the profile holds
+# a one-shot seed that exits 0 once the demo datasets are written, and abort-on-container-exit reads
+# that success as a reason to stop the stack, racing the API that its completion just released.
 docker-run-file:
 	@echo ">>> Running the service on the filesystem backend at http://127.0.0.1:8000"
 	@mkdir -p data
 	@set -e; \
 	trap 'docker compose --profile file down' EXIT; \
-	OCS_UID=$$(id -u) OCS_GID=$$(id -g) docker compose --profile file up --build --abort-on-container-exit
+	OCS_UID=$$(id -u) OCS_GID=$$(id -g) docker compose --profile file up --build --abort-on-container-failure
 
 # rustfs runs as uid 10001; Linux Docker creates the ./.rustfs bind mount as root 755, so make it writable first.
 docker-run-s3:
@@ -149,7 +152,7 @@ docker-run-s3:
 	@mkdir -p .rustfs && chmod a+rwx .rustfs
 	@set -e; \
 	trap 'docker compose --profile s3 down' EXIT; \
-	docker compose --profile s3 up --build --abort-on-container-exit
+	docker compose --profile s3 up --build --abort-on-container-failure
 
 clean:
 	@echo ">>> Cleaning up"

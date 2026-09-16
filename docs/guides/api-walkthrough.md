@@ -14,6 +14,13 @@ OCS_STORAGE_DATA_DIRECTORY=/tmp/ocs-demo uv run uvicorn ocs_storage_exploration.
 export BASE=http://127.0.0.1:8765
 ```
 
+A seeded stack works just as well: `make docker-run-file` answers on
+`http://127.0.0.1:8000` and `make docker-run-s3` on `http://127.0.0.1:8001`,
+both with the five sample datasets already ingested, so `GET /api/v1/datasets`
+and the STAC endpoints have something real in them from the first request. The
+datasets created below have their own identifiers and do not disturb the seeded
+ones.
+
 `jq` is only used to keep the output readable. Where a dataset was written,
 [inspecting the data](inspecting-the-data.md) shows how to open the same bytes
 without the API.

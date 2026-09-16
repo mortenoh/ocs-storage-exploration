@@ -273,9 +273,10 @@ needed and will be refused as a type error.
 ## The S3 backend
 
 `make docker-run-s3` starts the rustfs endpoint from `compose.yml` next to the
-service: the S3 API is on port 9000 and the browser console is on
-<http://127.0.0.1:9001>, where the same `ocs/catalog`, `ocs/raster` and
-`ocs/vector` prefixes appear as objects in the bucket. The credentials come from
+service, with a one-shot seed container that fills the bucket before the API
+comes up: the S3 API is on port 9000 and the browser console is on
+<http://127.0.0.1:9001/rustfs/console/>, where the same `ocs/catalog`,
+`ocs/raster` and `ocs/vector` prefixes appear as objects in the bucket. The credentials come from
 `RUSTFS_ACCESS_KEY` and `RUSTFS_SECRET_KEY` and default to `rustfsadmin`;
 `.env.example` has the matching `OCS_STORAGE_S3__` block. `make test-s3` starts
 rustfs on its own, for the marked tests, and stops it again.

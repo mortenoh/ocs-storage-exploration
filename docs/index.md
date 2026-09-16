@@ -69,7 +69,8 @@ make docs         # build and serve these docs
 starts rustfs, runs everything marked `s3` against it and stops it again even
 when a test fails. `make docker-run-file` and `make docker-run-s3` run the
 service itself in a container, in the foreground under a trap, so Ctrl-C stops
-and removes the stack and nothing is left behind.
+and removes the stack and nothing is left behind. Both seed themselves with the
+five sample datasets first, so the API answers with data in it.
 
 Once the service is up, `GET /health` and `GET /api/v1/backends` confirm which
 backend is active — the backend description never contains a secret. The raster

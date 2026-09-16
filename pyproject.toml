@@ -56,6 +56,7 @@ Documentation = "https://mortenoh.github.io/ocs-storage-exploration"
 
 [project.scripts]
 ocs-storage-exploration = "ocs_storage_exploration.__main__:main"
+ocs-storage-exploration-demo = "ocs_storage_exploration.demo:main"
 
 [build-system]
 requires = ["uv_build>=0.12.0,<0.13.0"]

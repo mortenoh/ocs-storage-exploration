@@ -15,9 +15,8 @@ from ocs_storage_exploration.storage.raster.ingest import build_raster_ingest_pl
 from ocs_storage_exploration.storage.service import StorageService
 from ocs_storage_exploration.storage.vector.ingest import build_vector_ingest_plan, ingest_vector_file
 
-REPOSITORY_ROOT: Final[Path] = Path(__file__).resolve().parent.parent
-SAMPLE_DIRECTORY: Final[Path] = REPOSITORY_ROOT / "samples"
-DOWNLOAD_DIRECTORY: Final[Path] = SAMPLE_DIRECTORY / "downloaded"
+SAMPLE_DIRECTORY_NAME: Final[str] = "samples"
+DOWNLOAD_DIRECTORY_NAME: Final[str] = "downloaded"
 WORLDPOP_TIMESTAMP: Final[datetime] = datetime(2026, 1, 1, tzinfo=UTC)
 SERVICE_URL: Final[str] = "http://127.0.0.1:8000"
 MISSING_SAMPLE_HINT: Final[str] = "run `make samples` once while online"
@@ -53,66 +52,79 @@ class VectorDemo:
 
 @dataclass(frozen=True, slots=True)
 class DemoOutcome:
-    """One line of the summary table: what was written, or why it was skipped."""
+    """One line of the summary table: what was written, why it was skipped or how it failed."""
 
     dataset_identifier: str
     kind: str
     detail: str
     published: bool = False
     skipped: bool = False
+    failed: bool = False
 
 
-RASTER_DEMOS: Final[tuple[RasterDemo, ...]] = (
-    RasterDemo(
-        dataset_identifier="chirps3-sle-daily",
-        files=(str(DOWNLOAD_DIRECTORY / "chirps3" / "chirps3-*.tif"),),
-        variable="precipitation",
-        title="CHIRPS v3.0 daily rainfall over Sierra Leone",
-        license="CC0-1.0",
-        attribution="Climate Hazards Center, UC Santa Barbara",
-    ),
-    RasterDemo(
-        dataset_identifier="worldpop-sle-2026",
-        files=(str(SAMPLE_DIRECTORY / "sle_pop_2026_CN_1km_R2025A_UA_v1.tif"),),
-        variable="population",
-        title="WorldPop constrained population of Sierra Leone, 2026",
-        license="CC-BY-4.0",
-        attribution="WorldPop, University of Southampton",
-        timestamp=WORLDPOP_TIMESTAMP,
-    ),
-)
+def default_sample_directory() -> Path:
+    """Return the sample directory of the deployment, resolved against the working directory."""
+    return Path(SAMPLE_DIRECTORY_NAME).resolve()
 
-VECTOR_DEMOS: Final[tuple[VectorDemo, ...]] = (
-    VectorDemo(
-        dataset_identifier="sle-districts",
-        path=str(SAMPLE_DIRECTORY / "sierra_leone_districts.geojson"),
-        identifier_property="id",
-        title="Sierra Leone districts, DHIS2 organisation units",
-        license="BSD-3-Clause",
-        attribution="DHIS2 demo database, via the Open Climate Service test data",
-        selectable_columns=("level", "name", "parentName"),
-    ),
-    VectorDemo(
-        dataset_identifier="sle-adm2-geoboundaries",
-        path=str(DOWNLOAD_DIRECTORY / "geoboundaries-sle-adm2.geojson"),
-        identifier_property="shapeID",
-        title="Sierra Leone ADM2 areas, geoBoundaries",
-        license="CC-BY-4.0",
-        attribution="geoBoundaries, William and Mary geoLab",
-        selectable_columns=("shapeName", "shapeGroup", "shapeType"),
-    ),
-    VectorDemo(
-        dataset_identifier="ne-lakes",
-        path=str(SAMPLE_DIRECTORY / "ne_110m_lakes.geojson"),
-        identifier_property="id",
-        title="Natural Earth lakes at 1:110m",
-        license="CC0-1.0",
-        attribution="Natural Earth",
-        selectable_columns=("name", "featureclass"),
-        # Left unpublished on purpose, so the demo also shows a draft: STAC does not advertise it.
-        publish=False,
-    ),
-)
+
+def raster_demos(sample_directory: Path) -> tuple[RasterDemo, ...]:
+    """Return every coverage the demo ingests, reading its files from the given sample directory."""
+    download_directory = sample_directory / DOWNLOAD_DIRECTORY_NAME
+    return (
+        RasterDemo(
+            dataset_identifier="chirps3-sle-daily",
+            files=(str(download_directory / "chirps3" / "chirps3-*.tif"),),
+            variable="precipitation",
+            title="CHIRPS v3.0 daily rainfall over Sierra Leone",
+            license="CC0-1.0",
+            attribution="Climate Hazards Center, UC Santa Barbara",
+        ),
+        RasterDemo(
+            dataset_identifier="worldpop-sle-2026",
+            files=(str(sample_directory / "sle_pop_2026_CN_1km_R2025A_UA_v1.tif"),),
+            variable="population",
+            title="WorldPop constrained population of Sierra Leone, 2026",
+            license="CC-BY-4.0",
+            attribution="WorldPop, University of Southampton",
+            timestamp=WORLDPOP_TIMESTAMP,
+        ),
+    )
+
+
+def vector_demos(sample_directory: Path) -> tuple[VectorDemo, ...]:
+    """Return every collection the demo ingests, reading its files from the given sample directory."""
+    download_directory = sample_directory / DOWNLOAD_DIRECTORY_NAME
+    return (
+        VectorDemo(
+            dataset_identifier="sle-districts",
+            path=str(sample_directory / "sierra_leone_districts.geojson"),
+            identifier_property="id",
+            title="Sierra Leone districts, DHIS2 organisation units",
+            license="BSD-3-Clause",
+            attribution="DHIS2 demo database, via the Open Climate Service test data",
+            selectable_columns=("level", "name", "parentName"),
+        ),
+        VectorDemo(
+            dataset_identifier="sle-adm2-geoboundaries",
+            path=str(download_directory / "geoboundaries-sle-adm2.geojson"),
+            identifier_property="shapeID",
+            title="Sierra Leone ADM2 areas, geoBoundaries",
+            license="CC-BY-4.0",
+            attribution="geoBoundaries, William and Mary geoLab",
+            selectable_columns=("shapeName", "shapeGroup", "shapeType"),
+        ),
+        VectorDemo(
+            dataset_identifier="ne-lakes",
+            path=str(sample_directory / "ne_110m_lakes.geojson"),
+            identifier_property="id",
+            title="Natural Earth lakes at 1:110m",
+            license="CC0-1.0",
+            attribution="Natural Earth",
+            selectable_columns=("name", "featureclass"),
+            # Left unpublished on purpose, so the demo also shows a draft: STAC does not advertise it.
+            publish=False,
+        ),
+    )
 
 
 def ingest_raster_demo(service: StorageService, demo: RasterDemo) -> DemoOutcome:
@@ -159,6 +171,40 @@ def ingest_vector_demo(service: StorageService, demo: VectorDemo) -> DemoOutcome
     return DemoOutcome(demo.dataset_identifier, "collection", detail, published=result.published)
 
 
+def run_demos(service: StorageService, *, sample_directory: Path) -> list[DemoOutcome]:
+    """Ingest every demo dataset into the service, one outcome per dataset, a failure included as one."""
+    outcomes: list[DemoOutcome] = []
+    for raster_demo in raster_demos(sample_directory):
+        try:
+            outcome = ingest_raster_demo(service, raster_demo)
+        except StorageError as error:
+            outcome = failed_outcome(raster_demo.dataset_identifier, "coverage", error)
+        outcomes.append(outcome)
+        print(f"[{'failed' if outcome.failed else 'done'}] {outcome.dataset_identifier}")
+    for vector_demo in vector_demos(sample_directory):
+        try:
+            outcome = ingest_vector_demo(service, vector_demo)
+        except StorageError as error:
+            outcome = failed_outcome(vector_demo.dataset_identifier, "collection", error)
+        outcomes.append(outcome)
+        print(f"[{'failed' if outcome.failed else 'done'}] {outcome.dataset_identifier}")
+    return outcomes
+
+
+def failed_outcome(dataset_identifier: str, kind: str, error: StorageError) -> DemoOutcome:
+    """Report a dataset the storage layer refused, so the run finishes the rest and still exits non-zero."""
+    return DemoOutcome(dataset_identifier, kind, f"{type(error).__name__}: {error.message}", failed=True)
+
+
+def outcome_state(outcome: DemoOutcome) -> str:
+    """Name the state one outcome is in, for the progress line and the summary table."""
+    if outcome.failed:
+        return "failed"
+    if outcome.skipped:
+        return "skipped"
+    return "published" if outcome.published else "draft"
+
+
 def missing_inputs(patterns: Sequence[str]) -> str:
     """Report the sample inputs a pattern names that are not on disk, as a message or an empty string."""
     for pattern in patterns:
@@ -194,33 +240,27 @@ def print_summary(outcomes: Sequence[DemoOutcome], *, settings: Settings) -> Non
     print(f"{'dataset':<{width}}  {'kind':<10}  {'state':<9}  detail")
     print(f"{'-' * width}  {'-' * 10}  {'-' * 9}  {'-' * 52}")
     for outcome in outcomes:
-        state = "skipped" if outcome.skipped else ("published" if outcome.published else "draft")
-        print(f"{outcome.dataset_identifier:<{width}}  {outcome.kind:<10}  {state:<9}  {outcome.detail}")
+        print(
+            f"{outcome.dataset_identifier:<{width}}  {outcome.kind:<10}  {outcome_state(outcome):<9}  {outcome.detail}"
+        )
     print()
-    print(f">>> Start the service with `make run`, then open these against {SERVICE_URL}")
+    print(f">>> Open these against the running service, {SERVICE_URL} after `make run`")
     for url in example_urls():
         print(f"  {url}")
     print()
 
 
 def main() -> int:
-    """Ingest every sample into the configured backend and print the summary."""
+    """Ingest every sample into the configured backend, print the summary and report any failure."""
     settings = Settings()
     print(f">>> Backend {settings.backend}, ingest roots {[str(root) for root in settings.ingest_roots]}")
     service = StorageService.from_settings(settings)
-    outcomes: list[DemoOutcome] = []
-    try:
-        for raster_demo in RASTER_DEMOS:
-            outcomes.append(ingest_raster_demo(service, raster_demo))
-            print(f"[done] {raster_demo.dataset_identifier}")
-        for vector_demo in VECTOR_DEMOS:
-            outcomes.append(ingest_vector_demo(service, vector_demo))
-            print(f"[done] {vector_demo.dataset_identifier}")
-    except StorageError as error:
-        print(f"ERROR: {type(error).__name__}: {error.message}", file=sys.stderr)
-        return 1
+    outcomes = run_demos(service, sample_directory=default_sample_directory())
     print_summary(outcomes, settings=settings)
-    return 0
+    failures = [outcome for outcome in outcomes if outcome.failed]
+    for failure in failures:
+        print(f"ERROR: {failure.dataset_identifier}: {failure.detail}", file=sys.stderr)
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

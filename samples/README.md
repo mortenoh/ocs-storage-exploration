@@ -31,4 +31,7 @@ kilobytes. The script is idempotent: it skips a day that is already on disk.
 
 - `make samples` fetches what is missing, online, once.
 - `make demo` ingests all of it into the configured backend, offline.
+- `make docker-run-file` and `make docker-run-s3` run the same ingest as a
+  one-shot seed container, with this directory bind mounted read-only, so the
+  service comes up with all five datasets in it.
 - [The real data guide](../docs/guides/real-data.md) explains what to look at afterwards.

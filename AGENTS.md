@@ -76,6 +76,7 @@ src/ocs_storage_exploration/
   main.py             FastAPI application factory and the StorageError handler
   settings.py         Settings and ObjectStorageSettings, read from OCS_STORAGE_ variables
   __main__.py         uvicorn entry point
+  demo.py             the sample ingest behind `make demo` and the compose seed containers
   api/                routers, dependencies, query parameters and wire schemas
   storage/
     addresses.py      StorageScheme and StorageAddress
@@ -95,7 +96,7 @@ src/ocs_storage_exploration/
     vector/           GeoParquet engine, including ingest.py for real files
     paths.py          ingest path and glob resolution, bounded by Settings.ingest_roots
 tests/                pytest suite, parametrised over the filesystem, memory and s3 backends
-scripts/              fetch_samples.py (make samples) and demo.py (make demo)
+scripts/              fetch_samples.py (make samples)
 samples/              real sample files in git; samples/downloaded/ is fetched and gitignored
 docs/                 mkdocs sources
 examples/plugins/     external plugin packages, deliberately not installed
@@ -127,6 +128,10 @@ examples/plugins/     external plugin packages, deliberately not installed
   run `docker compose up` in the foreground under a `trap ... EXIT` that runs
   `docker compose down`, so Ctrl-C stops and removes the containers and the
   network. Check with `docker ps -a` after a run: it must be empty.
+- Both compose profiles carry a one-shot seed container that runs the demo before
+  the API starts, so the stack answers with the five sample datasets already in it.
+  The flag is `--abort-on-container-failure`: `--abort-on-container-exit` reads the
+  seed's successful exit as a reason to stop the whole stack.
 - Tests that need the files `make samples` downloads are marked `samples` and
   skip themselves when those files are absent, so `make test` is green either way.
 - obstore and Icechunk talk to S3 through Rust, bypassing botocore, so moto and

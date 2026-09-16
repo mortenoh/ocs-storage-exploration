@@ -10,6 +10,10 @@ Generated reference for the application, its settings and the storage package.
 
 ::: ocs_storage_exploration.settings
 
+## Demo ingest
+
+::: ocs_storage_exploration.demo
+
 ## Storage addresses
 
 ::: ocs_storage_exploration.storage.addresses

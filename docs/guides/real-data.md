@@ -39,14 +39,38 @@ megabyte. The script is idempotent: a day already on disk is skipped, so
 make demo
 ```
 
-`scripts/demo.py` ingests all five in process, against whatever backend
-`OCS_STORAGE_BACKEND` names, and needs no running server. It publishes four of
-them and leaves `ne-lakes` a draft, which is why `GET /stac/collections` lists
-four: STAC advertises only what is published.
+`ocs_storage_exploration/demo.py` ingests all five in process, against whatever
+backend `OCS_STORAGE_BACKEND` names, and needs no running server. It publishes
+four of them and leaves `ne-lakes` a draft, which is why `GET /stac/collections`
+lists four: STAC advertises only what is published.
+
+A dataset the storage layer refuses makes the run exit non-zero, and the summary
+line says which one and why. A sample that was never downloaded is not a
+refusal: `make samples` is optional, so the two datasets under
+`samples/downloaded/` are reported as skipped and the three committed ones are
+ingested anyway.
+
+## The seeded Docker stacks
+
+The same code is what fills the two compose profiles, as a one-shot `seed`
+container the API waits for:
+
+```bash
+make docker-run-file    # seeds ./data, API on http://127.0.0.1:8000
+make docker-run-s3      # seeds the bucket, API on http://127.0.0.1:8001
+```
+
+Both run in the foreground and Ctrl-C stops and removes everything. The seed is
+idempotent in the set of datasets rather than in the number of versions: a
+second run overwrites each coverage under the same identifier and writes the
+next version of each collection, publishing it.
+[The offline quickstart](offline-quickstart.md#both-stacks-in-one-command) has
+the details and the rustfs console URL.
 
 ## What to look at afterwards
 
-Start the service with `make run`, then:
+Start the service with `make run`, or `make docker-run-file` for the seeded
+stack on the same port, then:
 
 ```bash
 # 14 days of rainfall summarised over a box inside the country

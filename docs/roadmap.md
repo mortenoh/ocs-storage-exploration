@@ -180,6 +180,31 @@ that was red before the fix:
   rustfs lifecycle in `make test-s3` installs its cleanup trap before starting
   the container, and the S3 job in CI is required.
 
+**Pass 9: seeded demo stacks and an end-to-end demo test.** The two compose
+profiles now come up with data in them. Each carries a one-shot seed container
+running the same demo as `make demo`, from the same image as the API and with
+`./samples` bind mounted read-only, and the API depends on it with
+`condition: service_completed_successfully`, so the first request to
+`/api/v1/datasets` lists five datasets rather than nothing. The data outlives
+the containers, in `./data` and in `./.rustfs`, and a second run overwrites each
+coverage under the same identifier and writes the next version of each
+collection: the seed is idempotent in the set of datasets rather than in the
+number of versions. The demo moved from
+`scripts/demo.py` into `ocs_storage_exploration.demo` with an
+`ocs-storage-exploration-demo` entry point, which is what makes the same code
+reachable from the image, from `make demo` and from the tests. It reports a
+refused dataset as a failed outcome and exits non-zero, which aborts the stack
+instead of bringing up an API with half a catalog, while a sample `make samples`
+never downloaded only skips. The run targets moved to
+`--abort-on-container-failure`, because `--abort-on-container-exit` reads the
+seed's successful exit as a reason to stop everything and races the API its
+completion just released. `tests/test_demo_end_to_end.py` drives the demo's own
+functions over the filesystem, memory and S3 backends and then asserts the API:
+the listing and its publication states, a WorldPop window, a `where` clause on a
+column the demo declares, a re-seeded collection rolled back to version 1, the
+published-only STAC listing with its table row count, and the relative storage
+keys in the records.
+
 ## Next
 
 1. **Fetching as well as reading.** The ingest reads what is already on the

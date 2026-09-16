@@ -28,13 +28,15 @@ $ make offline
 >>> Building the service image
  Image ocs-storage-exploration-api Built
  Image ocs-storage-exploration-api-s3 Built
+ Image ocs-storage-exploration-seed Built
+ Image ocs-storage-exploration-seed-s3 Built
 >>> Pulling the rustfs image
 >>> Warming the DuckDB extensions
 
 >>> Ready for offline use. Cached on this machine:
     - the virtual environment in .venv (uv sync --all-extras)
     - the sample files in samples/ and samples/downloaded/
-    - the service images for the file and s3 compose profiles
+    - the service and seed images for the file and s3 compose profiles
     - the rustfs image compose.yml pins
     - the DuckDB spatial and httpfs extensions in ~/.duckdb
     Next, offline: make demo, make run, make test, make docs
@@ -194,9 +196,59 @@ duckdb.sql(\"SELECT name, level FROM read_parquet('data/ocs/vector/sle-districts
 make test
 ```
 
-813 passed, 4 skipped. The tests marked `samples` use the CHIRPS files
+922 passed, 4 skipped. The tests marked `samples` use the CHIRPS files
 `make samples` downloaded and skip themselves when those are absent, so the
 suite is green either way.
+
+### Both stacks in one command
+
+`make demo` and `make run` are two steps because the demo is the interesting
+part. Docker does both at once, and each compose profile seeds itself:
+
+```bash
+make docker-run-file    # API on http://127.0.0.1:8000, datasets in ./data
+make docker-run-s3      # API on http://127.0.0.1:8001, datasets in the bucket
+```
+
+Each profile carries a one-shot `seed` container running the same demo as `make
+demo`, from the same image as the API, with `./samples` bind mounted read-only
+because the image copies `src/` only. The API waits for it to finish
+(`depends_on: condition: service_completed_successfully`), so the first request
+already sees five datasets:
+
+```console
+$ curl -s http://127.0.0.1:8001/api/v1/datasets | jq -r '.items[].dataset_identifier'
+chirps3-sle-daily
+ne-lakes
+sle-adm2-geoboundaries
+sle-districts
+worldpop-sle-2026
+
+$ curl -s http://127.0.0.1:8001/health
+{"status":"ok","version":"0.1.0","backend":"s3"}
+```
+
+`make docker-run-s3` runs rustfs alongside them. Its console is at
+<http://127.0.0.1:9001/rustfs/console/> (rustfsadmin / rustfsadmin), showing the
+seeded `ocs/catalog`, `ocs/raster` and `ocs/vector` prefixes in the bucket; the
+port root itself answers 403, because 9001 is the console rather than the API.
+Ctrl-C stops and removes everything in either stack, and `docker ps -a` is empty
+afterwards.
+
+The seed is idempotent in the set of datasets, not in the number of versions.
+The data outlives the containers, in `./data` and in `./.rustfs`, and a second
+run overwrites each coverage under the same identifier and writes the next
+version of each collection, publishing it. Five datasets either way, and
+`/api/v1/vector/sle-districts/features` answers `"version": 2` the second time.
+That is the vector model working rather than a wart: going back is a publish of
+the older version, `curl -X POST .../publish -d '{"version": 1}'`. To start from
+nothing, remove `./data` or `./.rustfs` before the run.
+
+A dataset the storage layer refuses makes the seed exit non-zero, which aborts
+the stack rather than leaving an API up with half a catalog behind it. A sample
+that was never downloaded is not a refusal: `make samples` is optional, so
+`chirps3-sle-daily` and `sle-adm2-geoboundaries` are reported as skipped and the
+three committed ones are seeded anyway.
 
 ### The S3 variant
 
@@ -209,9 +261,9 @@ docker compose down rustfs   # removes the stopped container and the network
 ```
 
 The first runs rustfs in the foreground on <http://127.0.0.1:9000>, with its
-console on <http://127.0.0.1:9001>. Ctrl-C stops the container but leaves it
-stopped rather than removed, which is what the second line is for: run it once
-you are finished and `docker ps -a` is empty again. The service has to be named
+console on <http://127.0.0.1:9001/rustfs/console/>. Ctrl-C stops the container
+but leaves it stopped rather than removed, which is what the second line is for:
+run it once you are finished and `docker ps -a` is empty again. The service has to be named
 on both lines, because `compose.yml` puts rustfs behind a profile and a bare
 `docker compose down` would not touch it. In another terminal, while rustfs is
 up:
@@ -241,10 +293,10 @@ prefixes appearing as objects.
 make test-s3
 ```
 
-Alternatively `make docker-run-s3` runs the service and rustfs together in one
-foreground stack on <http://127.0.0.1:8001>; Ctrl-C stops and removes both.
-That one binds the API itself, so it is not the way to point a local `make
-demo` at rustfs; `docker compose up rustfs` is.
+`make docker-run-s3` is the packaged version of everything above: rustfs, the
+seed and the service in one foreground stack. It binds the API itself, so it is
+not the way to point a local `make demo` at rustfs; `docker compose up rustfs`
+is.
 
 ### Who owns `./data` under Docker
 

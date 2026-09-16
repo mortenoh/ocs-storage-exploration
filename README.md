@@ -64,8 +64,8 @@ an `OCS_STORAGE_` environment variable, and nested object storage settings use a
 | `make docs-build` | Build the documentation site in strict mode |
 | `make docker-build` | Build the service image for both compose profiles |
 | `make docker-run` | Alias for `make docker-run-file` |
-| `make docker-run-file` | Run the service on the filesystem backend on port 8000, in the foreground; Ctrl-C stops and removes it |
-| `make docker-run-s3` | Run the service on the S3 backend with rustfs on port 8001, in the foreground; Ctrl-C stops and removes it |
+| `make docker-run-file` | Seed `./data` and run the service on the filesystem backend on port 8000, in the foreground; Ctrl-C stops and removes it |
+| `make docker-run-s3` | Seed the bucket and run the service on the S3 backend with rustfs on port 8001, in the foreground; Ctrl-C stops and removes it |
 | `make clean` | Remove caches and build output |
 
 No target leaves anything running. `make docker-run-file` and `make docker-run-s3`
@@ -82,6 +82,22 @@ make docker-run-file    # http://127.0.0.1:8000, data in ./data
 make docker-run-s3      # http://127.0.0.1:8001, data in rustfs on http://127.0.0.1:9000
 ```
 
+Both stacks come up seeded: each profile has a one-shot `seed` container that
+runs the same demo as `make demo` from the same image as the API, with
+`./samples` bind mounted read-only, and the API waits for it to exit
+successfully. The first `GET /api/v1/datasets` therefore lists the five sample
+datasets rather than nothing. `make docker-run-s3` also serves the rustfs
+console on <http://127.0.0.1:9001/rustfs/console/> (rustfsadmin / rustfsadmin),
+which shows the seeded `ocs/catalog`, `ocs/raster` and `ocs/vector` prefixes.
+
+The seed is idempotent in the set of datasets rather than in the number of
+versions: the data outlives the containers, in `./data` and in `./.rustfs`, so a
+second run overwrites each coverage under the same identifier and writes the
+next version of each collection, publishing it. Remove `./data` or `./.rustfs`
+to start from nothing. A dataset the storage layer refuses makes the seed exit
+non-zero and the stack aborts; a sample `make samples` never downloaded only
+skips.
+
 The image is built from `Dockerfile` with `uv sync --frozen --no-dev` and runs
 as a non-root user. `compose.yml` has two profiles: `file` runs the service on
 the filesystem backend with `./data` bind-mounted, and `s3` runs the same image
@@ -90,7 +106,7 @@ host ports so they never collide.
 
 Because `./data` is bind-mounted and a bind mount keeps the host's ownership on
 Linux, `make docker-run-file` creates the directory and passes `OCS_UID` and
-`OCS_GID` to compose, which the `api` service reads as
+`OCS_GID` to compose, which the `api` and `seed` services read as
 `user: "${OCS_UID:-999}:${OCS_GID:-999}"`. A bare `docker compose --profile file
 up` still runs as the uid the image builds.
 
@@ -99,7 +115,8 @@ up` still runs as the uid the image builds.
 `samples/` holds three small real files (DHIS2 organisation units, Natural Earth
 lakes, a WorldPop population grid) and `make samples` downloads two more (14 days
 of CHIRPS v3.0 rainfall clipped to Sierra Leone, and the geoBoundaries ADM2
-areas). `make demo` ingests all five, and
+areas). `make demo` ingests all five, the two Docker stacks seed themselves with
+the same code, and
 [the real data guide](docs/guides/real-data.md) explains what they are, what the
 ingest does to them and how to point the two ingest endpoints at your own files.
 
