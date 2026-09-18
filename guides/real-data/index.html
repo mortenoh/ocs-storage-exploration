@@ -1,0 +1,1877 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Prototype of a unified raster and vector storage abstraction for the Open Climate Service">
+      
+      
+      
+        <link rel="canonical" href="https://mortenoh.github.io/ocs-storage-exploration/guides/real-data/">
+      
+      
+        <link rel="prev" href="../offline-quickstart/">
+      
+      
+        <link rel="next" href="../inspecting-the-data/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Real data - OCS storage exploration</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="blue" data-md-color-accent="blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#real-data" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="OCS storage exploration" class="md-header__button md-logo" aria-label="OCS storage exploration" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            OCS storage exploration
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Real data
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="blue" data-md-color-accent="blue"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="blue" data-md-color-accent="blue"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/mortenoh/ocs-storage-exploration" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mortenoh/ocs-storage-exploration
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="OCS storage exploration" class="md-nav__button md-logo" aria-label="OCS storage exploration" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    OCS storage exploration
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mortenoh/ocs-storage-exploration" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mortenoh/ocs-storage-exploration
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../findings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Findings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/problem-statement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Problem statement
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/ocs-storage-today/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCS storage today
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/icechunk-backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Icechunk backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/geoparquet/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GeoParquet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/obstore-vs-fsspec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    obstore versus fsspec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/unified-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Unified model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/publication-without-rename/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Publication without rename
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/testing-s3-locally/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing S3 locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Versioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/pluginkit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plugin framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/backends-and-layout/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Backends and key layout
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/stac-catalog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STAC catalog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../offline-quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Offline quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Real data
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Real data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-samples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The samples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The samples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-the-chirps-download-is-small" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why the CHIRPS download is small
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#make-demo" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        make demo
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-seeded-docker-stacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The seeded Docker stacks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-to-look-at-afterwards" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What to look at afterwards
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-normalisation-does-to-a-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What normalisation does to a file
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#formats-and-the-readers-behind-them" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Formats and the readers behind them
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bring-your-own-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bring your own data
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Bring your own data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1rasteridingest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/raster/{id}/ingest
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1vectoridingest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/vector/{id}/ingest
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#path-safety" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Path safety
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-this-does-not-do-yet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What this does not do yet
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../inspecting-the-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Inspecting the data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-walkthrough/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API walkthrough
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-samples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The samples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The samples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-the-chirps-download-is-small" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why the CHIRPS download is small
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#make-demo" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        make demo
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-seeded-docker-stacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The seeded Docker stacks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-to-look-at-afterwards" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What to look at afterwards
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-normalisation-does-to-a-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What normalisation does to a file
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#formats-and-the-readers-behind-them" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Formats and the readers behind them
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bring-your-own-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bring your own data
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Bring your own data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1rasteridingest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/raster/{id}/ingest
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1vectoridingest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/vector/{id}/ingest
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#path-safety" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Path safety
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-this-does-not-do-yet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What this does not do yet
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="real-data">Real data<a class="headerlink" href="#real-data" title="Permanent link">&para;</a></h1>
+<p>The rest of this repository is exercised by synthetic cubes and hand-written
+feature collections, which prove the model but not that it survives a file
+somebody else produced. This page is the other half: five real datasets, two
+ingest endpoints and what to look at once they are stored.</p>
+<p>If you only want the commands, <a href="../offline-quickstart/">the offline quickstart</a>
+is the copy-paste version. This page explains what the files are and how the
+ingest treats them.</p>
+<h2 id="the-samples">The samples<a class="headerlink" href="#the-samples" title="Permanent link">&para;</a></h2>
+<p>Three files are committed under <code>samples/</code>, and two more are downloaded by
+<code>make samples</code> into <code>samples/downloaded/</code>, which is gitignored.</p>
+<table>
+<thead>
+<tr>
+<th>Dataset</th>
+<th>File</th>
+<th>What it is</th>
+<th>Licence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>chirps3-sle-daily</code></td>
+<td><code>downloaded/chirps3/chirps3-2024-01-*.tif</code></td>
+<td>14 days of CHIRPS v3.0 final daily rainfall clipped to Sierra Leone, 63 by 69 cells in EPSG:4326, nodata -9999</td>
+<td>Public domain, CC0-1.0 in catalogues. Cite the Climate Hazards Center, UC Santa Barbara</td>
+</tr>
+<tr>
+<td><code>worldpop-sle-2026</code></td>
+<td><code>sle_pop_2026_CN_1km_R2025A_UA_v1.tif</code></td>
+<td>WorldPop constrained population for 2026, 370 by 364 cells at 1 km in EPSG:4326, nodata -99999</td>
+<td>CC BY 4.0, WorldPop, University of Southampton</td>
+</tr>
+<tr>
+<td><code>sle-districts</code></td>
+<td><code>sierra_leone_districts.geojson</code></td>
+<td>13 DHIS2 organisation units with <code>id</code>, <code>name</code>, <code>level</code> and <code>parentName</code></td>
+<td>BSD-3-Clause, from the Open Climate Service test data</td>
+</tr>
+<tr>
+<td><code>sle-adm2-geoboundaries</code></td>
+<td><code>downloaded/geoboundaries-sle-adm2.geojson</code></td>
+<td>14 Sierra Leone ADM2 areas with <code>shapeID</code>, <code>shapeName</code>, <code>shapeGroup</code> and <code>shapeType</code></td>
+<td>CC BY 4.0, geoBoundaries</td>
+</tr>
+<tr>
+<td><code>ne-lakes</code></td>
+<td><code>ne_110m_lakes.geojson</code></td>
+<td>25 lakes at 1:110m with <code>id</code>, <code>name</code> and <code>featureclass</code></td>
+<td>Public domain, Natural Earth</td>
+</tr>
+</tbody>
+</table>
+<p><code>samples/README.md</code> has the same table with the exact provenance of each file.</p>
+<h3 id="why-the-chirps-download-is-small">Why the CHIRPS download is small<a class="headerlink" href="#why-the-chirps-download-is-small" title="Permanent link">&para;</a></h3>
+<p>One global CHIRPS day is about 30 MB. <code>scripts/fetch_samples.py</code> opens the file
+over HTTPS as a cloud optimised GeoTIFF and calls <code>rio.clip_box</code> on it, so GDAL
+issues HTTP range requests for the tiles covering Sierra Leone and nothing else
+travels. Each file written is a few kilobytes, and the whole fetch is under a
+megabyte. The script is idempotent: a day already on disk is skipped, so
+<code>make samples</code> is safe to run again.</p>
+<h2 id="make-demo"><code>make demo</code><a class="headerlink" href="#make-demo" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>make<span class="w"> </span>demo
+</code></pre></div>
+<p><code>ocs_storage_exploration/demo.py</code> ingests all five in process, against whatever
+backend <code>OCS_STORAGE_BACKEND</code> names, and needs no running server. It publishes
+four of them and leaves <code>ne-lakes</code> a draft, which is why <code>GET /stac/collections</code>
+lists four: STAC advertises only what is published.</p>
+<p>A dataset the storage layer refuses makes the run exit non-zero, and the summary
+line says which one and why. A sample that was never downloaded is not a
+refusal: <code>make samples</code> is optional, so the two datasets under
+<code>samples/downloaded/</code> are reported as skipped and the three committed ones are
+ingested anyway.</p>
+<h2 id="the-seeded-docker-stacks">The seeded Docker stacks<a class="headerlink" href="#the-seeded-docker-stacks" title="Permanent link">&para;</a></h2>
+<p>The same code is what fills the two compose profiles, as a one-shot <code>seed</code>
+container the API waits for:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>make<span class="w"> </span>docker-run-file<span class="w">    </span><span class="c1"># seeds ./data, API on http://127.0.0.1:8000</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>make<span class="w"> </span>docker-run-s3<span class="w">      </span><span class="c1"># seeds the bucket, API on http://127.0.0.1:8001</span>
+</code></pre></div>
+<p>Both run in the foreground and Ctrl-C stops and removes everything. The seed is
+idempotent in the set of datasets rather than in the number of versions: a
+second run overwrites each coverage under the same identifier and writes the
+next version of each collection, publishing it.
+<a href="../offline-quickstart/#both-stacks-in-one-command">The offline quickstart</a> has
+the details and the rustfs console URL.</p>
+<h2 id="what-to-look-at-afterwards">What to look at afterwards<a class="headerlink" href="#what-to-look-at-afterwards" title="Permanent link">&para;</a></h2>
+<p>Start the service with <code>make run</code>, or <code>make docker-run-file</code> for the seeded
+stack on the same port, then:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># 14 days of rainfall summarised over a box inside the country</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s1">'http://127.0.0.1:8000/api/v1/raster/chirps3-sle-daily/query?bbox=-13.3,7.9,-12.0,9.0'</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># the first week only</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s1">'http://127.0.0.1:8000/api/v1/raster/chirps3-sle-daily/query?start=2024-01-01T00:00:00&amp;end=2024-01-07T00:00:00'</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="c1"># every snapshot the ingest left behind: one create and thirteen appends</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:8000/api/v1/raster/chirps3-sle-daily/versions
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="c1"># districts by envelope, and by attribute with two columns</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s1">'http://127.0.0.1:8000/api/v1/vector/sle-districts/features?bbox=-13.3,7.9,-12.0,9.0'</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s1">'http://127.0.0.1:8000/api/v1/vector/sle-districts/features?where=level:2&amp;columns=name,level'</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="c1"># the same records as a STAC catalog</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:8000/stac/collections
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:8000/stac/collections/chirps3-sle-daily
+</code></pre></div>
+<p>The CHIRPS collection carries the datacube extension with the real extents the
+files had, and <code>worldpop-sle-2026</code> has a temporal extent of exactly one instant
+because a static raster still gets a <code>t</code> axis, from the request rather than
+from the file.</p>
+<p>On disk, <code>data/ocs/raster/chirps3-sle-daily/{generation}/</code> is one Icechunk
+repository with
+fourteen commits on <code>main</code> and a <code>published</code> branch pointing at the last of
+them, and
+<code>data/ocs/vector/sle-districts/{generation}/versions/v00001/data.parquet</code> is an
+ordinary GeoParquet file, where <code>{generation}</code> is the storage generation the
+collection was created into. <a href="../inspecting-the-data/">Inspecting the data</a> opens
+both with Icechunk, xarray, geopandas, pyarrow and DuckDB; every path in it is
+real once <code>make demo</code> has run.</p>
+<h2 id="what-normalisation-does-to-a-file">What normalisation does to a file<a class="headerlink" href="#what-normalisation-does-to-a-file" title="Permanent link">&para;</a></h2>
+<p><code>storage/raster/ingest.py</code> mirrors the rules the Open Climate Service applies to
+a fetched period, so a file that works there works here.</p>
+<p>Before any of the rules below, the file is read through a decoding reader:
+GeoTIFF and COG are opened with <code>mask_and_scale=True</code>, and NetCDF and Zarr
+decode CF attributes by default. A source that stores raw integers next to a
+scale factor and an offset is therefore read in the units it declares, so a cell
+holding 100 in a file with a scale of 0.1 and an offset of 5 arrives as 15.0.
+That is also the one change of dtype ingest makes: a scaled integer source
+becomes a floating point array, because the decoded values do not fit the
+integer type the file used.</p>
+<p>Then, in order, because the order matters:</p>
+<ol>
+<li>Two dimensional <code>lon</code> and <code>lat</code> helper coordinates are dropped: they are not
+   the spatial axes and they confuse both the rename below and rioxarray.</li>
+<li><code>x</code>, <code>X</code>, <code>lon</code> and <code>longitude</code> become <code>x</code>; <code>y</code>, <code>Y</code>, <code>lat</code> and <code>latitude</code>
+   become <code>y</code>; <code>time</code>, <code>valid_time</code>, <code>date</code> and <code>time_counter</code> become <code>t</code>.</li>
+<li>The raster is clipped, if the request named a bounding box.</li>
+<li>A <code>band</code> axis of one band is squeezed away; more than one band is refused,
+   because ingest writes one variable.</li>
+<li>The projection is resolved from the data, from <code>proj:code</code> or the CF grid
+   mapping, defaulting to EPSG:4326 only when the coordinates can be degrees.
+   This has to happen before the two steps below: whether the x axis is a
+   longitude decides whether rolling it is correct or destructive, and an
+   easting of 500000 rolled as a longitude becomes -40.</li>
+<li>A geographic x axis beyond 180 is rolled onto -180 to 180 and sorted.</li>
+<li><code>y</code> is reversed if it ascends, together with its rows, so row 0 is the
+   northernmost row. Consumers assume this and never check.</li>
+<li>The nodata sentinel is masked to NaN and kept as a finite <code>nodata</code> attribute,
+   so a reader can still tell an absent cell from an unrepresentable one. The
+   sentinel is recorded in the same units as the values around it: a file that
+   declares -1 with a scale of 0.1 and an offset of 5 records 4.9, not -1, so
+   the attribute and the array never disagree about what an absent cell meant.</li>
+<li>A raster with no time axis gets the single timestep the request names.</li>
+<li>The variable is transposed onto <code>(t, y, x)</code>, the CF encoding is dropped, and
+    any attribute that is not a finite JSON value is dropped, because Icechunk
+    refuses them.</li>
+</ol>
+<p>The <code>GridSpecification</code> is then derived from the normalised data itself: its
+shape, its cell centres grown by half a cell into a bounding box, its dtype, its
+nodata value and its projection. Nothing about the grid is taken from the
+request, so an ingest cannot declare a grid the file does not have. An axis that
+is not regular, or that holds a single cell, is refused rather than guessed at.</p>
+<h2 id="formats-and-the-readers-behind-them">Formats and the readers behind them<a class="headerlink" href="#formats-and-the-readers-behind-them" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Suffixes</th>
+<th>Reader</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GeoTIFF and COG</td>
+<td><code>.tif</code>, <code>.tiff</code>, <code>.cog</code>, <code>.gtiff</code></td>
+<td>rioxarray on rasterio, with <code>mask_and_scale=True</code></td>
+</tr>
+<tr>
+<td>NetCDF</td>
+<td><code>.nc</code>, <code>.nc4</code>, <code>.cdf</code>, <code>.netcdf</code></td>
+<td>xarray on <code>h5netcdf</code>, pinned by name</td>
+</tr>
+<tr>
+<td>Zarr</td>
+<td><code>.zarr</code></td>
+<td>xarray on zarr</td>
+</tr>
+</tbody>
+</table>
+<p>Two of those need a word.</p>
+<p><strong>NetCDF needs an engine.</strong> xarray ships no NetCDF reader of its own, so this
+project depends on <code>h5netcdf[h5py]</code> and names it explicitly rather than letting
+xarray guess: a guess in a deployment that has none raises a bare <code>ValueError</code>
+that reaches the client as a 500. A deployment built without the engine answers
+501 and says which engine is missing, and a file that is malformed rather than
+unreadable answers 422.</p>
+<p><strong>A Zarr store is a directory, not a file.</strong> <code>samples/cube.zarr</code> is a directory
+of chunks and metadata, which the path resolver accepts because <code>.zarr</code> is a
+directory store rather than because directories are allowed; any other directory
+is still refused. A literal path and a glob both work, so
+<code>{"files": ["samples/*.zarr"]}</code> resolves the stores under <code>samples/</code>.</p>
+<p>Note: a scaled integer source ingested before the decoding reader landed was
+stored in raw counts, with a sentinel to match. Re-ingest it with
+<code>"overwrite": true</code> to replace it; there is no in-place fix-up, because the raw
+values and the decoded ones are different data.</p>
+<h2 id="bring-your-own-data">Bring your own data<a class="headerlink" href="#bring-your-own-data" title="Permanent link">&para;</a></h2>
+<p>Two endpoints take a local path. Both refuse a path outside the configured
+ingest roots, which default to <code>samples/</code> and the data directory and are set
+with <code>OCS_STORAGE_INGEST_ROOTS</code>.</p>
+<h3 id="post-apiv1rasteridingest"><code>POST /api/v1/raster/{id}/ingest</code><a class="headerlink" href="#post-apiv1rasteridingest" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://127.0.0.1:8000/api/v1/raster/my-rainfall/ingest<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="s1">    "files": ["samples/downloaded/chirps3/chirps3-*.tif"],</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="s1">    "variable": "precipitation",</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="s1">    "timestamps": "from-filename",</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="s1">    "filename_date_pattern": "(\\d{4}-\\d{2}-\\d{2})",</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="s1">    "title": "CHIRPS v3.0 daily rainfall",</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="s1">    "license": "CC0-1.0",</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="s1">    "attribution": "Climate Hazards Center, UC Santa Barbara",</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="s1">    "publish": true</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="s1">  }'</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>files</code></td>
+<td>Paths or globs, resolved against the working directory and refused outside the ingest roots, a glob before it is expanded. GeoTIFF, COG, NetCDF and Zarr; a <code>.zarr</code> store is a directory and resolves as one</td>
+</tr>
+<tr>
+<td><code>variable</code></td>
+<td>The name the variable is written under, whatever the file called it, except <code>spatial_ref</code>, <code>t</code>, <code>y</code> and <code>x</code>, which the coverage's own coordinates take</td>
+</tr>
+<tr>
+<td><code>timestamps</code></td>
+<td><code>"from-filename"</code> (the default), or an explicit list of ISO timestamps, one per resolved file</td>
+</tr>
+<tr>
+<td><code>timestamp</code></td>
+<td>One ISO timestamp instead, for a single static file such as a population grid</td>
+</tr>
+<tr>
+<td><code>filename_date_pattern</code></td>
+<td>The regular expression read off each file name, <code>(\d{4}-\d{2}-\d{2})</code> by default. Several capture groups are joined with <code>-</code>, so <code>(\d{4})\.(\d{2})\.(\d{2})</code> reads <code>chirps.2024.01.07.cog</code></td>
+</tr>
+<tr>
+<td><code>bbox</code></td>
+<td>Optional clip, in EPSG:4326, reprojected onto the source grid</td>
+</tr>
+<tr>
+<td><code>title</code>, <code>license</code>, <code>attribution</code></td>
+<td>Recorded on the catalog record and carried into STAC</td>
+</tr>
+<tr>
+<td><code>overwrite</code></td>
+<td>Replace an existing coverage rather than refusing with 409</td>
+</tr>
+<tr>
+<td><code>publish</code></td>
+<td>Move the published branch onto the snapshot the ingest ends at</td>
+</tr>
+</tbody>
+</table>
+<p>The files are sorted by timestamp, the first one creates the coverage and the
+rest are appended in order, through the same <code>create</code> and <code>append</code> the synthetic
+endpoints use, so the cube size guard, the coordinate check and the variable
+check all apply. Each source file is measured against the guard on its own as
+well, after the bounding box has clipped it and before a cell is read, so a file
+whose cube would hold more than <code>OCS_STORAGE_MAX_CUBE_CELLS</code> cells is refused
+with 413 naming that file rather than after it is in memory. The response is the
+usual <code>RasterWriteResult</code> plus the files read and the timestamps they carried:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">{</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">"dataset_identifier"</span><span class="p">:</span><span class="w"> </span><span class="s2">"my-rainfall"</span><span class="p">,</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">"snapshot_identifier"</span><span class="p">:</span><span class="w"> </span><span class="s2">"43RVK929J5Z5SJVF4F6G"</span><span class="p">,</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span><span class="nt">"timestep_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">14</span><span class="p">,</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span><span class="nt">"variables"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"precipitation"</span><span class="p">],</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">  </span><span class="nt">"published"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">  </span><span class="nt">"files"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"samples/downloaded/chirps3/chirps3-2024-01-01.tif"</span><span class="p">,</span><span class="w"> </span><span class="s2">"..."</span><span class="p">],</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">  </span><span class="nt">"timestamps"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"2024-01-01T00:00:00"</span><span class="p">,</span><span class="w"> </span><span class="s2">"..."</span><span class="p">]</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="p">}</span>
+</code></pre></div>
+<p>A static raster is the same call with <code>timestamp</code> instead:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://127.0.0.1:8000/api/v1/raster/my-population/ingest<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="s1">    "files": ["samples/sle_pop_2026_CN_1km_R2025A_UA_v1.tif"],</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="s1">    "variable": "population",</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="s1">    "timestamp": "2026-01-01T00:00:00Z",</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="s1">    "license": "CC-BY-4.0",</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="s1">    "attribution": "WorldPop, University of Southampton",</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="s1">    "publish": true</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="s1">  }'</span>
+</code></pre></div>
+<h3 id="post-apiv1vectoridingest"><code>POST /api/v1/vector/{id}/ingest</code><a class="headerlink" href="#post-apiv1vectoridingest" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://127.0.0.1:8000/api/v1/vector/my-districts/ingest<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="s1">    "path": "samples/sierra_leone_districts.geojson",</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="s1">    "identifier_property": "id",</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="s1">    "selectable_columns": ["level", "name", "parentName"],</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="s1">    "title": "Sierra Leone districts",</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="s1">    "license": "BSD-3-Clause",</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="s1">    "attribution": "DHIS2 demo database",</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="s1">    "publish": true</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="s1">  }'</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>path</code></td>
+<td>One file, GeoJSON, GeoPackage, FlatGeobuf, shapefile or GeoParquet, under an ingest root</td>
+</tr>
+<tr>
+<td><code>identifier_property</code></td>
+<td>The column that identifies a feature. It must exist, be non-null and be unique, or the write is refused with 422</td>
+</tr>
+<tr>
+<td><code>selectable_columns</code></td>
+<td>The columns a <code>where</code> clause may filter on</td>
+</tr>
+<tr>
+<td><code>crs</code></td>
+<td>The frame to assume for a file that declares none, EPSG:4326 by default</td>
+</tr>
+<tr>
+<td><code>title</code>, <code>license</code>, <code>attribution</code>, <code>publish</code></td>
+<td>As for raster</td>
+</tr>
+</tbody>
+</table>
+<p>Which property to use as the identifier depends on the file:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th><code>identifier_property</code></th>
+<th>Useful <code>selectable_columns</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sierra_leone_districts.geojson</code></td>
+<td><code>id</code>, the DHIS2 organisation unit UID such as <code>O6uvpzGd5pu</code></td>
+<td><code>level</code>, <code>name</code>, <code>parentName</code></td>
+</tr>
+<tr>
+<td><code>geoboundaries-sle-adm2.geojson</code></td>
+<td><code>shapeID</code>, for example <code>65957751B2614126839094</code></td>
+<td><code>shapeName</code>, <code>shapeGroup</code>, <code>shapeType</code></td>
+</tr>
+<tr>
+<td><code>ne_110m_lakes.geojson</code></td>
+<td><code>id</code>, an integer from Natural Earth</td>
+<td><code>name</code>, <code>featureclass</code></td>
+</tr>
+</tbody>
+</table>
+<p>One real-file detail the reader handles: a column that is an empty object or an
+empty array on every row is dropped before the write. The DHIS2 organisation
+units carry <code>dimensions: {}</code> on every feature, and Parquet refuses a struct with
+no child field. A column that is empty in every row carries nothing that could
+be lost.</p>
+<h3 id="path-safety">Path safety<a class="headerlink" href="#path-safety" title="Permanent link">&para;</a></h3>
+<p><code>Settings.ingest_roots</code> defaults to <code>[samples, data_directory]</code>. A path is
+resolved first and then checked, so a <code>..</code> segment, a symbolic link out of a
+root and an absolute path elsewhere are all refused the same way, with 400:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="gp">$ </span>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://127.0.0.1:8000/api/v1/vector/escape/ingest<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">    </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span>-d<span class="w"> </span><span class="s1">'{"path": "samples/../pyproject.toml", "identifier_property": "id"}'</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="go">{"error":"IngestPathError","detail":"ingest path 'samples/../pyproject.toml' resolves outside the ingest roots '/app/samples', '/app/data'"}</span>
+</code></pre></div>
+<p>A glob is refused where its walk would start rather than once it is done: the
+literal directory before the first wildcard is resolved and checked before
+anything is expanded, so <code>/**/*.tif</code> is refused instead of reading every
+directory on the machine and then refusing the matches. Every match is still
+checked too, because a link inside a root points wherever it points; <code>Path.glob</code>
+does not recurse through a symbolic link on Python 3.13, but it does follow one
+the pattern names.</p>
+<p>An absolute path inside a root is allowed, which is what the demo uses. Widen
+the roots with <code>OCS_STORAGE_INGEST_ROOTS='["samples","/srv/climate-data"]'</code>.</p>
+<h2 id="what-this-does-not-do-yet">What this does not do yet<a class="headerlink" href="#what-this-does-not-do-yet" title="Permanent link">&para;</a></h2>
+<p>The ingest reads files that are already on the machine. Driving an OCS dataset
+plugin's <code>fetch_period</code> straight into <code>append</code>, so a period is fetched and
+stored in one call, is the step after this one; see <a href="../../roadmap/">the roadmap</a>.
+There is also no pyramid: a coarse read of a large grid still pays for the full
+resolution.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/mortenoh/ocs-storage-exploration" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "navigation.tracking", "search.highlight", "search.share", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

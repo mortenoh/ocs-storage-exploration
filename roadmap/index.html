@@ -1,0 +1,1547 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Prototype of a unified raster and vector storage abstraction for the Open Climate Service">
+      
+      
+      
+        <link rel="canonical" href="https://mortenoh.github.io/ocs-storage-exploration/roadmap/">
+      
+      
+        <link rel="prev" href="../architecture/">
+      
+      
+        <link rel="next" href="../api-reference/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Roadmap - OCS storage exploration</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="blue" data-md-color-accent="blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#roadmap" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="OCS storage exploration" class="md-header__button md-logo" aria-label="OCS storage exploration" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            OCS storage exploration
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Roadmap
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="blue" data-md-color-accent="blue"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="blue" data-md-color-accent="blue"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/mortenoh/ocs-storage-exploration" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mortenoh/ocs-storage-exploration
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="OCS storage exploration" class="md-nav__button md-logo" aria-label="OCS storage exploration" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    OCS storage exploration
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mortenoh/ocs-storage-exploration" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mortenoh/ocs-storage-exploration
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../findings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Findings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../research/problem-statement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Problem statement
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../research/ocs-storage-today/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCS storage today
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../research/icechunk-backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Icechunk backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../research/geoparquet/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GeoParquet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../research/obstore-vs-fsspec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    obstore versus fsspec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../research/unified-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Unified model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../research/publication-without-rename/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Publication without rename
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../research/testing-s3-locally/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing S3 locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Versioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/pluginkit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plugin framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/backends-and-layout/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Backends and key layout
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/stac-catalog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STAC catalog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/offline-quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Offline quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/real-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Real data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/inspecting-the-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Inspecting the data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/api-walkthrough/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API walkthrough
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#delivered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Delivered
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#next" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Next
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#delivered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Delivered
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#next" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Next
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="roadmap">Roadmap<a class="headerlink" href="#roadmap" title="Permanent link">&para;</a></h1>
+<p>What this sandbox has proved, and what it would have to prove next before any
+of it lands in the Open Climate Service.</p>
+<h2 id="delivered">Delivered<a class="headerlink" href="#delivered" title="Permanent link">&para;</a></h2>
+<p><strong>Pass 1: the model.</strong> URI addressing with <code>StorageAddress</code> and one key module
+that every key comes from; the <code>StorageBackend</code> and <code>Catalog</code> protocols; the
+filesystem and memory backends; <code>ObjectCatalog</code>, one JSON object per dataset
+with etag compare-and-swap; the raster engine over Icechunk and GeoZarr and the
+vector engine over versioned GeoParquet; one publish vocabulary covering an
+Icechunk branch move and a pointer swap, with rollback as the same call against
+an older target; the JSON API over both halves; and the research notes,
+concepts and guides that explain why each of those is shaped the way it is.</p>
+<p><strong>Pass 2: S3 and Docker.</strong> The S3 backend, building the Icechunk storage, the
+obstore store and the pyarrow filesystem from one settings block, verified
+against a local rustfs endpoint by the whole test suite rather than by a
+handful of backend tests. The conditional-PUT paths of the catalogue record and
+the vector pointer merged into one module, with the non-atomic emulation
+reachable only on obstore's <code>LocalStore</code>. A <code>Dockerfile</code> for the service and a
+<code>compose.yml</code> with a <code>file</code> profile and an <code>s3</code> profile, plus <code>make test-s3</code>,
+which starts rustfs, runs the marked tests and stops rustfs again.</p>
+<p><strong>Pass 3: the STAC catalog.</strong> Every dataset record projected onto a STAC
+Collection at <code>/stac</code>, <code>/stac/collections</code> and <code>/stac/collections/{id}</code>:
+coverages with the datacube extension and an Icechunk asset advertised as
+<code>application/vnd.zarr; version=3</code>, feature collections with the table extension
+(<code>table:row_count</code>, <code>table:primary_geometry</code>, <code>table:columns</code> read from the
+Parquet footer) and a GeoParquet asset at <code>application/x-parquet</code>. Licence and
+attribution are record fields, threaded through both create endpoints and
+preserved across an overwrite or an append, and <code>license</code> plus <code>providers</code> carry
+them into the collection. <code>published_only</code> defaults to true so a draft is never
+advertised. It is a projection, not new state: the record contributes identity,
+title, licence and attribution, and everything else is read back from the
+version being advertised. See <a href="../concepts/stac-catalog/">the STAC catalog</a>.</p>
+<p><strong>Pass 4: hardening.</strong> A review of the three passes above found eleven places
+where the prototype was right in the happy path and wrong under a second writer,
+a second thread or a rollback. All eleven are closed:</p>
+<ul>
+<li>The catalogue's compare-and-swap moved onto revision tokens: <code>get_entry</code>
+  returns the record with the revision it was read at, <code>put</code> takes that revision
+  or <code>create=True</code>, and the per-instance etag memory that let an unrelated read
+  launder a stale write is gone.</li>
+<li>The <code>published</code> branch became the publication truth: a reader follows the
+  branch rather than the record, a coverage with nothing published answers 404
+  instead of serving the newest draft, and <code>reconcile_publication</code> repairs a
+  record left behind by an interrupted publication.</li>
+<li>A coverage now describes the snapshot it serves rather than its record:
+  <code>RasterRepository.describe</code> reads the dimensions, projection, envelope, time
+  axis and variables back from the opened store.</li>
+<li>A vector version now describes itself: a <code>metadata.json</code> sidecar records the
+  coordinate reference system, feature count, identifier property and selectable
+  columns of the version as it was written, and reads, guards and publications
+  take those fields from it rather than from the latest write.</li>
+<li>A vector version number is claimed before anything is written, by creating
+  <code>reservation.json</code> in <code>mode="create"</code>, so two writers listing at the same
+  moment can no longer pick the same number and overwrite each other.</li>
+<li>The STAC catalog is built from the version being advertised rather than from
+  the record, so an unpublished append no longer widens the published temporal
+  extent and a draft in another frame no longer changes the published CRS.</li>
+<li>Blocking storage calls moved off the event loop: every route that reaches the
+  service layer is a plain <code>def</code> that FastAPI runs on the threadpool, and the
+  caches that several threads now share are guarded.</li>
+<li>Cube allocation is guarded by <code>max_cube_cells</code> before the array is built,
+  rather than only after a query had already read it.</li>
+<li>The memory backend drops the Icechunk storages cached under a prefix when the
+  prefix is deleted, so a new dataset of the same name no longer inherits the
+  old history.</li>
+<li>A raster window is selected by masking coordinate values rather than by
+  slicing labels, so a bounding box that crosses the antimeridian selects the
+  cells on both sides of it.</li>
+<li>GeoJSON input is validated by geojson-pydantic models that name where a
+  malformed document goes wrong, with an unreadable coordinate reference system
+  answered as 400 and structurally wrong vector input as 422.</li>
+</ul>
+<p><strong>Pass 5: pluggable backends.</strong> The backend seam became a
+<a href="https://winterop-com.github.io/pluginkit">pluginkit</a> extension point rather
+than a table of factories. <code>StorageBackendSpecs</code> declares three typed extension
+points, the filesystem, memory and S3 backends are three plugins registered by
+name before any entry point is loaded, and an external distribution adds a
+scheme by advertising itself under the <code>ocs_storage_exploration.plugins</code> group.
+<code>examples/plugins/ocs-storage-null/</code> is the worked external plugin, deliberately
+not installed. <code>GET /api/v1/backends</code> describes every provided scheme without
+building a client or reading a credential, and a findings page summarises the
+exploration for the OCS team.</p>
+<p><strong>Pass 6: async surface and bounded S3 clients.</strong> The plain <code>def</code> routes of pass
+4 became <code>async def</code> over <code>AsyncStorageService</code>, because the caller this is
+meant for is an async FastAPI service that wants awaitables rather than a
+threadpool hop it does not control:</p>
+<ul>
+<li><code>AsyncObjectCatalog</code> answers record reads and writes natively through
+  obstore's <code>get_async</code>, <code>put_async</code>, <code>head_async</code>, <code>delete_async</code> and async
+  listing, with the same compare-and-swap semantics as <code>ObjectCatalog</code> and the
+  key layout, record encoding and failure mapping shared rather than restated.
+  obstore is the one library here with an async API, so it is the one layer that
+  does not need a thread.</li>
+<li>Every raster and vector engine call runs on a worker thread through
+  <code>anyio.to_thread.run_sync</code>, behind an <code>anyio.CapacityLimiter</code> sized by
+  <code>OCS_STORAGE_MAX_CONCURRENT_STORAGE_OPERATIONS</code> and inside an
+  <code>asyncio.timeout</code> sized by <code>OCS_STORAGE_STORAGE_OPERATION_TIMEOUT_SECONDS</code>,
+  which reports <code>StorageTimeoutError</code> as 504.</li>
+<li>The S3 clients are bounded where they are built: <code>connect_timeout_seconds</code>,
+  <code>request_timeout_seconds</code>, <code>max_retries</code> and <code>retry_backoff_seconds</code> are
+  translated once into obstore's <code>client_options</code> and <code>RetryConfig</code>, pyarrow's
+  <code>connect_timeout</code>, <code>request_timeout</code> and retry strategy, and Icechunk's
+  <code>network_stream_timeout_seconds</code> plus a <code>RepositoryConfig</code> carrying
+  <code>StorageSettings(timeouts=..., retries=...)</code>, which
+  <code>StorageBackend.repository_config()</code> hands to <code>Repository.open_or_create</code>. An
+  unreachable endpoint now fails in under a second with
+  <code>BackendUnavailableError</code> (503) instead of hanging, and the conditional-write
+  switches are never touched.</li>
+<li>The plugin manager moved next to the plugins it registers:
+  <code>build_plugin_manager</code> and <code>default_plugin_manager</code> are in
+  <code>storage/backends/</code>, the facade that wrapped them is gone, and
+  <code>plugins.backend_for_scheme</code> is the single place that refuses a scheme no
+  plugin provides.</li>
+</ul>
+<p><strong>Pass 7: real-data ingestion.</strong> The model is now exercised by files somebody
+else produced rather than only by synthetic cubes and hand-written features.
+<code>POST /api/v1/raster/{id}/ingest</code> reads local GeoTIFF, COG, NetCDF and Zarr
+files and <code>POST /api/v1/vector/{id}/ingest</code> reads local GeoJSON and GeoParquet,
+both bounded by <code>Settings.ingest_roots</code> so a path outside the named directories
+is refused before anything is opened:</p>
+<ul>
+<li><code>storage/raster/ingest.py</code> normalises an opened raster onto the coverage
+  contract with the rules the Open Climate Service applies to a fetched period,
+  in the order that makes them safe: axis names, then the projection, then the
+  longitude roll and the y reversal that need to know whether x is a longitude.
+  The nodata sentinel is masked to NaN and kept as a finite attribute, the CF
+  encoding is dropped, and the <code>GridSpecification</code> is derived from the data
+  rather than declared by the request, so an ingest cannot claim a grid the file
+  does not have. A static raster such as a population grid gets its single
+  timestep from the request, so the <code>t</code> axis is always present.</li>
+<li>A glob is expanded, ordered by timestamp and written through the same <code>create</code>
+  and <code>append</code> as the synthetic path, so the cube guard, the coordinate check
+  and the variable check all still apply. The 14 CHIRPS days become one Icechunk
+  repository with fourteen commits and a published branch.</li>
+<li><code>samples/</code> carries three small real files and <code>make samples</code> fetches two more
+  by clipping cloud optimised GeoTIFFs over HTTP range requests, so 14 days of
+  global rainfall arrive as 60 kB rather than 420 MB. <code>make demo</code> ingests all
+  five offline and <code>make offline</code> is the single online step that prepares a
+  machine. See <a href="../guides/real-data/">real data</a> and
+  <a href="../guides/offline-quickstart/">the offline quickstart</a>.</li>
+</ul>
+<p><strong>Pass 8: second review.</strong> A second review, run after the real-data pass,
+found thirteen more places where the prototype held in the happy path and not
+under a second writer, a rollback or an unusual input, and one more came from
+reading the demo output. All fourteen are closed, each with a regression test
+that was red before the fix:</p>
+<ul>
+<li>A raster write is staged on a scratch branch and <code>main</code> is fast-forwarded only
+  after the catalog compare-and-swap succeeds, so a losing writer never touches
+  the draft; an Icechunk commit conflict answers 409 rather than 500.</li>
+<li>Deletion is a reservation: the record is marked <code>deleting</code> under a
+  compare-and-swap, the prefix is swept, and the record goes last, so a reused
+  identifier never inherits the objects of the dataset it replaced.</li>
+<li>A timed-out storage call keeps its limiter token until its thread returns, so
+  the concurrency bound holds under timeouts, and queued callers time out waiting
+  for a token instead of starting more threads.</li>
+<li>Scaled GeoTIFFs are decoded on open and the nodata sentinel is recorded in the
+  decoded units; NetCDF has an engine (<code>h5netcdf</code>) and a test; Zarr directory
+  stores resolve through the ingest path resolver.</li>
+<li>The synthetic cube is built on the worker thread inside the limiter and the
+  timeout, and the cube size guard reads the settings of the application that
+  was asked rather than a process-wide default.</li>
+<li>Nodata, licence and attribution are facts of the selected snapshot or version:
+  the grid stamps nodata on every variable, commit metadata carries the raster
+  licence, and the STAC projection reads both from the advertised version.</li>
+<li>An append must strictly extend the time axis, and a time window is selected
+  by mask rather than by label slice, so a non-monotonic axis can no longer be
+  written or misread.</li>
+<li>Records hold a backend-relative storage key rather than an absolute URI, so a
+  data directory mounted elsewhere or moved to another machine serves correct
+  hrefs.</li>
+<li>The filesystem Docker profile runs as the host user over the bind mount, the
+  rustfs lifecycle in <code>make test-s3</code> installs its cleanup trap before starting
+  the container, and the S3 job in CI is required.</li>
+</ul>
+<p><strong>Pass 9: seeded demo stacks and an end-to-end demo test.</strong> The two compose
+profiles now come up with data in them. Each carries a one-shot seed container
+running the same demo as <code>make demo</code>, from the same image as the API and with
+<code>./samples</code> bind mounted read-only, and the API depends on it with
+<code>condition: service_completed_successfully</code>, so the first request to
+<code>/api/v1/datasets</code> lists five datasets rather than nothing. The data outlives
+the containers, in <code>./data</code> and in <code>./.rustfs</code>, and a second run overwrites each
+coverage under the same identifier and writes the next version of each
+collection: the seed is idempotent in the set of datasets rather than in the
+number of versions. The demo moved from
+<code>scripts/demo.py</code> into <code>ocs_storage_exploration.demo</code> with an
+<code>ocs-storage-exploration-demo</code> entry point, which is what makes the same code
+reachable from the image, from <code>make demo</code> and from the tests. It reports a
+refused dataset as a failed outcome and exits non-zero, which aborts the stack
+instead of bringing up an API with half a catalog, while a sample <code>make samples</code>
+never downloaded only skips. The run targets moved to
+<code>--abort-on-container-failure</code>, because <code>--abort-on-container-exit</code> reads the
+seed's successful exit as a reason to stop everything and races the API its
+completion just released. <code>tests/test_demo_end_to_end.py</code> drives the demo's own
+functions over the filesystem, memory and S3 backends and then asserts the API:
+the listing and its publication states, a WorldPop window, a <code>where</code> clause on a
+column the demo declares, a re-seeded collection rolled back to version 1, the
+published-only STAC listing with its table row count, and the relative storage
+keys in the records.</p>
+<p><strong>Pass 10: third review.</strong> A third review, run after the demo stacks, found five
+more places where the prototype held in the happy path and not under a second
+actor, an unusual window or a large answer. All five are closed, each with a
+regression test that was red before the fix:</p>
+<ul>
+<li>A deletion never sweeps without its reservation: a lost compare-and-swap is
+  retried, a persistent conflict answers 409, and a record another writer
+  recreated after the mark is left alone rather than swept out from under it.</li>
+<li>Raster ingest checks the cube guard before any cell of a source is read, so an
+  oversized file is refused rather than loaded and then refused.</li>
+<li>A longitude window spanning the full circle selects every cell, instead of
+  wrapping onto an empty intersection.</li>
+<li>A draft STAC asset names the <code>main</code> branch, pins the snapshot it describes and
+  carries the matching selector on its API href, so what it advertises and what
+  the href returns cannot disagree.</li>
+<li>The GeoJSON conversion of a vector read runs on the bounded worker call that
+  produced the handle, through <code>AsyncVectorCollectionStore.read_as</code>.</li>
+</ul>
+<p><strong>Pass 11: fourth review.</strong> A fourth review found five more, in the seams the
+third one had just moved. All five are closed the same way:</p>
+<ul>
+<li>Each generation of a dataset gets its own storage prefix, named by the record,
+  so a deletion only sweeps the generation it reserved and can no longer erase a
+  dataset that was created again under the same identifier.</li>
+<li>Reconciliation restores the grid, the envelope and the terms from the
+  committed snapshot, and a rejected overwrite puts the record it replaced back.</li>
+<li>Ingest plans resolve on the worker inside the timeout, and a glob is refused
+  where its walk would start rather than after it has been expanded.</li>
+<li><code>spatial_ref</code> and the grid's own axis names are refused as variable names,
+  because assigning the coordinate would otherwise write over the data variable
+  of the same name and report the coverage as created.</li>
+<li>Timestamps outside the range a nanosecond time coordinate holds are refused at
+  write, and query bounds outside it are clamped onto it rather than wrapped.</li>
+</ul>
+<p><strong>Pass 12: tombstones, a recoverable title and an answer rendered off the loop.</strong>
+A fifth review found the last window in the deletion protocol, and four smaller
+things around it. All five are closed, each with a regression test that was red
+before the fix:</p>
+<ul>
+<li>A deletion never removes its catalog record. It marks the record, sweeps the
+  one generation that mark names, and then swaps the mark for a tombstone under
+  the revision it holds, so every transition a record makes is a compare-and-swap
+  even though obstore exposes no conditional delete. Dropping the record used to
+  be a read followed by an unconditional delete, which could erase the record of
+  a dataset written again between the two. A tombstone answers 404 exactly as an
+  identifier nothing was ever written under, and the next write of that name
+  replaces it in a generation of its own, inheriting nothing and, because the
+  tombstone is checked before the item type, of either item type.</li>
+<li>A write that takes over a deletion that is still running keeps the bytes it has
+  already written. The deletion tombstones the mark that write is claiming
+  against, so the claim is re-read and retried against the tombstone rather than
+  answering 409 for an identifier nobody owns. Only a live record means another
+  writer took the name.</li>
+<li>The title of a coverage travels in the Icechunk commit metadata beside the
+  licence and the attribution, so reconciliation restores the title a rejected
+  overwrite left behind. It was the one field an overwrite changed that the store
+  never held. A snapshot committed before the title travelled carries none, and
+  reconciliation then leaves the record alone rather than blanking it.</li>
+<li>A feature read is serialised to its response bytes on the bounded worker call
+  that produced the handle, so nothing of a fifty thousand feature answer is
+  encoded on the event loop.</li>
+<li>A data variable name the coordinates of the grid being written would take is
+  refused at the request boundary, by the engine's own check rather than a copy
+  of its reserved names.</li>
+</ul>
+<h2 id="next">Next<a class="headerlink" href="#next" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Fetching as well as reading.</strong> The ingest reads what is already on the
+   machine. Driving an OCS dataset plugin's <code>fetch_period</code> straight into
+   <code>RasterRepository.append</code>, so a period is fetched, normalised and stored in
+   one call, is what would make this the OCS write path rather than a sandbox
+   one.</li>
+<li><strong>Retention.</strong> <code>expire_snapshots</code> and garbage collection constrained to keep
+   every published snapshot reachable, and a pruning policy for vector version
+   directories. Both bound how far a rollback can go, so the policy has to be
+   written down before it is automated.</li>
+<li><strong>Serving Zarr and Icechunk for remote stores.</strong> Decide between a redirect
+   with a presigned URL, proxying the bytes, and pointing clients at
+   <code>icechunk.http_storage()</code> against a read-only endpoint. OCS's
+   <code>serve_icechunk_file</code> is a <code>FileResponse</code> passthrough and does not port. The
+   STAC <code>icechunk</code> asset hands out the repository URI the record's storage key
+   resolves to today, which is the right answer only for a client that can reach
+   the object store itself.</li>
+<li><strong>A derived catalog index for large listings.</strong> One object per dataset is
+   right for writes and wrong for listing thousands; an index needs a builder,
+   an invalidation rule and etag-guarded listing so a stale page is detectable.
+   <code>GET /stac/collections</code> has the same shape of problem: it describes one store
+   or one Parquet file per collection, so it needs paging before it needs a cache.</li>
+<li><strong>Pyramids.</strong> Multiscale groups for large grids, mirroring what OCS already
+   does, so a coarse read does not pay for the full resolution. That is also
+   what would make the Zarr media type worth deriving per store rather than
+   pinning it, as OCS does with its <code>profile=multiscales</code> variant.</li>
+<li><strong>A tombstone is a one-way step for a bucket.</strong> A record marked
+   <code>lifecycle: deleted</code> is a value a binary that predates tombstones cannot
+   validate, so it fails the listing that reads it rather than skipping it. One
+   bucket must therefore not be served by two binaries that disagree about the
+   state, which makes the rollout ordered rather than free: every reader moves
+   before the first deleter does. Nothing in the layout detects the mistake
+   today, and a <code>schema_version</code> the reader checks is the candidate guard.</li>
+<li><strong>Tombstones are never purged, and they keep the whole record.</strong> One small
+   JSON object stays behind per identifier ever deleted, and it is the dead
+   record entire: title, attribution, envelope and the rest of the descriptive
+   metadata, although only the lifecycle and the revision are ever read from it.
+   For a dataset deleted because it may not be kept that is the wrong default,
+   and a purge is not the answer, because purging is exactly the unconditional
+   record delete tombstones removed. Blanking everything but the identifier, the
+   item type and the lifecycle is, and it needs a decision about what a tombstone
+   is for: an audit trail of what an identifier used to hold, or nothing but a
+   revision to swap against.</li>
+<li><strong>OCS migration steps.</strong> Map the work onto CLIM-555, CLIM-880, CLIM-1067 and
+   CLIM-1068, starting from the call-site mapping table in
+   <a href="../research/unified-model/#mapping-back-to-ocs">the unified model</a>. Upgrading
+   OCS from icechunk 2.0.5 to 2.2 is a prerequisite rather than a follow-up.</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/mortenoh/ocs-storage-exploration" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "navigation.tracking", "search.highlight", "search.share", "content.code.copy", "content.tabs.link"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

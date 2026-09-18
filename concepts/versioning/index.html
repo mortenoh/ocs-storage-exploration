@@ -1,0 +1,1950 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Prototype of a unified raster and vector storage abstraction for the Open Climate Service">
+      
+      
+      
+        <link rel="canonical" href="https://mortenoh.github.io/ocs-storage-exploration/concepts/versioning/">
+      
+      
+        <link rel="prev" href="../../research/testing-s3-locally/">
+      
+      
+        <link rel="next" href="../pluginkit/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Versioning - OCS storage exploration</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="blue" data-md-color-accent="blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#versioning" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="OCS storage exploration" class="md-header__button md-logo" aria-label="OCS storage exploration" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            OCS storage exploration
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Versioning
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="blue" data-md-color-accent="blue"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="blue" data-md-color-accent="blue"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/mortenoh/ocs-storage-exploration" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mortenoh/ocs-storage-exploration
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="OCS storage exploration" class="md-nav__button md-logo" aria-label="OCS storage exploration" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    OCS storage exploration
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mortenoh/ocs-storage-exploration" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mortenoh/ocs-storage-exploration
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../findings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Findings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/problem-statement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Problem statement
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/ocs-storage-today/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCS storage today
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/icechunk-backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Icechunk backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/geoparquet/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GeoParquet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/obstore-vs-fsspec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    obstore versus fsspec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/unified-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Unified model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/publication-without-rename/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Publication without rename
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/testing-s3-locally/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing S3 locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Versioning
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Versioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#raster-one-icechunk-commit-per-write" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Raster: one Icechunk commit per write
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Raster: one Icechunk commit per write">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-write-is-staged-before-it-becomes-the-draft" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A write is staged before it becomes the draft
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-branch-is-the-publication-truth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The branch is the publication truth
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#an-append-must-extend-the-time-axis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An append must extend the time axis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#metadata-comes-from-the-store-not-from-the-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metadata comes from the store, not from the record
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vector-one-parquet-file-per-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vector: one Parquet file per version
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Vector: one Parquet file per version">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-reservation-is-what-makes-a-version-number-unique" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The reservation is what makes a version number unique
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-metadata-sidecar-is-what-makes-a-version-complete" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The metadata sidecar is what makes a version complete
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deleting-a-dataset-marks-the-record-before-it-sweeps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deleting a dataset marks the record before it sweeps
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Deleting a dataset marks the record before it sweeps">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#writing-over-a-tombstone" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing over a tombstone
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#every-record-transition-is-a-compare-and-swap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Every record transition is a compare-and-swap
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#side-by-side" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Side by side
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-api-answers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the API answers
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pluginkit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plugin framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../backends-and-layout/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Backends and key layout
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stac-catalog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STAC catalog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/offline-quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Offline quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/real-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Real data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/inspecting-the-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Inspecting the data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/api-walkthrough/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API walkthrough
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#raster-one-icechunk-commit-per-write" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Raster: one Icechunk commit per write
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Raster: one Icechunk commit per write">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-write-is-staged-before-it-becomes-the-draft" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A write is staged before it becomes the draft
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-branch-is-the-publication-truth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The branch is the publication truth
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#an-append-must-extend-the-time-axis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An append must extend the time axis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#metadata-comes-from-the-store-not-from-the-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metadata comes from the store, not from the record
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vector-one-parquet-file-per-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vector: one Parquet file per version
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Vector: one Parquet file per version">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-reservation-is-what-makes-a-version-number-unique" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The reservation is what makes a version number unique
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-metadata-sidecar-is-what-makes-a-version-complete" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The metadata sidecar is what makes a version complete
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deleting-a-dataset-marks-the-record-before-it-sweeps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deleting a dataset marks the record before it sweeps
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Deleting a dataset marks the record before it sweeps">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#writing-over-a-tombstone" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing over a tombstone
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#every-record-transition-is-a-compare-and-swap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Every record transition is a compare-and-swap
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#side-by-side" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Side by side
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-api-answers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the API answers
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="versioning">Versioning<a class="headerlink" href="#versioning" title="Permanent link">&para;</a></h1>
+<p>Both halves of the service are versioned, and both publish by moving a pointer,
+but the mechanisms underneath are different because the formats are different.
+Icechunk already is a version-controlled store; Parquet is an immutable file. The
+API hides the difference behind one vocabulary: write, publish, roll back.</p>
+<h2 id="raster-one-icechunk-commit-per-write">Raster: one Icechunk commit per write<a class="headerlink" href="#raster-one-icechunk-commit-per-write" title="Permanent link">&para;</a></h2>
+<p>Every <code>POST /api/v1/raster/{id}</code> and <code>POST /api/v1/raster/{id}/append</code> writes
+with <code>to_icechunk</code> and commits. The commit identifier is the version, and it is
+what the write answers as <code>snapshot_identifier</code>. Nothing else in the repository
+changes, so <code>main</code> is the draft history: every accepted write is visible there
+immediately, published or not.</p>
+<h3 id="a-write-is-staged-before-it-becomes-the-draft">A write is staged before it becomes the draft<a class="headerlink" href="#a-write-is-staged-before-it-becomes-the-draft" title="Permanent link">&para;</a></h3>
+<p>The commit does not land on <code>main</code> directly. Writing there would mean that a
+write whose catalog record is refused has already changed what every reader of
+the draft sees, and two writers racing one identifier would leave the loser's
+cube in the store under the winner's record. A write therefore runs on a scratch
+branch of its own:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">branch</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"write-</span><span class="si">{</span><span class="n">uuid4</span><span class="p">()</span><span class="o">.</span><span class="n">hex</span><span class="si">}</span><span class="s2">"</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">repository</span><span class="o">.</span><span class="n">create_branch</span><span class="p">(</span><span class="n">branch</span><span class="p">,</span> <span class="n">previous</span><span class="p">)</span>          <span class="c1"># previous is the tip main had</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">session</span> <span class="o">=</span> <span class="n">repository</span><span class="o">.</span><span class="n">writable_session</span><span class="p">(</span><span class="n">branch</span><span class="p">)</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="o">...</span>                                                  <span class="c1"># to_icechunk, then commit</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">snapshot</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">commit</span><span class="p">(</span><span class="n">message</span><span class="p">)</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">catalog</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">record</span><span class="p">,</span> <span class="n">create</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>                     <span class="c1"># or put(record, revision=...)</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">repository</span><span class="o">.</span><span class="n">reset_branch</span><span class="p">(</span><span class="n">MAIN_BRANCH</span><span class="p">,</span> <span class="n">snapshot</span><span class="p">,</span> <span class="n">from_snapshot_id</span><span class="o">=</span><span class="n">previous</span><span class="p">)</span>
+</code></pre></div>
+<p><code>RasterRepository._staged_commit</code> is that sequence, and the scratch branch is
+deleted in a <code>finally</code> either way, so a failed write leaves no branch behind.</p>
+<p>The catalog claim in the middle is the arbiter. A create claims the record with
+obstore's create mode and an overwrite or an append claims it with a
+compare-and-swap against the revision it read, so exactly one of two racing
+writers gets past it. The loser raises before <code>main</code> has moved: its cube sits on
+a scratch branch that is deleted immediately and is reachable from nothing.</p>
+<p>Only after the claim succeeds does <code>main</code> move, and it moves as a fast-forward
+under its own compare-and-swap: <code>from_snapshot_id=previous</code> is the tip the write
+was staged on, so a commit that landed on <code>main</code> in between is not overwritten.
+That reset is the one Icechunk conflict a caller can still see, and it is
+reported as 409 rather than escaping as a 500. When it happens the record the
+write claimed is already one write ahead of the store, so an overwrite or an
+append puts the record it replaced back before it raises, and only if what
+stands is still the record it just wrote. A crash between the two steps leaves
+the disagreement for the next reconciliation to repair.</p>
+<p><code>GET /api/v1/raster/{id}/versions</code> walks <code>Repository.ancestry(branch="main")</code>
+newest first and marks the snapshot the published branch points at:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">"snapshot_identifier"</span><span class="p">:</span><span class="w"> </span><span class="s2">"8FMG55R5397CKBMH99D0"</span><span class="p">,</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"append"</span><span class="p">,</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">"written_at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-09-15T17:15:18.166688Z"</span><span class="p">,</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="nt">"is_published"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="p">}</span>
+</code></pre></div>
+<p>Icechunk's <code>SnapshotInfo</code> also carries <code>parent_id</code> and a <code>metadata</code> mapping. The
+endpoint does not surface them today: the list is already in ancestry order, so
+the parent is the next entry. Anything that needs the real parent link reads the
+repository directly, as shown in
+<a href="../../guides/inspecting-the-data/">inspecting the data</a>.</p>
+<p>Publication creates the <code>published</code> branch on first use and afterwards moves it
+with a compare-and-swap against the snapshot it currently points at:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">repository</span><span class="o">.</span><span class="n">reset_branch</span><span class="p">(</span><span class="n">PUBLISHED_BRANCH</span><span class="p">,</span> <span class="n">target</span><span class="p">,</span> <span class="n">from_snapshot_id</span><span class="o">=</span><span class="n">previous</span><span class="p">)</span>
+</code></pre></div>
+<p>If another writer published in between, the reset fails and the service answers
+409 rather than overwriting the other pointer. Publishing the snapshot that is
+already published is not an error: the result says <code>"changed": false</code>.</p>
+<p>Only a snapshot that holds data can be published. The snapshot a repository is
+initialised with holds none, so naming it is refused with 409 rather than
+publishing an empty coverage over a good one.</p>
+<p>A rollback is the same call with an older snapshot, which is why there is no
+rollback endpoint and no recovery routine. Readers that want one specific
+version do not have to publish at all: <code>?snapshot_identifier=...</code> pins it, and
+<code>?version=draft</code> reads <code>main</code> while <code>?version=published</code> follows the pointer.</p>
+<p>Snapshots share chunks. An append writes only the chunks it adds, so keeping ten
+versions of a coverage costs ten manifests plus the new data, not ten copies.
+That is what makes rollback cheap enough to be the only recovery mechanism.</p>
+<p>The bound on that is expiry. <code>Repository.expire_snapshots(older_than=...)</code>
+drops snapshots from the history and
+<code>Repository.garbage_collect(delete_object_older_than=...)</code> then deletes the
+objects no reachable snapshot needs. Neither is called by this service. When a
+deployment starts calling them, retention has to keep the published snapshot and
+however far back a rollback is expected to reach, because an expired snapshot is
+not a version that can be published again. Choosing that retention window is an
+open item, recorded in
+<a href="../../research/unified-model/">the unified model</a>.</p>
+<h3 id="the-branch-is-the-publication-truth">The branch is the publication truth<a class="headerlink" href="#the-branch-is-the-publication-truth" title="Permanent link">&para;</a></h3>
+<p>The branch, not the catalog record, decides what is published. A publication
+moves the branch first and writes the record afterwards, so a crash between the
+two leaves a record that still says "draft" while the branch already points at
+the published snapshot. Readers therefore never consult the record:
+<code>?version=published</code> opens the <code>published</code> branch when the repository has one,
+and answers 404 <code>"dataset has no published version"</code> when it does not. Falling
+back to <code>main</code> there would serve the newest draft as if it had been published,
+which is exactly the failure a half-finished publication would otherwise cause.</p>
+<p>The record is a cache of that truth, kept so a listing can show what is
+published without opening any repository. <code>RasterRepository.reconcile_publication</code>
+rewrites its <code>publication</code> block from the branch tip, and both <code>publish()</code> and
+<code>versions()</code> call it first, so the next call after an interrupted publication
+repairs the record.</p>
+<p>The same call also rewrites everything the store holds. <code>timestep_count</code>,
+<code>variables</code>, <code>temporal</code>, the grid with its <code>bbox</code>, the title, the licence and the
+attribution are read back from <code>describe(version=draft)</code> and written to the
+record whenever they disagree, because a write that claimed the record and then
+lost the fast-forward onto <code>main</code> leaves exactly that disagreement. The bbox is
+compared to within a millionth of a cell: cell centres are written as floats and
+measured back as a median step, so a record that already matches is left alone
+rather than rewritten on every call. The title travels the way the terms do: a
+create writes it into the commit metadata, an append carries forward the metadata
+of the snapshot it extends, and a read of that metadata is what puts the title of
+the accepted write back over the one a rejected overwrite left in the record. A
+snapshot committed before titles travelled with them carries none, and
+reconciliation then leaves the title of the record alone rather than blanking it.
+A repository that holds only its initialisation snapshot has nothing to read back
+at all, so the extents of its record are left alone rather than blanked.</p>
+<h3 id="an-append-must-extend-the-time-axis">An append must extend the time axis<a class="headerlink" href="#an-append-must-extend-the-time-axis" title="Permanent link">&para;</a></h3>
+<p>An append is refused unless its timestamps strictly increase and its first one
+is later than every timestamp already committed. The check reads the snapshot
+the append is staged on, not whatever <code>main</code> points at when it runs, so a
+concurrent write cannot slip between the check and the commit.</p>
+<p>The reason is that Zarr has no notion of an ordered dimension: appending an
+earlier block simply concatenates it, and the time axis is then unsorted. A
+label window over an unsorted axis is not an error message, it is wrong data. It
+returns the wrong timesteps for bounds the axis happens to hold and raises
+<code>KeyError</code> for every other bound. Refusing the append is the only point where
+that is cheap to prevent, so the contract lives there.</p>
+<p>Queries do not rely on it. <code>_apply_time_window</code> selects with a boolean mask and
+<code>isel</code>, the same way <code>_apply_spatial_window</code> handles a longitude axis wrapped
+across the antimeridian, so a store written before this guard existed still
+answers correctly, and an empty window falls to the existing size guard rather
+than to a <code>KeyError</code>.</p>
+<p>The axis itself is nanosecond <code>datetime64</code>, which reaches from 1677-09-21 to
+2262-04-11. A timestamp outside that is refused with 422, both at a write and
+when an ingest plan is built, rather than wrapping silently into another
+century; a query bound outside it is clamped onto the end it ran past, because a
+window ending in the year 3000 still names every timestep the store holds. A
+coarser resolution was ruled out: xarray decodes a time coordinate back onto
+nanoseconds whatever unit it was written with, so a coordinate outside the span
+could not be read back either.</p>
+<h3 id="metadata-comes-from-the-store-not-from-the-record">Metadata comes from the store, not from the record<a class="headerlink" href="#metadata-comes-from-the-store-not-from-the-record" title="Permanent link">&para;</a></h3>
+<p>A query and a description read their grid from the snapshot they opened:
+dimension names and data types from the variables, the projection from
+<code>proj:code</code> and the <code>spatial_ref</code> grid mapping coordinate, the envelope and the
+cell sizes from the coordinates themselves, and the time extent from the time
+coordinate. The record is used only to find the repository and to answer
+listings. That is what keeps a draft that rewrites the grid, the projection or
+the bounds from changing what a published query reports.</p>
+<p><code>RasterRepository.describe(dataset_identifier, version=..., snapshot_identifier=...)</code>
+returns that reading as a <code>RasterStoreDescription</code>, so anything that projects a
+coverage, the STAC collection included, can describe the snapshot it actually
+serves.</p>
+<p>The fill value is part of that reading. <code>apply_geozarr_attributes</code> stamps the
+<code>nodata</code> attribute the grid declares onto every data variable as it is written,
+unless the variable already carries one, so a query excludes the fill cells of
+the snapshot it opened. Nothing falls back to the record: a draft that declares
+zero as its fill value would otherwise make a published query over genuine zeros
+report no statistics at all.</p>
+<p>The coordinates that reading depends on are reserved at write time.
+<code>spatial_ref</code> and the grid's own <code>t</code>, <code>y</code> and <code>x</code> names are refused as data
+variable names with 422, by a create, an append and an ingest alike: assigning
+the coordinate replaces a variable of the same name, so the coverage would be
+written, and reported as created, with that variable's data silently gone.</p>
+<h2 id="vector-one-parquet-file-per-version">Vector: one Parquet file per version<a class="headerlink" href="#vector-one-parquet-file-per-version" title="Permanent link">&para;</a></h2>
+<p>A Parquet file has no history, so the version is the file. Each write lands in
+its own directory and no write ever replaces an earlier one:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>ocs/vector/{dataset_identifier}/{generation}/versions/v00001/reservation.json
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>ocs/vector/{dataset_identifier}/{generation}/versions/v00001/data.parquet
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>ocs/vector/{dataset_identifier}/{generation}/versions/v00001/metadata.json
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>ocs/vector/{dataset_identifier}/{generation}/versions/v00002/...
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>ocs/vector/{dataset_identifier}/{generation}/current.json
+</code></pre></div>
+<p><code>{generation}</code> is a uuid4 in hex, minted when the collection is created. Writing
+a collection that has a record stays in the generation that record names; only a
+first write mints one. Both engines work this way: a coverage keeps its Icechunk
+repository at <code>ocs/raster/{dataset_identifier}/{generation}</code>, an overwrite stays
+in the generation of the record it read, and only a create without a record
+mints a new one. The record's <code>storage_key</code> holds exactly that prefix, so the
+record is the only thing that says where the live data of a dataset is, and a
+dataset deleted and written again under the same identifier never shares a
+prefix with the one it replaced. See "Deleting a dataset marks the record before
+it sweeps" below for what that buys.</p>
+<p>The version number is zero-padded to five digits so that a lexicographic object
+listing, which is the only ordering an object store guarantees, is also numeric
+order.</p>
+<h3 id="the-reservation-is-what-makes-a-version-number-unique">The reservation is what makes a version number unique<a class="headerlink" href="#the-reservation-is-what-makes-a-version-number-unique" title="Permanent link">&para;</a></h3>
+<p>Choosing "one past the highest directory found" and then writing the Parquet is
+not safe: two writers that list at the same moment pick the same number, and the
+second overwrites a file the first may already have published. A version number
+is therefore claimed before anything is written, by creating</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>versions/vNNNNN/reservation.json
+</code></pre></div>
+<p>with obstore's <code>mode="create"</code>. That mode is implemented by every store this
+service uses, obstore's <code>LocalStore</code> included, so the claim is atomic on all
+three backends: exactly one writer gets the object and the loser sees
+<code>AlreadyExistsError</code> and tries the next number, up to a bounded number of
+attempts. A candidate is also rejected when its <code>data.parquet</code> already exists,
+so bytes left behind by a crashed write are never overwritten either.</p>
+<p>An abandoned reservation burns its number and nothing else. Version numbers are
+labels, not a count, so a gap in the sequence costs nothing.</p>
+<h3 id="the-metadata-sidecar-is-what-makes-a-version-complete">The metadata sidecar is what makes a version complete<a class="headerlink" href="#the-metadata-sidecar-is-what-makes-a-version-complete" title="Permanent link">&para;</a></h3>
+<p><code>versions/vNNNNN/metadata.json</code> is written after the Parquet, as a create, and
+it is what marks the version as finished:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span><span class="nt">"version"</span><span class="p">:</span><span class="mi">1</span><span class="p">,</span><span class="nt">"crs"</span><span class="p">:</span><span class="s2">"EPSG:4326"</span><span class="p">,</span><span class="nt">"feature_count"</span><span class="p">:</span><span class="mi">12</span><span class="p">,</span><span class="nt">"identifier_property"</span><span class="p">:</span><span class="s2">"id"</span><span class="p">,</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w"> </span><span class="nt">"primary_geometry"</span><span class="p">:</span><span class="s2">"geometry"</span><span class="p">,</span><span class="nt">"geometry_types"</span><span class="p">:[</span><span class="s2">"Point"</span><span class="p">,</span><span class="s2">"Polygon"</span><span class="p">],</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w"> </span><span class="nt">"selectable_columns"</span><span class="p">:[</span><span class="s2">"level"</span><span class="p">,</span><span class="s2">"path"</span><span class="p">],</span><span class="nt">"bbox"</span><span class="p">:{</span><span class="nt">"minimum_x"</span><span class="p">:</span><span class="mf">0.0</span><span class="p">,</span><span class="nt">"minimum_y"</span><span class="p">:</span><span class="mf">0.0</span><span class="p">,</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w"> </span><span class="nt">"maximum_x"</span><span class="p">:</span><span class="mf">21.5</span><span class="p">,</span><span class="nt">"maximum_y"</span><span class="p">:</span><span class="mf">21.5</span><span class="p">},</span><span class="nt">"written_at"</span><span class="p">:</span><span class="s2">"2026-09-15T17:15:18.434733Z"</span><span class="p">,</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w"> </span><span class="nt">"license"</span><span class="p">:</span><span class="s2">"CC-BY-4.0"</span><span class="p">,</span><span class="nt">"attribution"</span><span class="p">:</span><span class="s2">"Statistics Norway"</span><span class="p">}</span>
+</code></pre></div>
+<p><code>versions()</code> lists only the directories that have one, so a version whose write
+never finished is never published, never read and never resolved to.</p>
+<p>The sidecar also fixes what a read is allowed to believe. The catalog record
+carries the metadata of the <strong>latest</strong> write, so reading the coordinate
+reference system, the feature count, the identifier property or the selectable
+columns from it means describing version 2 while serving version 1: a draft that
+reprojects the collection makes a published bbox query return nothing, and a
+draft with fewer features lets an unqualified read past the feature-count guard.
+<code>read()</code>, <code>publish()</code> and the pointer therefore resolve every one of those
+fields from the sidecar of the version they selected. <code>version_metadata(id, n)</code>
+and <code>published_metadata(id)</code> expose the same reading to anything that projects a
+collection.</p>
+<p>The record keeps the latest-write metadata for listings, plus the <code>publication</code>
+block, and nothing else depends on it.</p>
+<p><code>current.json</code> is the published pointer. It names the version, the key of its
+data file, the feature count and when it was published:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span><span class="nt">"version"</span><span class="p">:</span><span class="mi">1</span><span class="p">,</span><span class="nt">"key"</span><span class="p">:</span><span class="s2">"ocs/vector/districts-demo/{generation}/versions/v00001/data.parquet"</span><span class="p">,</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w"> </span><span class="nt">"feature_count"</span><span class="p">:</span><span class="mi">3</span><span class="p">,</span><span class="nt">"published_at"</span><span class="p">:</span><span class="s2">"2026-09-15T17:15:18.434733Z"</span><span class="p">}</span>
+</code></pre></div>
+<p>Publication writes that object under a compare-and-swap: the first write uses
+obstore's <code>mode="create"</code>, which fails if a concurrent publication got there
+first, and every later write uses <code>mode={"e_tag": ...}</code> with the etag last read.
+Create mode is atomic everywhere, the local directory included. The etag replace
+is not: obstore's <code>LocalStore</code> answers a conditional put with</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>NotImplementedError: Operation `put_opts` with mode `PutMode::Update`
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>not yet implemented by LocalFileSystem(...)
+</code></pre></div>
+<p>so the filesystem backend falls back to reading the etag back and comparing it
+before writing. That check narrows the race but does not remove it, which is
+acceptable for a local development backend and is exactly the reason the S3
+backend is the one that matters for moving a pointer concurrently. Claiming a
+version number does not share that weakness, because it only ever uses create
+mode.</p>
+<p>A rollback is publish with an older version, the same as raster. Reads take
+<code>?version=N</code> to pin one, and default to the published version, falling back to
+the newest written one when nothing is published yet.</p>
+<p>Old versions are never collected. There is no expiry pass for vector data in
+this pass: deleting a collection deletes every version below its prefix, and
+anything finer is a retention policy that does not exist yet.</p>
+<h2 id="deleting-a-dataset-marks-the-record-before-it-sweeps">Deleting a dataset marks the record before it sweeps<a class="headerlink" href="#deleting-a-dataset-marks-the-record-before-it-sweeps" title="Permanent link">&para;</a></h2>
+<p>Deletion used to remove the catalog record first and then empty the prefix. That
+order has a window: between the two, the dataset looks like it never existed, so
+a writer using the same identifier starts writing into a prefix that is about to
+be swept, and the sweep then erases what it wrote.</p>
+<p>The record now goes last, and it is never removed. A delete reads the record raw,
+marks it <code>lifecycle: "deleting"</code> under a compare-and-swap, sweeps every object
+below the <code>storage_key</code> of the record it marked - and nothing else - and then
+swaps that mark for a tombstone: the same record under <code>lifecycle: "deleted"</code>,
+written under the revision of the mark it holds. A record marked <code>deleting</code> is a
+deletion in progress and a tombstone is a dataset that is gone; neither is a
+dataset. Listings skip both, and reads, publications, <code>DELETE</code>, the datasets API
+and the STAC projection answer 404 for both - a tombstone exactly as for an
+identifier nothing was ever written under. Deleting and writing read the record
+raw, because they are the two calls that can finish a deletion.</p>
+<p>That makes the state after a crash recoverable rather than ambiguous. A delete
+that stops after the mark leaves a marked record and some objects behind, and
+either a second delete or a write of the same identifier finishes the sweep
+before doing its own work. A write that takes a deletion over swaps the mark
+straight for its own record rather than tombstoning it first, so two writers
+taking over the same deletion meet at that one compare-and-swap and exactly one
+of them wins; the loser is told the dataset already exists, 409, and sweeps the
+generation it minted.</p>
+<p>The commoner case, though, is a deletion that has not crashed at all and is
+simply still running. It finishes while the write that took it over is putting
+its bytes down, so by the time that write claims the record the mark it read has
+already become a tombstone. That is not losing the identifier, and it is covered
+in "Writing over a tombstone" below.</p>
+<p>Nothing is swept without that reservation. A mark that lost its
+compare-and-swap to a writer used to sweep anyway, emptying the prefix a record
+that was still live pointed at. It is now retried against the record that
+writer left behind, <code>MAXIMUM_DELETION_ATTEMPTS</code> (four) times before it gives
+up. A retry that finds the record already marked finishes that deletion
+instead. One that finds no record, a tombstone, or a record in a generation this
+call never read - because another deleter finished this deletion and the
+identifier was written again - sweeps nothing and returns: what stands under the
+identifier now belongs to whoever made it, not to this call. A delete that loses
+every attempt is refused with <code>PublicationConflictError</code>, 409, and removes
+nothing.</p>
+<h3 id="writing-over-a-tombstone">Writing over a tombstone<a class="headerlink" href="#writing-over-a-tombstone" title="Permanent link">&para;</a></h3>
+<p>A tombstone is not an obstacle. It is a free identifier that happens to carry a
+revision, and a writer that finds one replaces it with its own record under a
+compare-and-swap against that revision. The write is a first write in every other
+respect: a generation of its own, a fresh <code>created_at</code>, no title, terms or
+publication block inherited from the dataset that is gone, and, for a coverage,
+no <code>overwrite</code> flag needed. The tombstone check runs before the item type check,
+so a coverage may be created over the tombstone of a vector collection and a
+collection written over the tombstone of a coverage: what an identifier used to
+hold says nothing about what it may hold next.</p>
+<p>Which dead record a write swaps away is decided when it claims, not when it
+starts. Writing the bytes takes as long as it takes, and the record moves while
+it happens: the deletion the write took over finishes and tombstones the mark, or
+a deleter reserves the record again. Losing the compare-and-swap to one of those
+means nothing owns the identifier, so the claim is read again and retried against
+whatever the record has become, and the generation the write already filled is
+kept rather than swept and written a second time. It is safe to keep precisely
+because no record names that generation yet and nobody else knows its token, so
+nothing a competing actor does can have touched it. A retry that finds a
+<code>deleting</code> mark empties the generation <em>that mark</em> names before replacing it,
+exactly as a takeover does, and never its own. Only a live record means another
+writer really took the name, which is the 409 <code>DatasetAlreadyExistsError</code> a
+create has always answered, with the generation this write minted swept behind
+it. <code>MAXIMUM_CLAIM_ATTEMPTS</code> (four) bounds the retries; an identifier that
+changed hands under every one of them is refused with <code>PublicationConflictError</code>,
+409, and swept the same way. Two writers retrying against the same tombstone
+still meet at one compare-and-swap, so exactly one of them wins the name.</p>
+<h3 id="every-record-transition-is-a-compare-and-swap">Every record transition is a compare-and-swap<a class="headerlink" href="#every-record-transition-is-a-compare-and-swap" title="Permanent link">&para;</a></h3>
+<p>obstore exposes no conditional delete on any of the three backends -
+<code>obstore.delete(store, paths)</code> takes no etag and no mode - so for as long as a
+deletion removed its record, dropping it had to be a read followed by a delete
+rather than one compare-and-swap. Between that read and that delete, another
+actor could finish the same deletion, drop the record, and leave a writer free to
+create the dataset again; the delete then removed the new record. No bytes were
+lost, because the sweep only ever emptied the deleter's own generation, but the
+dataset answered 404 after a write that had succeeded, and its objects were left
+unreferenced under a prefix nothing named.</p>
+<p>Not deleting the record at all is what closes it. Every transition a record makes
+- live to <code>deleting</code>, <code>deleting</code> to <code>deleted</code>, and <code>deleting</code> or <code>deleted</code> back to
+live - is a <code>put</code> under the revision the caller read, so exactly one of two racing
+callers lands each one. A deleter that loses its tombstone leaves the record
+alone, because whoever moved it on owns what stands under the name now, and a
+writer that loses its claim to a record that is still dead reads it again and
+claims that one instead. The <code>Catalog.delete</code> that used to remove a record went
+with the window: nothing in the service removes a catalog record any more.</p>
+<p>Generations closed a second version of the same failure, and still do. The sweep
+is a listing followed by a delete, so a writer that took the deletion over while
+the original deleter was between those two steps had its new objects removed by
+that deleter's sweep. A dataset written again lives under a generation the dead
+record does not name, so a deleter that resumes late finds its own generation
+already empty and never reaches the new one, however long it was away. A writer
+that then loses its claim sweeps the generation it minted itself, which nobody
+else knows the token of, so a loser leaves no orphan behind either.</p>
+<p>What it costs is a record that outlives its dataset: one small JSON object per
+identifier ever deleted, read and skipped by every listing. There is deliberately
+no purge operation, because purging a tombstone is precisely the unconditional
+record delete this design removes. It would be a read of the tombstone followed
+by a delete, with the same window between them, and the prize for losing that
+race is the old failure back again: a dataset written in between answering 404
+over objects that are perfectly intact. A deployment with enough tombstones to
+care would need a conditional delete first, and with one it would not need the
+tombstones.</p>
+<h2 id="side-by-side">Side by side<a class="headerlink" href="#side-by-side" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Raster (Icechunk)</th>
+<th>Vector (GeoParquet)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Unit of a version</td>
+<td>A commit on <code>main</code>, named by snapshot identifier</td>
+<td>A directory <code>versions/vNNNNN</code> holding one Parquet file</td>
+</tr>
+<tr>
+<td>Where history lives</td>
+<td>Inside the repository: ancestry of <code>main</code></td>
+<td>In the object listing of the versions prefix</td>
+</tr>
+<tr>
+<td>How a version number is claimed</td>
+<td>The commit identifier is assigned by Icechunk</td>
+<td><code>reservation.json</code> created with <code>mode="create"</code> before the write</td>
+</tr>
+<tr>
+<td>Where a write lands first</td>
+<td>A scratch branch <code>write-{uuid}</code>, fast-forwarded onto <code>main</code> after the record is claimed</td>
+<td>Its own <code>versions/vNNNNN</code> directory, which no other write can name</td>
+</tr>
+<tr>
+<td>When a version counts as written</td>
+<td>The commit returns</td>
+<td><code>metadata.json</code> exists next to the Parquet</td>
+</tr>
+<tr>
+<td>Where a reader takes its metadata</td>
+<td>The snapshot it opened</td>
+<td>The <code>metadata.json</code> of the version it selected</td>
+</tr>
+<tr>
+<td>Publish mechanism</td>
+<td><code>reset_branch("published", target, from_snapshot_id=previous)</code></td>
+<td><code>current.json</code> written with etag compare-and-swap</td>
+</tr>
+<tr>
+<td>Rollback</td>
+<td>Publish an older snapshot</td>
+<td>Publish an older version</td>
+</tr>
+<tr>
+<td>Pinning on read</td>
+<td><code>?snapshot_identifier=...</code>, or <code>?version=draft</code> for <code>main</code></td>
+<td><code>?version=N</code></td>
+</tr>
+<tr>
+<td>Storage cost of a version</td>
+<td>Only the new chunks; snapshots share the rest</td>
+<td>A full copy of the collection</td>
+</tr>
+<tr>
+<td>Garbage collection</td>
+<td><code>expire_snapshots</code> then <code>garbage_collect</code>, not called here</td>
+<td>None; versions stay until the dataset is deleted</td>
+</tr>
+</tbody>
+</table>
+<h2 id="what-the-api-answers">What the API answers<a class="headerlink" href="#what-the-api-answers" title="Permanent link">&para;</a></h2>
+<p>Both engines answer a publication with the same model, so a client that moves a
+pointer does not care which kind of dataset it moved. The fields that do not
+apply to the item type are null:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="p">{</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">"dataset_identifier"</span><span class="p">:</span><span class="w"> </span><span class="s2">"districts-demo"</span><span class="p">,</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span><span class="nt">"item_type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"feature"</span><span class="p">,</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span><span class="nt">"published"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">  </span><span class="nt">"changed"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">  </span><span class="nt">"snapshot_identifier"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">  </span><span class="nt">"previous_snapshot_identifier"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="w">  </span><span class="nt">"previous_version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="p">}</span>
+</code></pre></div>
+<p>A coverage fills in <code>snapshot_identifier</code> and <code>previous_snapshot_identifier</code> and
+leaves the version fields null. Naming the wrong selector when publishing (a
+version for a coverage, a snapshot for a collection) is refused with 422 rather
+than quietly ignored, and naming both is refused by the request model.</p>
+<p>The catalog record carries the same pointer state under <code>publication</code>. For a
+coverage it is a cache of the branch, reconciled on the next <code>publish</code> or
+<code>versions</code> call, so a listing can show what is published without opening any
+repository while the branch stays the authority. See the
+<a href="../../guides/api-walkthrough/">API walkthrough</a> for the full sequence and
+<a href="../../research/publication-without-rename/">publication without a rename</a> for
+why a pointer move rather than a directory swap.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/mortenoh/ocs-storage-exploration" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "navigation.tracking", "search.highlight", "search.share", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

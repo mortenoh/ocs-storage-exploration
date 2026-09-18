@@ -1,0 +1,1814 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Prototype of a unified raster and vector storage abstraction for the Open Climate Service">
+      
+      
+      
+        <link rel="canonical" href="https://mortenoh.github.io/ocs-storage-exploration/concepts/backends-and-layout/">
+      
+      
+        <link rel="prev" href="../pluginkit/">
+      
+      
+        <link rel="next" href="../stac-catalog/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Backends and key layout - OCS storage exploration</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="blue" data-md-color-accent="blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#backends-and-key-layout" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="OCS storage exploration" class="md-header__button md-logo" aria-label="OCS storage exploration" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            OCS storage exploration
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Backends and key layout
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="blue" data-md-color-accent="blue"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="blue" data-md-color-accent="blue"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/mortenoh/ocs-storage-exploration" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mortenoh/ocs-storage-exploration
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="OCS storage exploration" class="md-nav__button md-logo" aria-label="OCS storage exploration" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    OCS storage exploration
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mortenoh/ocs-storage-exploration" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mortenoh/ocs-storage-exploration
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../findings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Findings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/problem-statement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Problem statement
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/ocs-storage-today/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCS storage today
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/icechunk-backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Icechunk backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/geoparquet/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GeoParquet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/obstore-vs-fsspec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    obstore versus fsspec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/unified-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Unified model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/publication-without-rename/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Publication without rename
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/testing-s3-locally/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing S3 locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Versioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pluginkit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plugin framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Backends and key layout
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Backends and key layout
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#one-class-per-scheme" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One class per scheme
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#timeouts-and-retries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Timeouts and retries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#writing-a-backend-plugin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing a backend plugin
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#three-handles-one-address" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Three handles, one address
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Settings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-key-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The key layout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#on-s3-one-bucket-many-datasets-isolated-by-prefix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        On S3: one bucket, many datasets, isolated by prefix
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stac-catalog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STAC catalog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/offline-quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Offline quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/real-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Real data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/inspecting-the-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Inspecting the data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/api-walkthrough/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API walkthrough
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#one-class-per-scheme" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One class per scheme
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#timeouts-and-retries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Timeouts and retries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#writing-a-backend-plugin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing a backend plugin
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#three-handles-one-address" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Three handles, one address
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Settings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-key-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The key layout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#on-s3-one-bucket-many-datasets-isolated-by-prefix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        On S3: one bucket, many datasets, isolated by prefix
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="backends-and-key-layout">Backends and key layout<a class="headerlink" href="#backends-and-key-layout" title="Permanent link">&para;</a></h1>
+<p>A backend answers one question: given an address, what handle does a library
+need to touch those bytes? There is one backend class per scheme, every backend
+yields the same three handles, and no engine knows which one it is running on.
+Changing <code>OCS_STORAGE_BACKEND</code> is the whole migration.</p>
+<h2 id="one-class-per-scheme">One class per scheme<a class="headerlink" href="#one-class-per-scheme" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Scheme</th>
+<th>Class</th>
+<th>State</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>file</code></td>
+<td><code>FilesystemStorageBackend</code></td>
+<td>Complete; everything below one local directory</td>
+</tr>
+<tr>
+<td><code>memory</code></td>
+<td><code>MemoryStorageBackend</code></td>
+<td>Complete; objects and repositories live in the process</td>
+</tr>
+<tr>
+<td><code>s3</code></td>
+<td><code>S3StorageBackend</code></td>
+<td>Complete; one bucket, one base prefix, verified against rustfs</td>
+</tr>
+</tbody>
+</table>
+<p><code>BaseStorageBackend</code> implements the parts that do not depend on the scheme:
+building an address below the base prefix, <code>exists</code>, <code>list_keys</code>, and
+<code>delete_prefix</code> as an obstore listing followed by a bulk delete. A plugin maps a
+scheme to a backend, so a backend is selected by configuration and never by an
+import in an engine.</p>
+<p>The S3 backend builds all three handles from one settings block and caches the
+two that are per-bucket rather than per-address. <code>list_keys</code> and <code>delete_prefix</code>
+are inherited from <code>BaseStorageBackend</code> unchanged, which is the point of keying
+the obstore store on the bucket with no prefix of its own: an object key is the
+same string for all three libraries and for all three backends.</p>
+<p>One settings block, three translations:</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Icechunk</th>
+<th>obstore</th>
+<th>pyarrow</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>endpoint_url</code></td>
+<td><code>endpoint_url</code></td>
+<td><code>config["endpoint"]</code></td>
+<td><code>endpoint_override</code> plus <code>scheme</code></td>
+</tr>
+<tr>
+<td><code>allow_http</code></td>
+<td><code>allow_http</code></td>
+<td><code>client_options={"allow_http": ...}</code></td>
+<td><code>scheme="http"</code></td>
+</tr>
+<tr>
+<td><code>force_path_style</code></td>
+<td><code>force_path_style</code></td>
+<td><code>virtual_hosted_style_request=False</code></td>
+<td>automatic once <code>endpoint_override</code> is set</td>
+</tr>
+<tr>
+<td><code>anonymous</code></td>
+<td><code>anonymous</code></td>
+<td><code>config["skip_signature"]</code></td>
+<td><code>anonymous=True</code></td>
+</tr>
+<tr>
+<td><code>access_key_id</code>, <code>secret_access_key</code>, <code>session_token</code></td>
+<td>same names</td>
+<td><code>config</code> keys</td>
+<td><code>access_key</code>, <code>secret_key</code>, <code>session_token</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>icechunk_storage(address)</code> returns <code>icechunk.s3_storage(bucket=..., prefix=address.key, ...)</code>,
+so every repository gets its own non-empty prefix, and <code>parquet_path(address)</code>
+is <code>"{bucket}/{key}"</code>, which is the only shape <code>pyarrow.fs.S3FileSystem</code>
+accepts. <code>describe()</code> reports the bucket, the region, the endpoint, the
+addressing style, the client bounds below and whether credentials were
+configured, and never a secret.</p>
+<h2 id="timeouts-and-retries">Timeouts and retries<a class="headerlink" href="#timeouts-and-retries" title="Permanent link">&para;</a></h2>
+<p>Three clients reach the same bucket, so a request that hangs must be bounded in
+three places or it is not bounded at all. Four settings are translated once, in
+<code>S3StorageBackend</code>, into whatever each client calls them:</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Default</th>
+<th>obstore</th>
+<th>Icechunk</th>
+<th>pyarrow</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>connect_timeout_seconds</code></td>
+<td>5</td>
+<td><code>client_options["connect_timeout"]</code></td>
+<td><code>StorageTimeoutSettings(connect_timeout_ms=)</code></td>
+<td><code>connect_timeout</code></td>
+</tr>
+<tr>
+<td><code>request_timeout_seconds</code></td>
+<td>30</td>
+<td><code>client_options["timeout"]</code></td>
+<td><code>network_stream_timeout_seconds</code>, <code>read_timeout_ms</code> and <code>operation_attempt_timeout_ms</code></td>
+<td><code>request_timeout</code></td>
+</tr>
+<tr>
+<td><code>max_retries</code></td>
+<td>3</td>
+<td><code>retry_config["max_retries"]</code></td>
+<td><code>StorageRetriesSettings(max_tries=max_retries + 1)</code></td>
+<td><code>AwsStandardS3RetryStrategy(max_attempts=max_retries + 1)</code></td>
+</tr>
+<tr>
+<td><code>retry_backoff_seconds</code></td>
+<td>0.5</td>
+<td><code>retry_config["backoff"]</code></td>
+<td><code>initial_backoff_ms</code> and <code>max_backoff_ms</code></td>
+<td>fixed by the retry strategy</td>
+</tr>
+</tbody>
+</table>
+<p>Two counting conventions meet here. obstore counts retries <em>after</em> the first
+attempt, while Icechunk and pyarrow count tries <em>including</em> it, so three retries
+is four tries and the translation adds the one.</p>
+<p>The retry budget follows from the rest:
+<code>request_timeout_seconds * (max_retries + 1) + retry_backoff_seconds * max_retries</code>,
+which is 121.5 seconds at the defaults above. It becomes obstore's
+<code>retry_timeout</code> and Icechunk's <code>operation_timeout_ms</code>, so both give up on the
+same wall clock rather than on their own defaults of three minutes.</p>
+<p>That budget bounds one request. An engine call is many requests, and it is
+bounded instead by the facade's
+<code>OCS_STORAGE_STORAGE_OPERATION_TIMEOUT_SECONDS</code>, described under
+<a href="../../architecture/#threading-and-async">threading and async</a>. The two are
+deliberately of the same order: a deployment that raises one without the other
+gets either a client that outlives the call it belongs to or a call that is
+abandoned while its first request is still being retried.</p>
+<p>Icechunk takes its settings in two places: <code>s3_storage(...)</code> takes the stream
+timeout, and everything else arrives as a <code>RepositoryConfig</code> with a
+<code>StorageSettings</code> block. <code>StorageBackend.repository_config()</code> is what carries
+it: the S3 backend returns one, the filesystem and memory backends return
+<code>None</code>, and <code>RasterRepository</code> passes whatever comes back to
+<code>Repository.open_or_create</code>. The conditional-write switches in that same
+<code>StorageSettings</code> block, <code>unsafe_use_conditional_create</code> and
+<code>unsafe_use_conditional_update</code>, are never touched: publication depends on them.</p>
+<p>When the budget runs out the three libraries spell the failure three ways -
+obstore raises its fallback <code>GenericError</code>, Icechunk raises
+<code>icechunk.StorageError</code>, and pyarrow raises a builtin <code>OSError</code>.
+<code>storage/failures.py</code> is the one place that reads all three as the same thing
+and reports <code>BackendUnavailableError</code>, a 503 that keeps the original message. A
+missing object is not an outage, so <code>FileNotFoundError</code> still passes through to
+the callers that read it as "absent".</p>
+<h2 id="writing-a-backend-plugin">Writing a backend plugin<a class="headerlink" href="#writing-a-backend-plugin" title="Permanent link">&para;</a></h2>
+<p>The framework underneath this section - its vocabulary, its dispatch modes and
+why it was chosen - is described in <a href="../pluginkit/">plugin framework</a>.</p>
+<p>Backends are <a href="https://winterop-com.github.io/pluginkit">pluginkit</a> plugins. The
+service declares three extension points on <code>StorageBackendSpecs</code> in
+<code>storage/plugins.py</code>, and a plugin is any object whose methods are marked with
+the matching <code>@extension</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Extension point</th>
+<th>Dispatch</th>
+<th>Answer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>storage_backend(settings, scheme)</code></td>
+<td><code>firstresult</code></td>
+<td>The backend serving that scheme, or <code>None</code></td>
+</tr>
+<tr>
+<td><code>storage_backend_description(settings, scheme)</code></td>
+<td><code>firstresult</code></td>
+<td>A <code>BackendDescription</code> built without touching a credential, or <code>None</code></td>
+</tr>
+<tr>
+<td><code>storage_schemes()</code></td>
+<td>collecting</td>
+<td>The schemes this plugin provides</td>
+</tr>
+</tbody>
+</table>
+<p>A plugin answers <code>None</code> for every scheme it does not own, so the three built-in
+plugins (<code>FilesystemBackendPlugin</code>, <code>MemoryBackendPlugin</code>, <code>S3BackendPlugin</code>)
+are three small classes next to the backends they build:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ocs_storage_exploration.storage.plugins</span><span class="w"> </span><span class="kn">import</span> <span class="n">extension</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">GcsBackendPlugin</span><span class="p">:</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">    </span><span class="sd">"""Provides the gs scheme."""</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="nd">@extension</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">storage_schemes</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">        </span><span class="sd">"""Report the gs scheme."""</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>        <span class="k">return</span> <span class="p">[</span><span class="s2">"gs"</span><span class="p">]</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    <span class="nd">@extension</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">storage_backend</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">settings</span><span class="p">:</span> <span class="n">Settings</span><span class="p">,</span> <span class="n">scheme</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">StorageBackend</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">        </span><span class="sd">"""Build the GCS backend, or None for another scheme."""</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>        <span class="k">if</span> <span class="n">scheme</span> <span class="o">!=</span> <span class="s2">"gs"</span><span class="p">:</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>            <span class="k">return</span> <span class="kc">None</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>        <span class="k">return</span> <span class="n">GcsStorageBackend</span><span class="o">.</span><span class="n">from_settings</span><span class="p">(</span><span class="n">settings</span><span class="p">)</span>
+</code></pre></div>
+<p><code>build_plugin_manager()</code>, in <code>storage/backends/__init__.py</code>, registers the
+built-ins and then calls <code>load_entrypoints("ocs_storage_exploration.plugins")</code>,
+so an installed distribution joins in by advertising itself:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">[project.entry-points.</span><span class="s2">"ocs_storage_exploration.plugins"</span><span class="k">]</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">gs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"ocs_storage_gcs:plugin"</span>
+</code></pre></div>
+<p>The entry-point value resolves to the plugin object itself, and the entry-point
+name becomes the plugin name the manager registers it under. <code>examples/plugins/ocs-storage-null/</code>
+is a complete worked example: a separate package providing a <code>null</code> scheme that
+describes itself and refuses every operation. It is deliberately not installed
+by <code>make install</code>, because installing it would add <code>null</code> to every
+<code>GET /api/v1/backends</code> response of a development checkout;
+<code>tests/test_plugins.py</code> registers it in process and stubs
+<code>importlib.metadata.entry_points</code> instead.</p>
+<p>Three rules follow from the dispatch modes:</p>
+<ul>
+<li><strong>First registered wins.</strong> <code>storage_backend</code> is a <code>firstresult</code> extension
+  point, and the built-ins are registered before the entry points are loaded, so
+  a plugin claiming <code>file</code>, <code>memory</code> or <code>s3</code> never displaces the built-in. Two
+  external plugins claiming the same scheme are resolved by entry-point order.</li>
+<li><strong>A scheme is a name, not an enum member.</strong> <code>StorageScheme</code> still lists the
+  three built-in schemes, but a scheme is carried as a string matching
+  <code>[a-z][a-z0-9+.-]*</code>, so an external plugin can name its own.
+  <code>backend_for_scheme</code> is the single place that refuses a scheme no plugin
+  provides, with <code>BackendNotSupportedError</code>.</li>
+<li><strong>Describing costs nothing.</strong> <code>describe_backends</code> asks the plugin of every
+  inactive scheme to describe it, so listing the backends never creates a
+  directory, builds a client or reads a credential.</li>
+</ul>
+<p>The manager is built once per process by <code>default_plugin_manager()</code> and lives on
+the storage service as <code>service.plugin_manager</code>; <code>StorageService.from_settings</code>
+takes another one when a test needs an isolated set of plugins. Nothing wraps
+the manager: <code>build_plugin_manager</code>, <code>default_plugin_manager</code> and the two
+helpers above are the whole surface.</p>
+<p>The manager is the sync <code>PluginManager</code>, even though the service is awaited
+through <code>AsyncStorageService</code>. It is called once per process to build a backend
+and once per request to describe the inactive schemes, and no hook awaits
+anything: a backend constructor opens no connection. pluginkit also ships
+<code>AsyncPluginManager</code>, with the same extension points and <code>async</code> callers, and
+that is the one to move to the day a plugin has to await during construction -
+fetching a token, say, or probing an endpoint. Until then it would add an await
+to a call that never yields.</p>
+<h2 id="three-handles-one-address">Three handles, one address<a class="headerlink" href="#three-handles-one-address" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">backend</span><span class="o">.</span><span class="n">icechunk_storage</span><span class="p">(</span><span class="n">address</span><span class="p">)</span>  <span class="c1"># icechunk.Storage for one repository</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">backend</span><span class="o">.</span><span class="n">object_store</span><span class="p">()</span>             <span class="c1"># obstore ObjectStore for raw object operations</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">backend</span><span class="o">.</span><span class="n">parquet_filesystem</span><span class="p">()</span>       <span class="c1"># pyarrow.fs.FileSystem, or None when bytes must be buffered</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">backend</span><span class="o">.</span><span class="n">parquet_path</span><span class="p">(</span><span class="n">address</span><span class="p">)</span>      <span class="c1"># the address rendered the way that filesystem expects</span>
+</code></pre></div>
+<p>Three libraries have to address the same bytes, and none of them accepts the
+others' handle: Icechunk does its own I/O, pyarrow reads Parquet through
+<code>pyarrow.fs</code>, and obstore does the raw object operations that neither offers.
+Building them from one settings block in one place is what keeps them pointing
+at the same bucket.</p>
+<p>Each part of the storage package uses exactly what it needs:</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Handles it uses</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RasterRepository</code></td>
+<td><code>icechunk_storage</code> for every read and write; <code>delete_prefix</code> to remove a repository</td>
+</tr>
+<tr>
+<td><code>VectorCollectionStore</code></td>
+<td><code>parquet_filesystem</code> and <code>parquet_path</code> to write and read Parquet, falling back to obstore plus a <code>pyarrow.BufferReader</code> when the filesystem is <code>None</code>; obstore for the <code>current.json</code> pointer, the per-version <code>reservation.json</code> and <code>metadata.json</code>, and for listing versions</td>
+</tr>
+<tr>
+<td><code>ObjectCatalog</code>, <code>AsyncObjectCatalog</code></td>
+<td>obstore only: <code>put</code> as a conditional create, an etag compare-and-swap or a plain overwrite, <code>get</code>, <code>list</code>. There is no <code>delete</code>: a deletion tombstones its record instead, so every transition is a compare-and-swap</td>
+</tr>
+</tbody>
+</table>
+<p>The catalogue record and every conditional vector object go through
+<code>storage/objects.py</code>, which is the one place that knows how a conditional PUT
+fails: <code>AlreadyExistsError</code> and <code>PreconditionError</code> become
+<code>PublicationConflictError</code>, <code>create_object_if_absent</code> reports a lost create as
+<code>None</code> for the callers that retry rather than fail, and the non-atomic
+head-then-put emulation is reached only on obstore's <code>LocalStore</code>, and only for
+an etag replace. Any other store that reports <code>NotImplementedError</code> for a
+conditional write raises <code>BackendNotSupportedError</code> rather than quietly losing
+the guarantee.</p>
+<p>Every helper there comes in two spellings, <code>create_object</code> and
+<code>create_object_async</code> and so on down the module, over obstore's sync and async
+functions. The failure mapping is written once and shared, so the two cannot
+disagree about what a lost create means. The engines call the sync ones, because
+they already run on a worker thread; <code>AsyncObjectCatalog</code> calls the async ones,
+because it runs on the event loop.</p>
+<p><code>ObjectCatalog</code> remembers nothing between calls. A caller that intends to edit a
+record reads it with <code>get_entry</code>, which returns a <code>CatalogEntry</code> carrying the
+record and the revision it was read at, and passes that revision back to <code>put</code>;
+a caller creating a record passes <code>create=True</code>. A <code>put</code> with neither is a
+documented, unconditional overwrite. There is no instance-wide etag memory, so
+one component reading a record can no longer refresh the revision another
+component is about to write against.</p>
+<p>The memory backend returns <code>None</code> from <code>parquet_filesystem()</code>, which is why the
+vector engine has the buffered path at all. That path is not a test-only
+branch: it is also what an object store without a pyarrow filesystem would use.</p>
+<p>One asymmetry between the filesystem and the two object stores is worth naming,
+because it cost a debugging session. <code>GeoDataFrame.to_parquet</code> will not create
+the version directory on a local filesystem, so the vector engine creates it
+first — but only when the Parquet filesystem is a <code>LocalFileSystem</code>. On S3 the
+same <code>create_dir</code> call materialises a listable entry per path segment that a
+list-then-delete prefix sweep cannot remove, which left deleted collections
+half-alive. An object store has no directories, so it is not asked to make one.</p>
+<h2 id="settings">Settings<a class="headerlink" href="#settings" title="Permanent link">&para;</a></h2>
+<p>Settings are read from <code>OCS_STORAGE_</code> environment variables, with <code>__</code> as the
+nesting delimiter, and a <code>.env</code> file is honoured. The four that decide where
+bytes land:</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OCS_STORAGE_BACKEND</code></td>
+<td><code>file</code></td>
+<td>Which scheme to build: <code>file</code>, <code>memory</code>, <code>s3</code>, or any scheme a plugin provides</td>
+</tr>
+<tr>
+<td><code>OCS_STORAGE_DATA_DIRECTORY</code></td>
+<td><code>data</code></td>
+<td>Root directory of the filesystem backend</td>
+</tr>
+<tr>
+<td><code>OCS_STORAGE_BASE_PREFIX</code></td>
+<td><code>ocs</code></td>
+<td>Key prefix every address starts with</td>
+</tr>
+<tr>
+<td><code>OCS_STORAGE_S3__*</code></td>
+<td>unset</td>
+<td>The object storage block: <code>BUCKET</code>, <code>PREFIX</code>, <code>REGION</code>, <code>ENDPOINT_URL</code>, <code>ALLOW_HTTP</code>, <code>ACCESS_KEY_ID</code>, <code>SECRET_ACCESS_KEY</code>, <code>SESSION_TOKEN</code>, <code>FORCE_PATH_STYLE</code>, <code>ANONYMOUS</code>, and the four bounds of <a href="#timeouts-and-retries">timeouts and retries</a></td>
+</tr>
+</tbody>
+</table>
+<p>Two more decide how the service spends itself rather than where bytes land:</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OCS_STORAGE_MAX_CONCURRENT_STORAGE_OPERATIONS</code></td>
+<td><code>16</code></td>
+<td>How many blocking engine calls may run at once</td>
+</tr>
+<tr>
+<td><code>OCS_STORAGE_STORAGE_OPERATION_TIMEOUT_SECONDS</code></td>
+<td><code>180</code></td>
+<td>How long one engine call may wait for a slot and run before it answers 504</td>
+</tr>
+</tbody>
+</table>
+<p>Secrets are <code>SecretStr</code>, they never reach a catalog record or a backend
+description, and <code>.env.example</code> carries a commented block that matches the
+rustfs service in <code>compose.yml</code>.</p>
+<h2 id="the-key-layout">The key layout<a class="headerlink" href="#the-key-layout" title="Permanent link">&para;</a></h2>
+<p>The layout is owned by one module and is identical on every scheme. On the
+filesystem these are directories under the data directory; on S3 they are keys
+under the bucket:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>{base_prefix}/catalog/datasets/{dataset_identifier}.json
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>{base_prefix}/raster/{dataset_identifier}/{generation}/                     Icechunk repository
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>{base_prefix}/vector/{dataset_identifier}/{generation}/current.json         published pointer
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>{base_prefix}/vector/{dataset_identifier}/{generation}/versions/vNNNNN/reservation.json   version claim
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>{base_prefix}/vector/{dataset_identifier}/{generation}/versions/vNNNNN/data.parquet       the features
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>{base_prefix}/vector/{dataset_identifier}/{generation}/versions/vNNNNN/metadata.json      version metadata
+</code></pre></div>
+<p><code>{generation}</code> is a uuid4 in hex minted when the dataset is created, so a dataset
+deleted and written again under the same identifier never shares a prefix with the
+one it replaced. Neither engine derives a key from the identifier: every one of
+them is built from the <code>storage_key</code> of the record.
+<a href="../versioning/">Versioning</a> explains what that buys a deletion.</p>
+<p>Three objects make up a collection version, and the order they are written in is
+the whole safety argument. <code>reservation.json</code> is created first, with obstore's
+<code>mode="create"</code>, so exactly one writer owns that version number. <code>data.parquet</code>
+follows, and is never written over a key that already holds one. <code>metadata.json</code>
+is created last and is what marks the version as finished: a directory without
+one is a claim, not a version, and is skipped by every listing that matters.</p>
+<p>Identifiers are validated against <code>[a-z0-9][a-z0-9_-]{0,127}</code> before they become
+part of a key, and addresses reject empty, <code>.</code> and <code>..</code> segments, backslashes and
+any URI userinfo. No engine builds a path itself, so there is one place where
+traversal and credential leakage are prevented.</p>
+<p>A catalog record holds a key, never a root. <code>storage_key</code> is exactly what
+<code>backend.address(...)</code> takes, <code>raster/{dataset_identifier}/{generation}</code> or
+<code>vector/{dataset_identifier}/{generation}</code>, without the base prefix and without a
+scheme, and it is validated as an object key so an absolute or climbing one never
+reaches a record. The absolute URI is built at serve time from the backend that is running,
+so the same record serves <code>file:///app/data/ocs/...</code> inside a container,
+<code>file:///srv/data/ocs/...</code> on the host and <code>s3://bucket/ocs/...</code> on S3. A record
+that stored the URI it was written under would name a root that does not exist
+anywhere else, which is what moving a data directory used to break.</p>
+<p><a href="../../guides/inspecting-the-data/">Inspecting the data</a> walks the same layout on
+disk, and <a href="../versioning/">versioning</a> explains the <code>vNNNNN</code> numbering and the
+pointer objects.</p>
+<h2 id="on-s3-one-bucket-many-datasets-isolated-by-prefix">On S3: one bucket, many datasets, isolated by prefix<a class="headerlink" href="#on-s3-one-bucket-many-datasets-isolated-by-prefix" title="Permanent link">&para;</a></h2>
+<p>An instance gets one bucket and one base prefix, and every dataset is a prefix
+below it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>s3://{bucket}/{base_prefix}/catalog/datasets/{dataset_identifier}.json
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>s3://{bucket}/{base_prefix}/raster/{dataset_identifier}/{generation}/...
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>s3://{bucket}/{base_prefix}/vector/{dataset_identifier}/{generation}/versions/v00001/data.parquet
+</code></pre></div>
+<p>Per-dataset isolation is by prefix rather than by bucket, for three reasons:</p>
+<ul>
+<li>Icechunk needs its own non-empty prefix per repository. From version 2.1 it
+  refuses an empty prefix, and two repositories may not share one. A prefix per
+  dataset satisfies that without a bucket per dataset.</li>
+<li>Delete is a prefix sweep: list everything below the dataset prefix and hand the
+  keys to a bulk delete. That works the same for a directory and for a bucket
+  prefix, and it is why there is no delete-repository API to miss. The catalog
+  record above it is not swept: it is replaced by a tombstone, because obstore
+  offers no conditional delete and a compare-and-swap is what the next writer of
+  that identifier needs. See <a href="../versioning/">versioning</a>.</li>
+<li>IAM scopes on prefixes. A reader that may see one dataset gets a policy on
+  <code>{base_prefix}/raster/{dataset_identifier}/*</code> without a new bucket, and buckets
+  are a limited, region-bound, slow-to-create resource.</li>
+</ul>
+<p>Several instances can share one bucket by giving each a different base prefix:
+<code>OCS_STORAGE_S3__PREFIX=staging</code> and <code>=production</code> keep two catalogues,
+two sets of repositories and two sets of collections apart with no key ever
+colliding, because the base prefix is the first segment of every key the service
+builds. The same trick separates a test run from real data.</p>
+<p><code>compose.yml</code> carries the rustfs endpoint, which pre-creates the default bucket
+(<code>OCS_STORAGE_S3__BUCKET</code>, <code>ocs-storage-exploration</code> unless overridden) before
+starting the server, so there is no bucket creation step in the service itself.
+The S3 API is on port 9000 and the console on port 9001.
+Its objects live in the <code>./.rustfs</code> bind mount, which <code>make test-s3</code> and
+<code>make docker-run-s3</code> create and make world-writable before starting the
+container: rustfs runs as uid 10001, and on Linux Docker would otherwise create
+that directory as root, leaving the entrypoint unable to pre-create the bucket.</p>
+<p><code>make test-s3</code> starts it, runs the <code>s3</code>-marked tests against it and stops it
+again; <code>make docker-run-s3</code> runs the service itself on the S3 backend next to
+rustfs, in the foreground, so Ctrl-C stops both. obstore and Icechunk reach S3
+through Rust and bypass botocore, so <code>moto</code> cannot intercept those requests and
+a real endpoint is the only honest test; see
+<a href="../../research/testing-s3-locally/">testing S3 locally</a> for what rustfs was
+observed to do.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/mortenoh/ocs-storage-exploration" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "navigation.tracking", "search.highlight", "search.share", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

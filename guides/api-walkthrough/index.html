@@ -1,0 +1,1807 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Prototype of a unified raster and vector storage abstraction for the Open Climate Service">
+      
+      
+      
+        <link rel="canonical" href="https://mortenoh.github.io/ocs-storage-exploration/guides/api-walkthrough/">
+      
+      
+        <link rel="prev" href="../inspecting-the-data/">
+      
+      
+        <link rel="next" href="../../architecture/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>API walkthrough - OCS storage exploration</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="blue" data-md-color-accent="blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#api-walkthrough" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="OCS storage exploration" class="md-header__button md-logo" aria-label="OCS storage exploration" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            OCS storage exploration
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              API walkthrough
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="blue" data-md-color-accent="blue"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="blue" data-md-color-accent="blue"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/mortenoh/ocs-storage-exploration" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mortenoh/ocs-storage-exploration
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="OCS storage exploration" class="md-nav__button md-logo" aria-label="OCS storage exploration" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    OCS storage exploration
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mortenoh/ocs-storage-exploration" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mortenoh/ocs-storage-exploration
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../findings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Findings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/problem-statement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Problem statement
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/ocs-storage-today/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCS storage today
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/icechunk-backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Icechunk backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/geoparquet/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GeoParquet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/obstore-vs-fsspec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    obstore versus fsspec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/unified-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Unified model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/publication-without-rename/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Publication without rename
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/testing-s3-locally/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing S3 locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Versioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/pluginkit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plugin framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/backends-and-layout/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Backends and key layout
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/stac-catalog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STAC catalog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../offline-quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Offline quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../real-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Real data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../inspecting-the-data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Inspecting the data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API walkthrough
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API walkthrough
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#health-and-backends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health and backends
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#create-a-coverage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create a coverage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#append-timesteps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Append timesteps
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#query-a-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Query a window
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#publish-list-versions-roll-back" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Publish, list versions, roll back
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#create-a-collection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create a collection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#read-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read features
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#publish-a-version-and-roll-back" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Publish a version and roll back
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-stac-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The STAC catalog
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#list-and-delete" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        List and delete
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-same-walkthrough-against-rustfs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The same walkthrough against rustfs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#error-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Error shape
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#health-and-backends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health and backends
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#create-a-coverage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create a coverage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#append-timesteps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Append timesteps
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#query-a-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Query a window
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#publish-list-versions-roll-back" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Publish, list versions, roll back
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#create-a-collection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create a collection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#read-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read features
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#publish-a-version-and-roll-back" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Publish a version and roll back
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-stac-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The STAC catalog
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#list-and-delete" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        List and delete
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-same-walkthrough-against-rustfs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The same walkthrough against rustfs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#error-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Error shape
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="api-walkthrough">API walkthrough<a class="headerlink" href="#api-walkthrough" title="Permanent link">&para;</a></h1>
+<p>Every endpoint of the service, exercised with <code>curl</code> in the order a dataset
+actually lives: create, append, query, publish, roll back, read as STAC, list,
+delete. The responses below were captured from a real run against a scratch data
+directory, so the snapshot identifiers and the temporary paths will differ but
+nothing else will.</p>
+<p>Start the service on a throwaway directory:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nv">OCS_STORAGE_DATA_DIRECTORY</span><span class="o">=</span>/tmp/ocs-demo<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>uvicorn<span class="w"> </span>ocs_storage_exploration.main:create_app<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>--factory<span class="w"> </span>--port<span class="w"> </span><span class="m">8765</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">BASE</span><span class="o">=</span>http://127.0.0.1:8765
+</code></pre></div>
+<p>A seeded stack works just as well: <code>make docker-run-file</code> answers on
+<code>http://127.0.0.1:8000</code> and <code>make docker-run-s3</code> on <code>http://127.0.0.1:8001</code>,
+both with the five sample datasets already ingested, so <code>GET /api/v1/datasets</code>
+and the STAC endpoints have something real in them from the first request. The
+datasets created below have their own identifiers and do not disturb the seeded
+ones.</p>
+<p><code>jq</code> is only used to keep the output readable. Where a dataset was written,
+<a href="../inspecting-the-data/">inspecting the data</a> shows how to open the same bytes
+without the API.</p>
+<h2 id="health-and-backends">Health and backends<a class="headerlink" href="#health-and-backends" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="nv">$BASE</span>/health<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span>.
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="nv">$BASE</span>/api/v1/backends<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">'.items[] | {scheme, available}'</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span><span class="nt">"status"</span><span class="p">:</span><span class="s2">"ok"</span><span class="p">,</span><span class="nt">"version"</span><span class="p">:</span><span class="s2">"0.1.0"</span><span class="p">,</span><span class="nt">"backend"</span><span class="p">:</span><span class="s2">"file"</span><span class="p">}</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="p">{</span><span class="nt">"scheme"</span><span class="p">:</span><span class="s2">"file"</span><span class="p">,</span><span class="nt">"available"</span><span class="p">:</span><span class="kc">true</span><span class="p">}</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="p">{</span><span class="nt">"scheme"</span><span class="p">:</span><span class="s2">"memory"</span><span class="p">,</span><span class="nt">"available"</span><span class="p">:</span><span class="kc">false</span><span class="p">}</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="p">{</span><span class="nt">"scheme"</span><span class="p">:</span><span class="s2">"s3"</span><span class="p">,</span><span class="nt">"available"</span><span class="p">:</span><span class="kc">false</span><span class="p">}</span>
+</code></pre></div>
+<p>The active backend is listed first with its root and base prefix; the other
+registered schemes are reported as inactive without building a client, so no
+credential is read to answer this request. A backend description never contains
+a secret.</p>
+<h2 id="create-a-coverage">Create a coverage<a class="headerlink" href="#create-a-coverage" title="Permanent link">&para;</a></h2>
+<p>The server generates the data: the request describes the grid, the variable and
+the time axis rather than carrying any bytes.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="nv">$BASE</span>/api/v1/raster/temperature-demo<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"title": "Synthetic temperature", "shape": [32, 64], "variable": "temperature",</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="s1">       "timestep_count": 6, "start_time": "2020-01-01T00:00:00Z", "step": "month",</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="s1">       "license": "CC-BY-4.0", "attribution": "Open Climate Service"}'</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span>.
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">{</span><span class="nt">"dataset_identifier"</span><span class="p">:</span><span class="s2">"temperature-demo"</span><span class="p">,</span><span class="nt">"snapshot_identifier"</span><span class="p">:</span><span class="s2">"RK4P9ETMDPFEA8ZGVR30"</span><span class="p">,</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w"> </span><span class="nt">"timestep_count"</span><span class="p">:</span><span class="mi">6</span><span class="p">,</span><span class="nt">"variables"</span><span class="p">:[</span><span class="s2">"temperature"</span><span class="p">],</span><span class="nt">"published"</span><span class="p">:</span><span class="kc">false</span><span class="p">}</span>
+</code></pre></div>
+<p>Every field has a default, so <code>-d '{}'</code> creates a 16 by 32 global coverage of
+three monthly steps. Add <code>"publish": true</code> to publish the snapshot in the same
+request, and <code>"overwrite": true</code> to replace an existing dataset; without it a
+second create of the same identifier answers 409. <code>license</code> takes an SPDX
+identifier, an SPDX expression or <code>proprietary</code> and refuses free text;
+<code>attribution</code> is free text. Both land on the record and reach the
+<a href="../../concepts/stac-catalog/">STAC collection</a>, and an overwrite or an append
+that does not name them keeps what the record already held.</p>
+<h2 id="append-timesteps">Append timesteps<a class="headerlink" href="#append-timesteps" title="Permanent link">&para;</a></h2>
+<p>The append continues the time axis with the calendar step the grid recorded, so
+the request only says how many steps to add.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="nv">$BASE</span>/api/v1/raster/temperature-demo/append<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"timestep_count": 3, "seed": 7}'</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span>.
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span><span class="nt">"dataset_identifier"</span><span class="p">:</span><span class="s2">"temperature-demo"</span><span class="p">,</span><span class="nt">"snapshot_identifier"</span><span class="p">:</span><span class="s2">"8FMG55R5397CKBMH99D0"</span><span class="p">,</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w"> </span><span class="nt">"timestep_count"</span><span class="p">:</span><span class="mi">9</span><span class="p">,</span><span class="nt">"variables"</span><span class="p">:[</span><span class="s2">"temperature"</span><span class="p">],</span><span class="nt">"published"</span><span class="p">:</span><span class="kc">false</span><span class="p">}</span>
+</code></pre></div>
+<h2 id="query-a-window">Query a window<a class="headerlink" href="#query-a-window" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">"</span><span class="nv">$BASE</span><span class="s2">/api/v1/raster/temperature-demo/query?variable=temperature&amp;version=draft"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span>.
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">"</span><span class="nv">$BASE</span><span class="s2">/api/v1/raster/temperature-demo/query?bbox=0,50,30,70&amp;start=2020-02-01T00:00:00&amp;end=2020-04-01T00:00:00&amp;version=draft"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span>.
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="p">{</span><span class="nt">"dataset_identifier"</span><span class="p">:</span><span class="s2">"temperature-demo"</span><span class="p">,</span><span class="nt">"variable"</span><span class="p">:</span><span class="s2">"temperature"</span><span class="p">,</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w"> </span><span class="nt">"bbox"</span><span class="p">:{</span><span class="nt">"minimum_x"</span><span class="p">:</span><span class="mf">-180.0</span><span class="p">,</span><span class="nt">"minimum_y"</span><span class="p">:</span><span class="mf">-90.0</span><span class="p">,</span><span class="nt">"maximum_x"</span><span class="p">:</span><span class="mf">180.0</span><span class="p">,</span><span class="nt">"maximum_y"</span><span class="p">:</span><span class="mf">90.0</span><span class="p">},</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w"> </span><span class="nt">"crs"</span><span class="p">:</span><span class="s2">"EPSG:4326"</span><span class="p">,</span><span class="nt">"snapshot_identifier"</span><span class="p">:</span><span class="s2">"8FMG55R5397CKBMH99D0"</span><span class="p">,</span><span class="nt">"timestep_count"</span><span class="p">:</span><span class="mi">9</span><span class="p">,</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w"> </span><span class="nt">"cell_count"</span><span class="p">:</span><span class="mi">18432</span><span class="p">,</span><span class="nt">"minimum"</span><span class="p">:</span><span class="mf">-1.0094642639160156</span><span class="p">,</span><span class="nt">"maximum"</span><span class="p">:</span><span class="mf">6.00623083114624</span><span class="p">,</span><span class="nt">"mean"</span><span class="p">:</span><span class="mf">2.0000004504533937</span><span class="p">}</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="p">{</span><span class="nt">"dataset_identifier"</span><span class="p">:</span><span class="s2">"temperature-demo"</span><span class="p">,</span><span class="nt">"variable"</span><span class="p">:</span><span class="s2">"temperature"</span><span class="p">,</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w"> </span><span class="nt">"bbox"</span><span class="p">:{</span><span class="nt">"minimum_x"</span><span class="p">:</span><span class="mf">0.0</span><span class="p">,</span><span class="nt">"minimum_y"</span><span class="p">:</span><span class="mf">50.625</span><span class="p">,</span><span class="nt">"maximum_x"</span><span class="p">:</span><span class="mf">28.125</span><span class="p">,</span><span class="nt">"maximum_y"</span><span class="p">:</span><span class="mf">67.5</span><span class="p">},</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w"> </span><span class="nt">"crs"</span><span class="p">:</span><span class="s2">"EPSG:4326"</span><span class="p">,</span><span class="nt">"snapshot_identifier"</span><span class="p">:</span><span class="s2">"8FMG55R5397CKBMH99D0"</span><span class="p">,</span><span class="nt">"timestep_count"</span><span class="p">:</span><span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w"> </span><span class="nt">"cell_count"</span><span class="p">:</span><span class="mi">45</span><span class="p">,</span><span class="nt">"minimum"</span><span class="p">:</span><span class="mf">1.7261766195297241</span><span class="p">,</span><span class="nt">"maximum"</span><span class="p">:</span><span class="mf">3.916940689086914</span><span class="p">,</span><span class="nt">"mean"</span><span class="p">:</span><span class="mf">2.8190076298183864</span><span class="p">}</span>
+</code></pre></div>
+<p>A query defaults to the published version, and nothing is published yet, so
+these two read the draft. Without <code>version=draft</code> they would answer 404 <code>dataset
+has no published version</code>: the <code>published</code> branch is what makes a coverage
+readable as published, so a query never falls back to the newest draft.</p>
+<p>The answered <code>bbox</code>, <code>crs</code> and variables are read from the snapshot that was
+opened rather than from the catalog record, so a draft that rewrites the grid
+does not change what a published query reports. The <code>bbox</code> is the envelope of
+the cells that were actually read, grown by half a cell, which is why it snaps
+outwards to the grid. A window that reads more than
+<code>OCS_STORAGE_MAX_QUERY_CELL_COUNT</code> cells is refused with 413 rather than
+truncated, and a window that selects nothing is refused rather than answered
+with nulls. A create or an append whose cube would hold more than
+<code>OCS_STORAGE_MAX_CUBE_CELLS</code> cells is refused with 413 before the cube is
+built.</p>
+<h2 id="publish-list-versions-roll-back">Publish, list versions, roll back<a class="headerlink" href="#publish-list-versions-roll-back" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="nv">$BASE</span>/api/v1/raster/temperature-demo/publish<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span>.
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">"</span><span class="nv">$BASE</span><span class="s2">/api/v1/raster/temperature-demo/versions?limit=5"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">'.items[]'</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="p">{</span><span class="nt">"dataset_identifier"</span><span class="p">:</span><span class="s2">"temperature-demo"</span><span class="p">,</span><span class="nt">"item_type"</span><span class="p">:</span><span class="s2">"coverage"</span><span class="p">,</span><span class="nt">"published"</span><span class="p">:</span><span class="kc">true</span><span class="p">,</span><span class="nt">"changed"</span><span class="p">:</span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w"> </span><span class="nt">"snapshot_identifier"</span><span class="p">:</span><span class="s2">"8FMG55R5397CKBMH99D0"</span><span class="p">,</span><span class="nt">"version"</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w"> </span><span class="nt">"previous_snapshot_identifier"</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span><span class="nt">"previous_version"</span><span class="p">:</span><span class="kc">null</span><span class="p">}</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="p">{</span><span class="nt">"snapshot_identifier"</span><span class="p">:</span><span class="s2">"8FMG55R5397CKBMH99D0"</span><span class="p">,</span><span class="nt">"message"</span><span class="p">:</span><span class="s2">"append"</span><span class="p">,</span><span class="nt">"written_at"</span><span class="p">:</span><span class="s2">"2026-09-15T17:15:18.166688Z"</span><span class="p">,</span><span class="nt">"is_published"</span><span class="p">:</span><span class="kc">true</span><span class="p">}</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="p">{</span><span class="nt">"snapshot_identifier"</span><span class="p">:</span><span class="s2">"RK4P9ETMDPFEA8ZGVR30"</span><span class="p">,</span><span class="nt">"message"</span><span class="p">:</span><span class="s2">"initial write"</span><span class="p">,</span><span class="nt">"written_at"</span><span class="p">:</span><span class="s2">"2026-09-15T17:15:18.134216Z"</span><span class="p">,</span><span class="nt">"is_published"</span><span class="p">:</span><span class="kc">false</span><span class="p">}</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="p">{</span><span class="nt">"snapshot_identifier"</span><span class="p">:</span><span class="s2">"1CECHNKREP0F1RSTCMT0"</span><span class="p">,</span><span class="nt">"message"</span><span class="p">:</span><span class="s2">"Repository initialized"</span><span class="p">,</span><span class="nt">"written_at"</span><span class="p">:</span><span class="s2">"2026-09-15T17:15:18.120458Z"</span><span class="p">,</span><span class="nt">"is_published"</span><span class="p">:</span><span class="kc">false</span><span class="p">}</span>
+</code></pre></div>
+<p>Publishing the same snapshot twice answers <code>"changed": false</code> instead of
+failing. A rollback is the same call with an older snapshot:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nv">FIRST</span><span class="o">=</span><span class="k">$(</span>curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">"</span><span class="nv">$BASE</span><span class="s2">/api/v1/raster/temperature-demo/versions"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-r<span class="w"> </span><span class="s1">'[.items[] | select(.message == "initial write")][0].snapshot_identifier'</span><span class="k">)</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="nv">$BASE</span>/api/v1/raster/temperature-demo/publish<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span>-d<span class="w"> </span><span class="s2">"{\"snapshot_identifier\": \"</span><span class="nv">$FIRST</span><span class="s2">\"}"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span>.
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">"</span><span class="nv">$BASE</span><span class="s2">/api/v1/raster/temperature-demo/query?version=published"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">'{timestep_count}'</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">"</span><span class="nv">$BASE</span><span class="s2">/api/v1/raster/temperature-demo/query?version=draft"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">'{timestep_count}'</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="p">{</span><span class="nt">"dataset_identifier"</span><span class="p">:</span><span class="s2">"temperature-demo"</span><span class="p">,</span><span class="nt">"item_type"</span><span class="p">:</span><span class="s2">"coverage"</span><span class="p">,</span><span class="nt">"published"</span><span class="p">:</span><span class="kc">true</span><span class="p">,</span><span class="nt">"changed"</span><span class="p">:</span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w"> </span><span class="nt">"snapshot_identifier"</span><span class="p">:</span><span class="s2">"RK4P9ETMDPFEA8ZGVR30"</span><span class="p">,</span><span class="nt">"version"</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w"> </span><span class="nt">"previous_snapshot_identifier"</span><span class="p">:</span><span class="s2">"8FMG55R5397CKBMH99D0"</span><span class="p">,</span><span class="nt">"previous_version"</span><span class="p">:</span><span class="kc">null</span><span class="p">}</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="p">{</span><span class="nt">"timestep_count"</span><span class="p">:</span><span class="mi">6</span><span class="p">}</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="p">{</span><span class="nt">"timestep_count"</span><span class="p">:</span><span class="mi">9</span><span class="p">}</span>
+</code></pre></div>
+<p><code>version=published</code> opens the <code>published</code> branch and <code>version=draft</code> reads the
+main branch; <code>snapshot_identifier=...</code> pins one snapshot regardless of either.
+The snapshot the repository was initialised with holds no data, so publishing it
+is refused with 409 rather than emptying the published coverage.</p>
+<h2 id="create-a-collection">Create a collection<a class="headerlink" href="#create-a-collection" title="Permanent link">&para;</a></h2>
+<p>A vector collection is written from a GeoJSON FeatureCollection. The columns a
+later query may filter on have to be declared up front.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="nv">$BASE</span>/api/v1/vector/districts-demo<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"title": "Demo districts", "identifier_property": "id", "selectable_columns": ["level", "path"],</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="s1">       "publish": true, "license": "proprietary", "attribution": "Statistics Norway",</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="s1">       "feature_collection": {"type": "FeatureCollection", "features": [</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="s1">         {"type": "Feature", "properties": {"id": "oslo", "level": 2, "path": "/root/no/oslo"},</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="s1">          "geometry": {"type": "Polygon", "coordinates": [[[10.6,59.8],[10.9,59.8],[10.9,60.0],[10.6,60.0],[10.6,59.8]]]}},</span>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="s1">         {"type": "Feature", "properties": {"id": "bergen", "level": 2, "path": "/root/no/bergen"},</span>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="s1">          "geometry": {"type": "Polygon", "coordinates": [[[5.2,60.3],[5.5,60.3],[5.5,60.5],[5.2,60.5],[5.2,60.3]]]}},</span>
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="s1">         {"type": "Feature", "properties": {"id": "tromso", "level": 3, "path": "/root/no/tromso"},</span>
+<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="s1">          "geometry": {"type": "Point", "coordinates": [18.96, 69.65]}}]}}'</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span>.
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="p">{</span><span class="nt">"dataset_identifier"</span><span class="p">:</span><span class="s2">"districts-demo"</span><span class="p">,</span><span class="nt">"version"</span><span class="p">:</span><span class="mi">1</span><span class="p">,</span><span class="nt">"feature_count"</span><span class="p">:</span><span class="mi">3</span><span class="p">,</span><span class="nt">"published"</span><span class="p">:</span><span class="kc">true</span><span class="p">}</span>
+</code></pre></div>
+<p>A null or repeated identifier is refused with 422 and the offending value is
+named in the response detail.</p>
+<h2 id="read-features">Read features<a class="headerlink" href="#read-features" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">"</span><span class="nv">$BASE</span><span class="s2">/api/v1/vector/districts-demo/features?bbox=5,59,11,61"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">'{number_returned, number_matched, version, crs, truncated, ids: [.features[].properties.id]}'</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">"</span><span class="nv">$BASE</span><span class="s2">/api/v1/vector/districts-demo/features?where=level:3&amp;columns=level"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">'{number_returned, properties: .features[0].properties}'</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">"</span><span class="nv">$BASE</span><span class="s2">/api/v1/vector/districts-demo/features?where=path:/root/no/*&amp;limit=2"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">'{number_returned, number_matched, truncated}'</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="p">{</span><span class="nt">"number_returned"</span><span class="p">:</span><span class="mi">2</span><span class="p">,</span><span class="nt">"number_matched"</span><span class="p">:</span><span class="mi">2</span><span class="p">,</span><span class="nt">"version"</span><span class="p">:</span><span class="mi">1</span><span class="p">,</span><span class="nt">"crs"</span><span class="p">:</span><span class="s2">"EPSG:4326"</span><span class="p">,</span><span class="nt">"truncated"</span><span class="p">:</span><span class="kc">false</span><span class="p">,</span><span class="nt">"ids"</span><span class="p">:[</span><span class="s2">"bergen"</span><span class="p">,</span><span class="s2">"oslo"</span><span class="p">]}</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="p">{</span><span class="nt">"number_returned"</span><span class="p">:</span><span class="mi">1</span><span class="p">,</span><span class="nt">"properties"</span><span class="p">:{</span><span class="nt">"level"</span><span class="p">:</span><span class="mi">3</span><span class="p">,</span><span class="nt">"id"</span><span class="p">:</span><span class="s2">"tromso"</span><span class="p">}}</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="p">{</span><span class="nt">"number_returned"</span><span class="p">:</span><span class="mi">2</span><span class="p">,</span><span class="nt">"number_matched"</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span><span class="nt">"truncated"</span><span class="p">:</span><span class="kc">true</span><span class="p">}</span>
+</code></pre></div>
+<p>Features are answered in the coordinate reference system the collection was
+written in, which the response names in <code>crs</code>; they are never silently
+reprojected. <code>bbox-crs</code> reprojects the query window instead, so
+<code>?bbox=556597,8180387,1224514,8625823&amp;bbox-crs=EPSG:3857</code> is the same window in
+Web Mercator and answers the same two features. The window is densified before
+it is reprojected, so a large box does not cut a corner off the curve. <code>columns</code> keeps the identifier property and the
+geometry whatever else it names, <code>where</code> may be repeated for several columns,
+and a trailing asterisk makes a clause a prefix match. When a <code>limit</code> truncates
+the page, <code>number_matched</code> is null because the total was never counted, and an
+unqualified read of a collection larger than
+<code>OCS_STORAGE_MAX_UNQUALIFIED_FEATURE_COUNT</code> is refused with 413.</p>
+<h2 id="publish-a-version-and-roll-back">Publish a version and roll back<a class="headerlink" href="#publish-a-version-and-roll-back" title="Permanent link">&para;</a></h2>
+<p>Writing the same identifier again adds a version; it never overwrites one.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="nv">$BASE</span>/api/v1/vector/districts-demo<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"identifier_property": "id", "selectable_columns": ["level"],</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="s1">       "feature_collection": {"type": "FeatureCollection", "features": [</span>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="s1">         {"type": "Feature", "properties": {"id": "oslo", "level": 2},</span>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="s1">          "geometry": {"type": "Point", "coordinates": [10.75, 59.91]}}]}}'</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span>.
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="nv">$BASE</span>/api/v1/vector/districts-demo/publish<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"version": 2}'</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span>.
+<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">"</span><span class="nv">$BASE</span><span class="s2">/api/v1/vector/districts-demo/features?bbox=-180,-90,180,90"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">'{version, number_returned}'</span>
+<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="nv">$BASE</span>/api/v1/vector/districts-demo/publish<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"version": 1}'</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span>.
+<a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">"</span><span class="nv">$BASE</span><span class="s2">/api/v1/vector/districts-demo/features?bbox=-180,-90,180,90"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">'{version, number_returned}'</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="p">{</span><span class="nt">"dataset_identifier"</span><span class="p">:</span><span class="s2">"districts-demo"</span><span class="p">,</span><span class="nt">"version"</span><span class="p">:</span><span class="mi">2</span><span class="p">,</span><span class="nt">"feature_count"</span><span class="p">:</span><span class="mi">1</span><span class="p">,</span><span class="nt">"published"</span><span class="p">:</span><span class="kc">false</span><span class="p">}</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="p">{</span><span class="nt">"dataset_identifier"</span><span class="p">:</span><span class="s2">"districts-demo"</span><span class="p">,</span><span class="nt">"item_type"</span><span class="p">:</span><span class="s2">"feature"</span><span class="p">,</span><span class="nt">"published"</span><span class="p">:</span><span class="kc">true</span><span class="p">,</span><span class="nt">"changed"</span><span class="p">:</span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="w"> </span><span class="nt">"snapshot_identifier"</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span><span class="nt">"version"</span><span class="p">:</span><span class="mi">2</span><span class="p">,</span><span class="nt">"previous_snapshot_identifier"</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span><span class="nt">"previous_version"</span><span class="p">:</span><span class="mi">1</span><span class="p">}</span>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="p">{</span><span class="nt">"version"</span><span class="p">:</span><span class="mi">2</span><span class="p">,</span><span class="nt">"number_returned"</span><span class="p">:</span><span class="mi">1</span><span class="p">}</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="p">{</span><span class="nt">"dataset_identifier"</span><span class="p">:</span><span class="s2">"districts-demo"</span><span class="p">,</span><span class="nt">"item_type"</span><span class="p">:</span><span class="s2">"feature"</span><span class="p">,</span><span class="nt">"published"</span><span class="p">:</span><span class="kc">true</span><span class="p">,</span><span class="nt">"changed"</span><span class="p">:</span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="w"> </span><span class="nt">"snapshot_identifier"</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span><span class="nt">"version"</span><span class="p">:</span><span class="mi">1</span><span class="p">,</span><span class="nt">"previous_snapshot_identifier"</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span><span class="nt">"previous_version"</span><span class="p">:</span><span class="mi">2</span><span class="p">}</span>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="p">{</span><span class="nt">"version"</span><span class="p">:</span><span class="mi">1</span><span class="p">,</span><span class="nt">"number_returned"</span><span class="p">:</span><span class="mi">3</span><span class="p">}</span>
+</code></pre></div>
+<p><code>POST /publish</code> with no body publishes the newest version. A coverage is
+published by <code>snapshot_identifier</code> and a collection by <code>version</code>; naming both,
+or naming the selector of the other item type, is refused with 422.</p>
+<h2 id="the-stac-catalog">The STAC catalog<a class="headerlink" href="#the-stac-catalog" title="Permanent link">&para;</a></h2>
+<p>Everything above is also readable as STAC, without writing anything: a
+collection is a projection of the record, so there is no second index to keep in
+sync. The landing page names the conformance classes, the collections endpoint
+and one child per advertised dataset.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="nv">$BASE</span>/stac<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">'{id, title, conformsTo}'</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="nv">$BASE</span>/stac<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">'[.links[] | {rel, href}]'</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="p">{</span><span class="nt">"id"</span><span class="p">:</span><span class="s2">"ocs-storage-exploration"</span><span class="p">,</span><span class="nt">"title"</span><span class="p">:</span><span class="s2">"OCS storage exploration"</span><span class="p">,</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="w"> </span><span class="nt">"conformsTo"</span><span class="p">:[</span><span class="s2">"https://api.stacspec.org/v1.0.0/core"</span><span class="p">,</span><span class="s2">"https://api.stacspec.org/v1.0.0/collections"</span><span class="p">]}</span>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="p">[{</span><span class="nt">"rel"</span><span class="p">:</span><span class="s2">"self"</span><span class="p">,</span><span class="nt">"href"</span><span class="p">:</span><span class="s2">"http://127.0.0.1:8765/stac"</span><span class="p">},</span>
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="w"> </span><span class="p">{</span><span class="nt">"rel"</span><span class="p">:</span><span class="s2">"root"</span><span class="p">,</span><span class="nt">"href"</span><span class="p">:</span><span class="s2">"http://127.0.0.1:8765/stac"</span><span class="p">},</span>
+<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="w"> </span><span class="p">{</span><span class="nt">"rel"</span><span class="p">:</span><span class="s2">"data"</span><span class="p">,</span><span class="nt">"href"</span><span class="p">:</span><span class="s2">"http://127.0.0.1:8765/stac/collections"</span><span class="p">},</span>
+<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="w"> </span><span class="p">{</span><span class="nt">"rel"</span><span class="p">:</span><span class="s2">"child"</span><span class="p">,</span><span class="nt">"href"</span><span class="p">:</span><span class="s2">"http://127.0.0.1:8765/stac/collections/districts-demo"</span><span class="p">},</span>
+<a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a><span class="w"> </span><span class="p">{</span><span class="nt">"rel"</span><span class="p">:</span><span class="s2">"child"</span><span class="p">,</span><span class="nt">"href"</span><span class="p">:</span><span class="s2">"http://127.0.0.1:8765/stac/collections/temperature-demo"</span><span class="p">}]</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="nv">$BASE</span>/stac/collections<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">'[.collections[] | {id, type: ."ocs:item_type", license}]'</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="nv">$BASE</span>/stac/collections/temperature-demo<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">'{id, dims: ."cube:dimensions", vars: ."cube:variables"}'</span>
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="nv">$BASE</span>/stac/collections/temperature-demo<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">'{assets, providers}'</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="p">[{</span><span class="nt">"id"</span><span class="p">:</span><span class="s2">"districts-demo"</span><span class="p">,</span><span class="nt">"type"</span><span class="p">:</span><span class="s2">"feature"</span><span class="p">,</span><span class="nt">"license"</span><span class="p">:</span><span class="s2">"proprietary"</span><span class="p">},</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="w"> </span><span class="p">{</span><span class="nt">"id"</span><span class="p">:</span><span class="s2">"temperature-demo"</span><span class="p">,</span><span class="nt">"type"</span><span class="p">:</span><span class="s2">"coverage"</span><span class="p">,</span><span class="nt">"license"</span><span class="p">:</span><span class="s2">"CC-BY-4.0"</span><span class="p">}]</span>
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="p">{</span><span class="nt">"id"</span><span class="p">:</span><span class="s2">"temperature-demo"</span><span class="p">,</span>
+<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="w"> </span><span class="nt">"dims"</span><span class="p">:{</span><span class="nt">"x"</span><span class="p">:{</span><span class="nt">"type"</span><span class="p">:</span><span class="s2">"spatial"</span><span class="p">,</span><span class="nt">"axis"</span><span class="p">:</span><span class="s2">"x"</span><span class="p">,</span><span class="nt">"extent"</span><span class="p">:[</span><span class="mf">-180.0</span><span class="p">,</span><span class="mf">180.0</span><span class="p">],</span><span class="nt">"reference_system"</span><span class="p">:</span><span class="mi">4326</span><span class="p">},</span>
+<a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a><span class="w">         </span><span class="nt">"y"</span><span class="p">:{</span><span class="nt">"type"</span><span class="p">:</span><span class="s2">"spatial"</span><span class="p">,</span><span class="nt">"axis"</span><span class="p">:</span><span class="s2">"y"</span><span class="p">,</span><span class="nt">"extent"</span><span class="p">:[</span><span class="mf">-90.0</span><span class="p">,</span><span class="mf">90.0</span><span class="p">],</span><span class="nt">"reference_system"</span><span class="p">:</span><span class="mi">4326</span><span class="p">},</span>
+<a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a><span class="w">         </span><span class="nt">"t"</span><span class="p">:{</span><span class="nt">"type"</span><span class="p">:</span><span class="s2">"temporal"</span><span class="p">,</span><span class="nt">"extent"</span><span class="p">:[</span><span class="s2">"2020-01-01T00:00:00Z"</span><span class="p">,</span><span class="s2">"2020-09-01T00:00:00Z"</span><span class="p">]}},</span>
+<a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a><span class="w"> </span><span class="nt">"vars"</span><span class="p">:{</span><span class="nt">"temperature"</span><span class="p">:{</span><span class="nt">"dimensions"</span><span class="p">:[</span><span class="s2">"t"</span><span class="p">,</span><span class="s2">"y"</span><span class="p">,</span><span class="s2">"x"</span><span class="p">],</span><span class="nt">"type"</span><span class="p">:</span><span class="s2">"data"</span><span class="p">}}}</span>
+<a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a><span class="p">{</span><span class="nt">"assets"</span><span class="p">:{</span><span class="nt">"icechunk"</span><span class="p">:{</span><span class="nt">"href"</span><span class="p">:</span><span class="s2">"file:///tmp/ocs-demo/ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d"</span><span class="p">,</span>
+<a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a><span class="w">                       </span><span class="nt">"type"</span><span class="p">:</span><span class="s2">"application/vnd.zarr; version=3"</span><span class="p">,</span><span class="nt">"title"</span><span class="p">:</span><span class="s2">"Icechunk repository"</span><span class="p">,</span>
+<a id="__codelineno-22-10" name="__codelineno-22-10" href="#__codelineno-22-10"></a><span class="w">                       </span><span class="nt">"icechunk:branch"</span><span class="p">:</span><span class="s2">"published"</span><span class="p">,</span><span class="nt">"roles"</span><span class="p">:[</span><span class="s2">"data"</span><span class="p">]},</span>
+<a id="__codelineno-22-11" name="__codelineno-22-11" href="#__codelineno-22-11"></a><span class="w">           </span><span class="nt">"api"</span><span class="p">:{</span><span class="nt">"href"</span><span class="p">:</span><span class="s2">"http://127.0.0.1:8765/api/v1/raster/temperature-demo/query"</span><span class="p">,</span>
+<a id="__codelineno-22-12" name="__codelineno-22-12" href="#__codelineno-22-12"></a><span class="w">                  </span><span class="nt">"type"</span><span class="p">:</span><span class="s2">"application/json"</span><span class="p">,</span><span class="nt">"title"</span><span class="p">:</span><span class="s2">"Raster query endpoint"</span><span class="p">,</span><span class="nt">"roles"</span><span class="p">:[</span><span class="s2">"metadata"</span><span class="p">]}},</span>
+<a id="__codelineno-22-13" name="__codelineno-22-13" href="#__codelineno-22-13"></a><span class="w"> </span><span class="nt">"providers"</span><span class="p">:[{</span><span class="nt">"name"</span><span class="p">:</span><span class="s2">"Open Climate Service"</span><span class="p">,</span><span class="nt">"roles"</span><span class="p">:[</span><span class="s2">"producer"</span><span class="p">,</span><span class="s2">"licensor"</span><span class="p">]}]}</span>
+</code></pre></div>
+<p>A feature collection describes the Parquet it advertises, read from that file's
+footer rather than from the record: the collection was rolled back to version 1
+above, so it reports the three rows that version holds even though the newest
+write has one.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="nv">$BASE</span>/stac/collections/districts-demo<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">'{version: ."ocs:version", rows: ."table:row_count", geometry: ."table:primary_geometry",</span>
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="s1">            columns: ."table:columns"}'</span>
+<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="nv">$BASE</span>/stac/collections/districts-demo<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">'.assets.data'</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="p">{</span><span class="nt">"version"</span><span class="p">:</span><span class="mi">1</span><span class="p">,</span><span class="nt">"rows"</span><span class="p">:</span><span class="mi">3</span><span class="p">,</span><span class="nt">"geometry"</span><span class="p">:</span><span class="s2">"geometry"</span><span class="p">,</span>
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="w"> </span><span class="nt">"columns"</span><span class="p">:[{</span><span class="nt">"name"</span><span class="p">:</span><span class="s2">"geometry"</span><span class="p">,</span><span class="nt">"type"</span><span class="p">:</span><span class="s2">"binary"</span><span class="p">},{</span><span class="nt">"name"</span><span class="p">:</span><span class="s2">"id"</span><span class="p">,</span><span class="nt">"type"</span><span class="p">:</span><span class="s2">"string"</span><span class="p">},</span>
+<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="w">            </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="s2">"level"</span><span class="p">,</span><span class="nt">"type"</span><span class="p">:</span><span class="s2">"int64"</span><span class="p">},{</span><span class="nt">"name"</span><span class="p">:</span><span class="s2">"path"</span><span class="p">,</span><span class="nt">"type"</span><span class="p">:</span><span class="s2">"string"</span><span class="p">},</span>
+<a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="w">            </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="s2">"bbox"</span><span class="p">,</span><span class="nt">"type"</span><span class="p">:</span><span class="s2">"struct&lt;xmin: double, ymin: double, xmax: double, ymax: double&gt;"</span><span class="p">}]}</span>
+<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a><span class="p">{</span><span class="nt">"href"</span><span class="p">:</span><span class="s2">"file:///tmp/ocs-demo/ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c/versions/v00001/data.parquet"</span><span class="p">,</span>
+<a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a><span class="w"> </span><span class="nt">"type"</span><span class="p">:</span><span class="s2">"application/x-parquet"</span><span class="p">,</span><span class="nt">"title"</span><span class="p">:</span><span class="s2">"GeoParquet data"</span><span class="p">,</span><span class="nt">"roles"</span><span class="p">:[</span><span class="s2">"data"</span><span class="p">]}</span>
+</code></pre></div>
+<p>Only published datasets are advertised. A dataset created without
+<code>"publish": true</code> is absent from the listing and answers 404 until
+<code>published_only=false</code> asks for it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="nv">$BASE</span>/api/v1/raster/draft-demo<span class="w"> </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{}'</span><span class="w"> </span>&gt;<span class="w"> </span>/dev/null
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>curl<span class="w"> </span>-s<span class="w"> </span>-o<span class="w"> </span>/dev/null<span class="w"> </span>-w<span class="w"> </span><span class="s1">'%{http_code}\n'</span><span class="w"> </span><span class="nv">$BASE</span>/stac/collections/draft-demo
+<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>curl<span class="w"> </span>-s<span class="w"> </span>-o<span class="w"> </span>/dev/null<span class="w"> </span>-w<span class="w"> </span><span class="s1">'%{http_code}\n'</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE</span><span class="s2">/stac/collections/draft-demo?published_only=false"</span>
+<a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="nv">$BASE</span>/stac/collections/absent<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span>.
+<a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a>curl<span class="w"> </span>-s<span class="w"> </span>-o<span class="w"> </span>/dev/null<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span><span class="nv">$BASE</span>/api/v1/datasets/draft-demo
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>404
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>200
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="p">{</span><span class="nt">"error"</span><span class="p">:</span><span class="s2">"DatasetNotFoundError"</span><span class="p">,</span><span class="nt">"detail"</span><span class="p">:</span><span class="s2">"no dataset record for 'absent'"</span><span class="p">}</span>
+</code></pre></div>
+<p><a href="../../concepts/stac-catalog/">The STAC catalog</a> explains what each kind
+advertises, why the media types are the ones they are, and why the coverage
+temporal extent is read back from the advertised snapshot rather than taken from
+the record.</p>
+<h2 id="list-and-delete">List and delete<a class="headerlink" href="#list-and-delete" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="nv">$BASE</span>/api/v1/datasets<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">'.items[] | {dataset_identifier, item_type, storage_format, published: .publication.published}'</span>
+<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">"</span><span class="nv">$BASE</span><span class="s2">/api/v1/datasets?item_type=feature"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">'[.items[].dataset_identifier]'</span>
+<a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="nv">$BASE</span>/api/v1/datasets/temperature-demo<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">'{title, item_type, timestep_count, temporal}'</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="p">{</span><span class="nt">"dataset_identifier"</span><span class="p">:</span><span class="s2">"districts-demo"</span><span class="p">,</span><span class="nt">"item_type"</span><span class="p">:</span><span class="s2">"feature"</span><span class="p">,</span><span class="nt">"storage_format"</span><span class="p">:</span><span class="s2">"geoparquet"</span><span class="p">,</span><span class="nt">"published"</span><span class="p">:</span><span class="kc">true</span><span class="p">}</span>
+<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="p">{</span><span class="nt">"dataset_identifier"</span><span class="p">:</span><span class="s2">"temperature-demo"</span><span class="p">,</span><span class="nt">"item_type"</span><span class="p">:</span><span class="s2">"coverage"</span><span class="p">,</span><span class="nt">"storage_format"</span><span class="p">:</span><span class="s2">"icechunk"</span><span class="p">,</span><span class="nt">"published"</span><span class="p">:</span><span class="kc">true</span><span class="p">}</span>
+<a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="p">[</span><span class="s2">"districts-demo"</span><span class="p">]</span>
+<a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a><span class="p">{</span><span class="nt">"title"</span><span class="p">:</span><span class="s2">"Synthetic temperature"</span><span class="p">,</span><span class="nt">"item_type"</span><span class="p">:</span><span class="s2">"coverage"</span><span class="p">,</span><span class="nt">"timestep_count"</span><span class="p">:</span><span class="mi">9</span><span class="p">,</span>
+<a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a><span class="w"> </span><span class="nt">"temporal"</span><span class="p">:{</span><span class="nt">"start"</span><span class="p">:</span><span class="s2">"2020-01-01T00:00:00"</span><span class="p">,</span><span class="nt">"end"</span><span class="p">:</span><span class="s2">"2020-09-01T00:00:00"</span><span class="p">}}</span>
+</code></pre></div>
+<p>One delete endpoint serves both item types: the record names the item type and
+the service routes to the engine that owns the bytes.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a>curl<span class="w"> </span>-s<span class="w"> </span>-o<span class="w"> </span>/dev/null<span class="w"> </span>-w<span class="w"> </span><span class="s1">'%{http_code}\n'</span><span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span><span class="nv">$BASE</span>/api/v1/datasets/temperature-demo
+<a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>curl<span class="w"> </span>-s<span class="w"> </span>-o<span class="w"> </span>/dev/null<span class="w"> </span>-w<span class="w"> </span><span class="s1">'%{http_code}\n'</span><span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span><span class="nv">$BASE</span>/api/v1/datasets/districts-demo
+<a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a>curl<span class="w"> </span>-s<span class="w"> </span>-o<span class="w"> </span>/dev/null<span class="w"> </span>-w<span class="w"> </span><span class="s1">'%{http_code}\n'</span><span class="w"> </span><span class="nv">$BASE</span>/api/v1/datasets/temperature-demo
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a>204
+<a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a>204
+<a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a>404
+</code></pre></div>
+<p>The bytes go before the record, and the record is never deleted: it is marked,
+swept behind, and then replaced by a tombstone, so a failure halfway leaves a
+marked record the next delete or write finishes rather than a prefix nothing
+names. A tombstone answers 404 exactly as an identifier nothing was ever written
+under, and the next write of that name replaces it. See
+<a href="../../concepts/versioning/">versioning</a>.</p>
+<h2 id="the-same-walkthrough-against-rustfs">The same walkthrough against rustfs<a class="headerlink" href="#the-same-walkthrough-against-rustfs" title="Permanent link">&para;</a></h2>
+<p>Nothing above changes on S3. The only difference is which backend the service
+was started with, which is the point of the whole design.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>make<span class="w"> </span>docker-run-s3<span class="w">      </span><span class="c1"># rustfs plus the service on the s3 backend, in the foreground</span>
+<a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">BASE</span><span class="o">=</span>http://127.0.0.1:8001
+</code></pre></div>
+<p><code>docker-run-s3</code> runs the <code>s3</code> compose profile in the foreground under a shell
+trap that runs <code>docker compose down</code> however the run ends, so Ctrl-C stops and
+removes both containers and the network. The service is published on 8001 so it
+never collides with a local <code>make run</code> or with the filesystem profile on 8000. To run it outside Docker instead, point the
+same settings at the endpoint by hand:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>--wait<span class="w"> </span>rustfs
+<a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a><span class="nv">OCS_STORAGE_BACKEND</span><span class="o">=</span>s3<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a><span class="nv">OCS_STORAGE_S3__BUCKET</span><span class="o">=</span>ocs-storage-exploration<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-33-4" name="__codelineno-33-4" href="#__codelineno-33-4"></a><span class="nv">OCS_STORAGE_S3__ENDPOINT_URL</span><span class="o">=</span>http://127.0.0.1:9000<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-33-5" name="__codelineno-33-5" href="#__codelineno-33-5"></a><span class="nv">OCS_STORAGE_S3__REGION</span><span class="o">=</span>us-east-1<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-33-6" name="__codelineno-33-6" href="#__codelineno-33-6"></a><span class="nv">OCS_STORAGE_S3__ACCESS_KEY_ID</span><span class="o">=</span>rustfsadmin<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-33-7" name="__codelineno-33-7" href="#__codelineno-33-7"></a><span class="nv">OCS_STORAGE_S3__SECRET_ACCESS_KEY</span><span class="o">=</span>rustfsadmin<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-33-8" name="__codelineno-33-8" href="#__codelineno-33-8"></a><span class="nv">OCS_STORAGE_S3__ALLOW_HTTP</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-33-9" name="__codelineno-33-9" href="#__codelineno-33-9"></a><span class="nv">OCS_STORAGE_S3__FORCE_PATH_STYLE</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-33-10" name="__codelineno-33-10" href="#__codelineno-33-10"></a><span class="w">  </span>uv<span class="w"> </span>run<span class="w"> </span>uvicorn<span class="w"> </span>ocs_storage_exploration.main:create_app<span class="w"> </span>--factory<span class="w"> </span>--port<span class="w"> </span><span class="m">8765</span>
+</code></pre></div>
+<p><code>GET /health</code> and <code>GET /api/v1/backends</code> report the active scheme, and the
+backend description names the endpoint but never a secret:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a><span class="p">{</span><span class="nt">"status"</span><span class="p">:</span><span class="s2">"ok"</span><span class="p">,</span><span class="nt">"version"</span><span class="p">:</span><span class="s2">"0.1.0"</span><span class="p">,</span><span class="nt">"backend"</span><span class="p">:</span><span class="s2">"s3"</span><span class="p">}</span>
+<a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a><span class="p">{</span><span class="nt">"scheme"</span><span class="p">:</span><span class="s2">"s3"</span><span class="p">,</span><span class="nt">"root"</span><span class="p">:</span><span class="s2">"ocs-storage-exploration"</span><span class="p">,</span><span class="nt">"base_prefix"</span><span class="p">:</span><span class="s2">"ocs"</span><span class="p">,</span><span class="nt">"available"</span><span class="p">:</span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a><span class="w"> </span><span class="nt">"supports_parquet_filesystem"</span><span class="p">:</span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-34-4" name="__codelineno-34-4" href="#__codelineno-34-4"></a><span class="w"> </span><span class="nt">"details"</span><span class="p">:{</span><span class="nt">"bucket"</span><span class="p">:</span><span class="s2">"ocs-storage-exploration"</span><span class="p">,</span><span class="nt">"region"</span><span class="p">:</span><span class="s2">"us-east-1"</span><span class="p">,</span>
+<a id="__codelineno-34-5" name="__codelineno-34-5" href="#__codelineno-34-5"></a><span class="w">            </span><span class="nt">"endpoint_url"</span><span class="p">:</span><span class="s2">"http://rustfs:9000"</span><span class="p">,</span><span class="nt">"addressing_style"</span><span class="p">:</span><span class="s2">"path"</span><span class="p">,</span>
+<a id="__codelineno-34-6" name="__codelineno-34-6" href="#__codelineno-34-6"></a><span class="w">            </span><span class="nt">"allow_http"</span><span class="p">:</span><span class="s2">"true"</span><span class="p">,</span><span class="nt">"anonymous"</span><span class="p">:</span><span class="s2">"false"</span><span class="p">,</span><span class="nt">"has_credentials"</span><span class="p">:</span><span class="s2">"true"</span><span class="p">}}</span>
+</code></pre></div>
+<p>Creating and publishing one coverage and one collection through exactly the
+calls above leaves this in the bucket:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a>ocs/catalog/datasets/districts-demo.json
+<a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a>ocs/catalog/datasets/temperature-demo.json
+<a id="__codelineno-35-3" name="__codelineno-35-3" href="#__codelineno-35-3"></a>ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/repo
+<a id="__codelineno-35-4" name="__codelineno-35-4" href="#__codelineno-35-4"></a>ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/snapshots/1CECHNKREP0F1RSTCMT0
+<a id="__codelineno-35-5" name="__codelineno-35-5" href="#__codelineno-35-5"></a>ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/snapshots/36X40SW4JZCK9PQV43N0
+<a id="__codelineno-35-6" name="__codelineno-35-6" href="#__codelineno-35-6"></a>ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/transactions/1CECHNKREP0F1RSTCMT0
+<a id="__codelineno-35-7" name="__codelineno-35-7" href="#__codelineno-35-7"></a>ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/transactions/36X40SW4JZCK9PQV43N0
+<a id="__codelineno-35-8" name="__codelineno-35-8" href="#__codelineno-35-8"></a>ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/manifests/12JK7D21GHC6HYNM63H0
+<a id="__codelineno-35-9" name="__codelineno-35-9" href="#__codelineno-35-9"></a>ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/chunks/QA9BX124QHESED1QEAEG
+<a id="__codelineno-35-10" name="__codelineno-35-10" href="#__codelineno-35-10"></a>ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c/current.json
+<a id="__codelineno-35-11" name="__codelineno-35-11" href="#__codelineno-35-11"></a>ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c/versions/v00001/reservation.json
+<a id="__codelineno-35-12" name="__codelineno-35-12" href="#__codelineno-35-12"></a>ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c/versions/v00001/data.parquet
+<a id="__codelineno-35-13" name="__codelineno-35-13" href="#__codelineno-35-13"></a>ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c/versions/v00001/metadata.json
+</code></pre></div>
+<p>That is the layout
+<a href="../../concepts/backends-and-layout/">backends and key layout</a> specifies, keys
+rather than directories, with the Icechunk repository laid out by Icechunk
+itself below its own prefix. A record holds only the key below the base prefix,
+<code>vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c</code>, and the absolute URI is built when it is
+served, so the same record answers
+<code>s3://ocs-storage-exploration/ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c</code> here and
+<code>file:///app/data/ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c</code> inside the filesystem
+container. The last segment is the storage generation, minted when the
+collection was created.</p>
+<h2 id="error-shape">Error shape<a class="headerlink" href="#error-shape" title="Permanent link">&para;</a></h2>
+<p>Every failure is answered by one exception handler in the same shape, with the
+status code the error class declares:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="nv">$BASE</span>/api/v1/datasets/absent<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-c<span class="w"> </span>.
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a><span class="p">{</span><span class="nt">"error"</span><span class="p">:</span><span class="s2">"DatasetNotFoundError"</span><span class="p">,</span><span class="nt">"detail"</span><span class="p">:</span><span class="s2">"no dataset record for 'absent'"</span><span class="p">}</span>
+</code></pre></div>
+<p>400 is a malformed address, bounding box or clause, 404 a missing dataset or
+snapshot, 409 an existing identifier or a lost compare-and-swap, 413 a guard
+refusing an oversized read, 422 a contract or identity violation, and 501 a
+backend refusing an operation it cannot support.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/mortenoh/ocs-storage-exploration" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "navigation.tracking", "search.highlight", "search.share", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
