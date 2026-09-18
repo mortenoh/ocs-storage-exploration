@@ -157,22 +157,27 @@ theme uses the system font stack rather than fetching Google Fonts.
 The files are ordinary objects under `./data`:
 
 ```console
-$ find data -maxdepth 4 | sort
+$ find data -maxdepth 6 | sort
 data/ocs/catalog/datasets/chirps3-sle-daily.json
 data/ocs/catalog/datasets/ne-lakes.json
 data/ocs/catalog/datasets/sle-adm2-geoboundaries.json
 data/ocs/catalog/datasets/sle-districts.json
 data/ocs/catalog/datasets/worldpop-sle-2026.json
-data/ocs/raster/chirps3-sle-daily/chunks
-data/ocs/raster/chirps3-sle-daily/manifests
-data/ocs/raster/chirps3-sle-daily/repo
-data/ocs/raster/chirps3-sle-daily/snapshots
-data/ocs/raster/worldpop-sle-2026/...
-data/ocs/vector/ne-lakes/versions
-data/ocs/vector/sle-adm2-geoboundaries/current.json
-data/ocs/vector/sle-districts/current.json
-data/ocs/vector/sle-districts/versions
+data/ocs/raster/chirps3-sle-daily/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/chunks
+data/ocs/raster/chirps3-sle-daily/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/manifests
+data/ocs/raster/chirps3-sle-daily/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/repo
+data/ocs/raster/chirps3-sle-daily/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/snapshots
+data/ocs/raster/worldpop-sle-2026/1d3f5a7c9e0b2d4f6a8c0e2b4d6f8a0c/...
+data/ocs/vector/ne-lakes/2e4a6c8e0b2d4f6a8c0e2b4d6f8a0c2e/versions
+data/ocs/vector/sle-adm2-geoboundaries/3f5b7d9f1c3e5a7c9e1b3d5f7a9c1e3b/current.json
+data/ocs/vector/sle-districts/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c/current.json
+data/ocs/vector/sle-districts/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c/versions
 ```
+
+The segment below each identifier is the storage generation the dataset was
+created into, so a dataset deleted and seeded again never reuses the prefix of
+the one it replaced. Every record names its own in `storage_key`; the tokens on
+your machine are different ones.
 
 1.3 MB in total: the 14 CHIRPS days and the population grid are small, and
 `ne-lakes` has no `current.json` because nothing was published for it.
@@ -186,7 +191,7 @@ once `make demo` has run. The DuckDB snippet works offline because
 $ uvx --with duckdb python -c "
 import duckdb
 duckdb.sql('LOAD spatial;')
-duckdb.sql(\"SELECT name, level FROM read_parquet('data/ocs/vector/sle-districts/versions/v00001/data.parquet') LIMIT 3\").show()
+duckdb.sql(\"SELECT name, level FROM read_parquet('data/ocs/vector/sle-districts/*/versions/v00001/data.parquet') LIMIT 3\").show()
 "
 ```
 

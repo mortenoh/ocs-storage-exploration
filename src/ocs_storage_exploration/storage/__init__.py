@@ -123,7 +123,6 @@ from ocs_storage_exploration.storage.vector import (
     require_crs,
     same_crs,
     validate_feature_collection,
-    versions_prefix,
 )
 
 __all__ = [
@@ -240,6 +239,5 @@ __all__ = [
     "resolve_cube",
     "same_crs",
     "validate_feature_collection",
-    "versions_prefix",
     "wrap_longitudes",
 ]

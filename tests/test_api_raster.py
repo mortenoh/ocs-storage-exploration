@@ -109,6 +109,36 @@ def test_an_unknown_coordinate_reference_system_is_refused(client: TestClient) -
     assert "coordinate reference system" in response.text
 
 
+@pytest.mark.parametrize("reserved", ["spatial_ref", "t", "y", "x"])
+def test_create_refuses_a_variable_a_written_coordinate_takes(client: TestClient, reserved: str) -> None:
+    # Accepting the name wrote the coordinate over the data and answered 201 with no variables at all.
+    response = client.post(f"/api/v1/raster/{IDENTIFIER}", json={**CREATE_BODY, "variable": reserved})
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "RasterContractError"
+    assert client.get(f"/api/v1/datasets/{IDENTIFIER}").status_code == 404
+
+
+def test_create_refuses_a_start_time_no_time_coordinate_can_hold(client: TestClient) -> None:
+    response = client.post(f"/api/v1/raster/{IDENTIFIER}", json={**CREATE_BODY, "start_time": "2500-01-01T00:00:00Z"})
+
+    assert response.status_code == 422
+    assert "outside the range" in response.text
+    assert client.get(f"/api/v1/datasets/{IDENTIFIER}").status_code == 404
+
+
+def test_a_query_window_wider_than_a_time_coordinate_reads_every_timestep(client: TestClient) -> None:
+    create_coverage(client, publish=True)
+
+    response = client.get(
+        f"/api/v1/raster/{IDENTIFIER}/query",
+        params={"start": "1000-01-01T00:00:00Z", "end": "3000-01-01T00:00:00Z"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["timestep_count"] == 3
+
+
 def test_append_continues_the_time_axis_with_the_same_step(client: TestClient) -> None:
     create_coverage(client)
 

@@ -15,7 +15,7 @@ from ocs_storage_exploration.settings import ObjectStorageSettings, Settings
 from ocs_storage_exploration.storage.addresses import StorageScheme
 from ocs_storage_exploration.storage.catalog import ObjectCatalog
 from ocs_storage_exploration.storage.errors import BackendUnavailableError
-from ocs_storage_exploration.storage.keys import vector_data_key
+from ocs_storage_exploration.storage.keys import vector_data_key, vector_generation_prefix
 from ocs_storage_exploration.storage.raster import TimeStep, build_synthetic_cube, build_timestamps
 from ocs_storage_exploration.storage.schemas import (
     BoundingBox,
@@ -34,6 +34,7 @@ UNREACHABLE_ENDPOINT = "http://127.0.0.1:9"
 BOUNDED_SECONDS = 10.0
 COVERAGE = "unreachable-coverage"
 COLLECTION = "unreachable-collection"
+GENERATION = "0123456789abcdef0123456789abcdef"
 
 BBOX = BoundingBox(minimum_x=0.0, minimum_y=0.0, maximum_x=12.0, maximum_y=8.0)
 
@@ -103,7 +104,7 @@ def test_a_catalog_put_gives_up_instead_of_hanging(unreachable_service: StorageS
 def test_a_parquet_write_gives_up_instead_of_hanging(
     unreachable_service: StorageService, sample_features: geopandas.GeoDataFrame
 ) -> None:
-    address = unreachable_service.backend.address(vector_data_key(COLLECTION, 1))
+    address = unreachable_service.backend.address(vector_data_key(vector_generation_prefix(COLLECTION, GENERATION), 1))
 
     # The public write reads the catalog record first, so both the obstore path and the pyarrow path
     # of one vector write are asserted to be bounded.

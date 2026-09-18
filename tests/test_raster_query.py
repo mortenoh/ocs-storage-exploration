@@ -132,6 +132,25 @@ def test_empty_time_range_is_refused(raster_repository: RasterRepository):
         raster_repository.query(IDENTIFIER, start=datetime(2021, 1, 1), end=datetime(2021, 2, 1))
 
 
+def test_a_time_range_wider_than_a_time_coordinate_can_hold_reads_every_timestep(
+    raster_repository: RasterRepository,
+):
+    # Everything from the year 1000 to the year 3000 is a window a reader may ask for, and a bound that
+    # wrapped instead of being clamped would silently read some other stretch of the axis.
+    summary = raster_repository.query(IDENTIFIER, start=datetime(1000, 1, 1), end=datetime(3000, 1, 1))
+
+    assert summary.timestep_count == 3
+    assert summary.cell_count == 3 * 4 * 6
+    assert summary.bbox.as_tuple() == (0.0, 0.0, 12.0, 8.0)
+
+
+def test_a_time_range_starting_beyond_what_a_time_coordinate_holds_selects_nothing(
+    raster_repository: RasterRepository,
+):
+    with pytest.raises(QuerySizeGuardError, match="no cells"):
+        raster_repository.query(IDENTIFIER, start=datetime(3000, 1, 1))
+
+
 def test_oversized_window_is_refused(
     storage_backend: StorageBackend,
     catalog: ObjectCatalog,

@@ -71,7 +71,9 @@ async def ingest_vector(
     settings: SettingsDependency,
 ) -> VectorWriteResult:
     """Read one local GeoJSON or GeoParquet file below the ingest roots as the next version of a collection."""
-    return await storage.vector.ingest(dataset_identifier, request.to_plan(settings))
+    # The plan is handed over unresolved: resolving its path touches the filesystem, so it belongs on
+    # the worker thread with the write rather than on the event loop in front of it.
+    return await storage.vector.ingest(dataset_identifier, partial(request.to_plan, settings))
 
 
 @router.get("/{dataset_identifier}/features", summary="Read features of a vector collection")

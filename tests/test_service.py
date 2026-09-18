@@ -14,7 +14,7 @@ from ocs_storage_exploration.settings import ObjectStorageSettings, Settings
 from ocs_storage_exploration.storage.addresses import StorageScheme
 from ocs_storage_exploration.storage.backends import default_plugin_manager
 from ocs_storage_exploration.storage.errors import DatasetNotFoundError, ItemTypeMismatchError
-from ocs_storage_exploration.storage.keys import raster_prefix, vector_prefix
+from ocs_storage_exploration.storage.keys import RASTER_PREFIX, VECTOR_PREFIX
 from ocs_storage_exploration.storage.plugins import INACTIVE_BACKEND_STATUS, provided_schemes
 from ocs_storage_exploration.storage.raster import TimeStep, build_synthetic_cube, build_timestamps
 from ocs_storage_exploration.storage.schemas import (
@@ -125,7 +125,7 @@ def test_delete_dataset_routes_a_coverage_to_the_raster_engine(populated: Storag
     deleted = populated.delete_dataset(COVERAGE)
 
     assert isinstance(deleted, CoverageDataset)
-    assert populated.backend.list_keys(populated.backend.address(raster_prefix(COVERAGE))) == []
+    assert populated.backend.list_keys(populated.backend.address(RASTER_PREFIX, COVERAGE)) == []
     assert [record.dataset_identifier for record in populated.list_datasets()] == [COLLECTION]
 
 
@@ -133,7 +133,7 @@ def test_delete_dataset_routes_a_collection_to_the_vector_engine(populated: Stor
     deleted = populated.delete_dataset(COLLECTION)
 
     assert isinstance(deleted, FeatureDataset)
-    assert populated.backend.list_keys(populated.backend.address(vector_prefix(COLLECTION))) == []
+    assert populated.backend.list_keys(populated.backend.address(VECTOR_PREFIX, COLLECTION)) == []
     assert [record.dataset_identifier for record in populated.list_datasets()] == [COVERAGE]
 
 

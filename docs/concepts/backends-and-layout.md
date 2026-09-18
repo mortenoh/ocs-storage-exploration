@@ -270,12 +270,18 @@ under the bucket:
 
 ```text
 {base_prefix}/catalog/datasets/{dataset_identifier}.json
-{base_prefix}/raster/{dataset_identifier}/                              Icechunk repository
-{base_prefix}/vector/{dataset_identifier}/current.json                  published pointer
-{base_prefix}/vector/{dataset_identifier}/versions/vNNNNN/reservation.json   version claim
-{base_prefix}/vector/{dataset_identifier}/versions/vNNNNN/data.parquet       the features
-{base_prefix}/vector/{dataset_identifier}/versions/vNNNNN/metadata.json      version metadata
+{base_prefix}/raster/{dataset_identifier}/{generation}/                     Icechunk repository
+{base_prefix}/vector/{dataset_identifier}/{generation}/current.json         published pointer
+{base_prefix}/vector/{dataset_identifier}/{generation}/versions/vNNNNN/reservation.json   version claim
+{base_prefix}/vector/{dataset_identifier}/{generation}/versions/vNNNNN/data.parquet       the features
+{base_prefix}/vector/{dataset_identifier}/{generation}/versions/vNNNNN/metadata.json      version metadata
 ```
+
+`{generation}` is a uuid4 in hex minted when the dataset is created, so a dataset
+deleted and written again under the same identifier never shares a prefix with the
+one it replaced. Neither engine derives a key from the identifier: every one of
+them is built from the `storage_key` of the record.
+[Versioning](versioning.md) explains what that buys a deletion.
 
 Three objects make up a collection version, and the order they are written in is
 the whole safety argument. `reservation.json` is created first, with obstore's
@@ -290,10 +296,10 @@ any URI userinfo. No engine builds a path itself, so there is one place where
 traversal and credential leakage are prevented.
 
 A catalog record holds a key, never a root. `storage_key` is exactly what
-`backend.address(...)` takes, `raster/{dataset_identifier}` or
-`vector/{dataset_identifier}`, without the base prefix and without a scheme, and
-it is validated as an object key so an absolute or climbing one never reaches a
-record. The absolute URI is built at serve time from the backend that is running,
+`backend.address(...)` takes, `raster/{dataset_identifier}/{generation}` or
+`vector/{dataset_identifier}/{generation}`, without the base prefix and without a
+scheme, and it is validated as an object key so an absolute or climbing one never
+reaches a record. The absolute URI is built at serve time from the backend that is running,
 so the same record serves `file:///app/data/ocs/...` inside a container,
 `file:///srv/data/ocs/...` on the host and `s3://bucket/ocs/...` on S3. A record
 that stored the URI it was written under would name a root that does not exist
@@ -310,8 +316,8 @@ below it:
 
 ```text
 s3://{bucket}/{base_prefix}/catalog/datasets/{dataset_identifier}.json
-s3://{bucket}/{base_prefix}/raster/{dataset_identifier}/...
-s3://{bucket}/{base_prefix}/vector/{dataset_identifier}/versions/v00001/data.parquet
+s3://{bucket}/{base_prefix}/raster/{dataset_identifier}/{generation}/...
+s3://{bucket}/{base_prefix}/vector/{dataset_identifier}/{generation}/versions/v00001/data.parquet
 ```
 
 Per-dataset isolation is by prefix rather than by bucket, for three reasons:

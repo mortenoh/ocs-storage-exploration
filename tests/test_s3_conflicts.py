@@ -110,21 +110,18 @@ def test_two_vector_writers_racing_one_version_reserve_different_numbers(
     writer = VectorCollectionStore(live_s3_backend, ObjectCatalog(live_s3_backend), live_s3_settings)
     racing = VectorCollectionStore(live_s3_backend, ObjectCatalog(live_s3_backend), live_s3_settings)
     writer.write(COLLECTION, sample_features, identifier_property="id", publish=True)
+    prefix = ObjectCatalog(live_s3_backend).require(COLLECTION).storage_key
     published = bytes(
-        obstore.get(
-            live_s3_backend.object_store(), live_s3_backend.address(vector_data_key(COLLECTION, 1)).key
-        ).bytes(),
+        obstore.get(live_s3_backend.object_store(), live_s3_backend.address(vector_data_key(prefix, 1)).key).bytes(),
     )
     # Freeze the racing writer on the empty listing it saw before the first writer created version 1.
-    racing.versions = lambda collection_identifier: []  # type: ignore[method-assign]
+    racing._list_versions = lambda storage_prefix, *, completed_only: []  # type: ignore[method-assign]
 
     result = racing.write(COLLECTION, sample_features.iloc[:5], identifier_property="id")
 
     assert result.version == 2
     replayed = bytes(
-        obstore.get(
-            live_s3_backend.object_store(), live_s3_backend.address(vector_data_key(COLLECTION, 1)).key
-        ).bytes(),
+        obstore.get(live_s3_backend.object_store(), live_s3_backend.address(vector_data_key(prefix, 1)).key).bytes(),
     )
     assert replayed == published
 
@@ -183,10 +180,11 @@ def test_a_stale_vector_pointer_loses_the_compare_and_swap(
     writer.write(COLLECTION, sample_features.iloc[:5], identifier_property="id")
     writer.publish(COLLECTION, version=1)
     stale = VectorCollectionStore(live_s3_backend, ObjectCatalog(live_s3_backend), live_s3_settings)
-    frozen: VectorCollectionPointer | None = stale._read_pointer(COLLECTION)
+    prefix = ObjectCatalog(live_s3_backend).require(COLLECTION).storage_key
+    frozen: VectorCollectionPointer | None = stale._read_pointer(prefix)
     assert frozen is not None and frozen.version == 1
     # Freeze the pointer the stale publisher read, and the etag it remembered with it.
-    monkeypatch.setattr(stale, "_read_pointer", lambda identifier: frozen)
+    monkeypatch.setattr(stale, "_read_pointer", lambda storage_prefix: frozen)
 
     writer.publish(COLLECTION, version=2)
 

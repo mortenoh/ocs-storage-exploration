@@ -33,7 +33,8 @@ COLLECTION = "districts"
 def read_parquet_footer(
     storage_backend: StorageBackend, identifier: str = COLLECTION, version: int = 1
 ) -> pyarrow.parquet.ParquetFile:
-    address = storage_backend.address(vector_data_key(identifier, version))
+    storage_prefix = ObjectCatalog(storage_backend).require(identifier).storage_key
+    address = storage_backend.address(vector_data_key(storage_prefix, version))
     payload = bytes(obstore.get(storage_backend.object_store(), address.key).bytes())
     return pyarrow.parquet.ParquetFile(pyarrow.BufferReader(payload))
 

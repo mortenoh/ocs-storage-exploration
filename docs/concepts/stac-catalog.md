@@ -121,7 +121,7 @@ item type as `ocs:item_type`.
   "providers": [{"name": "Open Climate Service", "roles": ["producer", "licensor"]}],
   "assets": {
     "icechunk": {
-      "href": "s3://ocs-storage-exploration/ocs/raster/temperature-demo",
+      "href": "s3://ocs-storage-exploration/ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d",
       "type": "application/vnd.zarr; version=3",
       "title": "Icechunk repository",
       "icechunk:branch": "published",
@@ -170,8 +170,10 @@ Assets:
 
 - `data`, the GeoParquet object of the advertised version, at
   `{storage_key}/versions/vNNNNN/data.parquet` resolved against the backend that
-  is serving, with media type
-  `application/x-parquet` (pystac's `MediaType.PARQUET`) and role `data`. The
+  is serving. The `storage_key` of the record carries the generation the
+  collection was created into, so the href names the live data rather than a
+  prefix a collection of the same name once used. Its media type is
+  `application/x-parquet` (pystac's `MediaType.PARQUET`) and its role is `data`. The
   version directory name is the same one the pointer object names, so the href
   is stable until the pointer moves.
 - `api`, pointing at `{base_url}/api/v1/vector/{id}/features` with role
@@ -207,7 +209,7 @@ The advertised version is on the collection as `ocs:version`.
   "providers": [{"name": "Statistics Norway", "roles": ["producer", "licensor"]}],
   "assets": {
     "data": {
-      "href": "s3://ocs-storage-exploration/ocs/vector/districts-demo/versions/v00001/data.parquet",
+      "href": "s3://ocs-storage-exploration/ocs/vector/districts-demo/6b1f0c8d4a2e4f1b9c3d5e7a8b0c2d4e/versions/v00001/data.parquet",
       "type": "application/x-parquet",
       "title": "GeoParquet data",
       "roles": ["data"]

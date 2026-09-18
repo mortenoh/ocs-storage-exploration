@@ -6,6 +6,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from inspect import iscoroutinefunction
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -19,7 +20,10 @@ from ocs_storage_exploration.settings import Settings
 from ocs_storage_exploration.storage.addresses import StorageAddress, StorageScheme
 from ocs_storage_exploration.storage.backends.base import BaseStorageBackend
 from ocs_storage_exploration.storage.errors import BackendUnavailableError
+from ocs_storage_exploration.storage.paths import resolve_ingest_path, resolve_ingest_paths
+from ocs_storage_exploration.storage.raster import ingest as raster_ingest
 from ocs_storage_exploration.storage.raster.repository import RasterRepository
+from ocs_storage_exploration.storage.vector import ingest as vector_ingest
 
 COVERAGE = "concurrent-coverage"
 COLLECTION = "concurrent-collection"
@@ -74,6 +78,17 @@ RECREATED_VECTOR_BODY: dict[str, Any] = {
 SLOW_CALL_SECONDS = 0.6
 TIMEOUT_BUDGET_SECONDS = 1.0
 CONCURRENCY_LIMIT = 2
+# What the probe may take while a slow storage call is in flight. It is well under SLOW_CALL_SECONDS
+# on purpose: a call that blocks the event loop holds the probe for its whole duration, which this
+# budget catches, while an answer from a free loop takes milliseconds.
+BLOCKED_LOOP_BUDGET_SECONDS = 0.25
+
+RASTER_INGEST_BODY: dict[str, Any] = {
+    "files": ["absent.tif"],
+    "variable": "rain",
+    "timestamp": "2024-01-01T00:00:00Z",
+}
+VECTOR_INGEST_BODY: dict[str, Any] = {"path": "absent.geojson", "identifier_property": "id"}
 
 
 @pytest.fixture
@@ -148,6 +163,69 @@ def test_a_storage_call_that_outlives_the_timeout_answers_504(
     assert response.json()["error"] == "StorageTimeoutError"
     # The worker thread is abandoned rather than cancelled, so the answer must not wait for it.
     assert elapsed < TIMEOUT_BUDGET_SECONDS
+
+
+def test_both_ingest_routes_resolve_their_paths_on_a_worker_thread(
+    memory_settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    threads: list[str] = []
+
+    def recording_paths(*arguments: Any, **keywords: Any) -> list[Path]:
+        threads.append(threading.current_thread().name)
+        return resolve_ingest_paths(*arguments, **keywords)
+
+    def recording_path(*arguments: Any, **keywords: Any) -> Path:
+        threads.append(threading.current_thread().name)
+        return resolve_ingest_path(*arguments, **keywords)
+
+    monkeypatch.setattr(raster_ingest, "resolve_ingest_paths", recording_paths)
+    monkeypatch.setattr(vector_ingest, "resolve_ingest_path", recording_path)
+    settings = memory_settings.model_copy(update={"ingest_roots": [tmp_path]})
+
+    with TestClient(create_app(settings=settings)) as client:
+        raster_response = client.post(f"/api/v1/raster/{COVERAGE}/ingest", json=RASTER_INGEST_BODY)
+        vector_response = client.post(f"/api/v1/vector/{COLLECTION}/ingest", json=VECTOR_INGEST_BODY)
+
+    # Expanding a glob walks the filesystem, so it runs where the writes it plans run: on a worker
+    # thread, inside the limiter and inside the timeout, rather than on the event loop in front of them.
+    assert [name.startswith("AnyIO worker thread") for name in threads] == [True, True]
+    # Raising the refusal inside the runner leaves it on the status it always answered with.
+    assert raster_response.status_code == 400, raster_response.text
+    assert raster_response.json()["error"] == "IngestPathError"
+    assert vector_response.status_code == 400, vector_response.text
+    assert vector_response.json()["error"] == "IngestPathError"
+
+
+def test_a_slow_ingest_path_lookup_times_out_while_health_answers_promptly(
+    memory_settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started_lookup = threading.Event()
+
+    def slow_lookup(*arguments: Any, **keywords: Any) -> list[Path]:
+        started_lookup.set()
+        time.sleep(SLOW_CALL_SECONDS)
+        raise AssertionError("the timeout should have answered long before this lookup returned")
+
+    monkeypatch.setattr(raster_ingest, "resolve_ingest_paths", slow_lookup)
+    settings = memory_settings.model_copy(
+        update={"ingest_roots": [tmp_path], "storage_operation_timeout_seconds": 0.1},
+    )
+
+    with TestClient(create_app(settings=settings)) as client, ThreadPoolExecutor(max_workers=1) as pool:
+        ingesting = pool.submit(client.post, f"/api/v1/raster/{COVERAGE}/ingest", json=RASTER_INGEST_BODY)
+        assert started_lookup.wait(timeout=HEALTH_BUDGET_SECONDS), "the ingest never reached the path lookup"
+        # The probe is issued while the lookup is still going: a lookup on the event loop would hold it
+        # for the whole of SLOW_CALL_SECONDS, which is what this test is a regression guard against.
+        probed = time.perf_counter()
+        health = client.get("/health")
+        elapsed = time.perf_counter() - probed
+        response: httpx.Response = ingesting.result()
+
+    assert health.status_code == 200
+    assert elapsed < BLOCKED_LOOP_BUDGET_SECONDS
+    # The lookup is inside the runner, so the storage timeout is what bounds it rather than nothing.
+    assert response.status_code == 504, response.text
+    assert response.json()["error"] == "StorageTimeoutError"
 
 
 def test_the_limiter_caps_how_many_engine_calls_run_at_once(

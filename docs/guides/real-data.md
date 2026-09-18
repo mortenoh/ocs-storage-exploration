@@ -96,10 +96,13 @@ files had, and `worldpop-sle-2026` has a temporal extent of exactly one instant
 because a static raster still gets a `t` axis, from the request rather than
 from the file.
 
-On disk, `data/ocs/raster/chirps3-sle-daily/` is one Icechunk repository with
+On disk, `data/ocs/raster/chirps3-sle-daily/{generation}/` is one Icechunk
+repository with
 fourteen commits on `main` and a `published` branch pointing at the last of
-them, and `data/ocs/vector/sle-districts/versions/v00001/data.parquet` is an
-ordinary GeoParquet file. [Inspecting the data](inspecting-the-data.md) opens
+them, and
+`data/ocs/vector/sle-districts/{generation}/versions/v00001/data.parquet` is an
+ordinary GeoParquet file, where `{generation}` is the storage generation the
+collection was created into. [Inspecting the data](inspecting-the-data.md) opens
 both with Icechunk, xarray, geopandas, pyarrow and DuckDB; every path in it is
 real once `make demo` has run.
 
@@ -203,8 +206,8 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/raster/my-rainfall/ingest \
 
 | Field | Meaning |
 | --- | --- |
-| `files` | Paths or globs, resolved against the working directory, expanded and refused outside the ingest roots. GeoTIFF, COG, NetCDF and Zarr; a `.zarr` store is a directory and resolves as one |
-| `variable` | The name the variable is written under, whatever the file called it |
+| `files` | Paths or globs, resolved against the working directory and refused outside the ingest roots, a glob before it is expanded. GeoTIFF, COG, NetCDF and Zarr; a `.zarr` store is a directory and resolves as one |
+| `variable` | The name the variable is written under, whatever the file called it, except `spatial_ref`, `t`, `y` and `x`, which the coverage's own coordinates take |
 | `timestamps` | `"from-filename"` (the default), or an explicit list of ISO timestamps, one per resolved file |
 | `timestamp` | One ISO timestamp instead, for a single static file such as a population grid |
 | `filename_date_pattern` | The regular expression read off each file name, `(\d{4}-\d{2}-\d{2})` by default. Several capture groups are joined with `-`, so `(\d{4})\.(\d{2})\.(\d{2})` reads `chirps.2024.01.07.cog` |
@@ -299,6 +302,14 @@ $ curl -s -X POST http://127.0.0.1:8000/api/v1/vector/escape/ingest \
     -d '{"path": "samples/../pyproject.toml", "identifier_property": "id"}'
 {"error":"IngestPathError","detail":"ingest path 'samples/../pyproject.toml' resolves outside the ingest roots '/app/samples', '/app/data'"}
 ```
+
+A glob is refused where its walk would start rather than once it is done: the
+literal directory before the first wildcard is resolved and checked before
+anything is expanded, so `/**/*.tif` is refused instead of reading every
+directory on the machine and then refusing the matches. Every match is still
+checked too, because a link inside a root points wherever it points; `Path.glob`
+does not recurse through a symbolic link on Python 3.13, but it does follow one
+the pattern names.
 
 An absolute path inside a root is allowed, which is what the demo uses. Widen
 the roots with `OCS_STORAGE_INGEST_ROOTS='["samples","/srv/climate-data"]'`.

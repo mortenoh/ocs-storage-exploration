@@ -17,8 +17,7 @@ from pystac.extensions.table import SCHEMA_URI as TABLE_EXTENSION
 from pystac.extensions.table import Column, TableExtension
 from pystac.utils import datetime_to_str
 
-from ocs_storage_exploration.storage.addresses import StorageAddress
-from ocs_storage_exploration.storage.keys import VECTOR_DATA_NAME, format_vector_version
+from ocs_storage_exploration.storage.keys import vector_data_key
 from ocs_storage_exploration.storage.raster.repository import (
     MAIN_BRANCH,
     PUBLISHED_BRANCH,
@@ -286,7 +285,7 @@ def _build_feature_collection(
         collection.add_asset(
             "data",
             pystac.Asset(
-                href=_parquet_href(store.backend.address(record.storage_key), facts.version),
+                href=store.backend.address(vector_data_key(record.storage_key, facts.version)).as_uri(),
                 title="GeoParquet data",
                 media_type=PARQUET_MEDIA_TYPE,
                 roles=["data"],
@@ -492,7 +491,7 @@ def _advertised_version(
         metadata = _advertised_metadata(record, store)
         if metadata is None:
             return None
-        return metadata, store.table_schema(record.dataset_identifier, version=metadata.version)
+        return metadata, store.table_schema_of(record, version=metadata.version)
     except Exception:
         # A collection whose pointer, prefix or Parquet cannot be read still has a record worth
         # advertising; it loses the data asset and its columns rather than taking the catalog down.
@@ -501,12 +500,14 @@ def _advertised_version(
 
 def _advertised_metadata(record: FeatureDataset, store: VectorCollectionStore) -> VectorVersionMetadata | None:
     """Return the sidecar of the published version, or of the newest written one for a draft."""
+    # The record is already in hand and names the generation holding the versions, so every read
+    # below goes straight to the objects instead of fetching the record again.
     if record.publication.published:
-        return store.published_metadata(record.dataset_identifier)
-    written = store.versions(record.dataset_identifier)
+        return store.published_metadata_of(record)
+    written = store.versions_of(record)
     if not written:
         return None
-    return store.version_metadata(record.dataset_identifier, written[-1])
+    return store.version_metadata_of(record, written[-1])
 
 
 def _coverage_description(facts: _CoverageFacts) -> str:
@@ -570,8 +571,3 @@ def _feature_bounds(facts: _FeatureFacts) -> tuple[float, float, float, float]:
     if facts.bbox is None:
         return (-180.0, -90.0, 180.0, 90.0)
     return wgs84_bounds(facts.bbox, facts.crs)
-
-
-def _parquet_href(address: StorageAddress, version: int) -> str:
-    """Return the URI of the GeoParquet object of one version of a feature collection."""
-    return address.joined("versions", format_vector_version(version), VECTOR_DATA_NAME).as_uri()

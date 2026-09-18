@@ -17,7 +17,6 @@ from ocs_storage_exploration.storage.vector.collection import (
     require_crs,
     same_crs,
     validate_feature_collection,
-    versions_prefix,
 )
 from ocs_storage_exploration.storage.vector.ingest import (
     VectorIngestPlan,
@@ -61,5 +60,4 @@ __all__ = [
     "require_crs",
     "same_crs",
     "validate_feature_collection",
-    "versions_prefix",
 ]

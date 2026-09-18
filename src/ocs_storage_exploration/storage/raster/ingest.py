@@ -29,7 +29,9 @@ from ocs_storage_exploration.storage.raster.grid import (
     PROJECTION_CODE_ATTRIBUTE,
     SPATIAL_REFERENCE_NAME,
     apply_geozarr_attributes,
+    assert_variable_names_available,
     projection_code,
+    to_datetime64,
     to_naive_utc,
 )
 from ocs_storage_exploration.storage.raster.repository import RasterRepository
@@ -252,6 +254,14 @@ def normalise_for_contract(
     """
     if not variable:
         raise RasterContractError("an ingested raster needs a variable name")
+    # The name is applied by renaming the variable the source carries, so a reserved one is refused here
+    # rather than after the rename has already put the data where a coordinate is about to go.
+    assert_variable_names_available(
+        [variable],
+        time_dimension=time_dimension,
+        y_dimension=y_dimension,
+        x_dimension=x_dimension,
+    )
     renamed = _rename_axes(
         _drop_curvilinear_coordinates(dataset, x_dimension=x_dimension, y_dimension=y_dimension),
         time_dimension=time_dimension,
@@ -364,14 +374,22 @@ def _resolve_timestamps(
             raise RasterContractError(
                 f"a single timestamp describes a single file, but {len(files)} files were resolved",
             )
-        return [to_naive_utc(timestamp)]
+        return [_representable_naive_utc(timestamp)]
     if timestamps is not None:
         if len(timestamps) != len(files):
             raise RasterContractError(
                 f"{len(timestamps)} timestamps were given for {len(files)} files, which must match one to one",
             )
-        return [to_naive_utc(value) for value in timestamps]
-    return [to_naive_utc(timestamp_from_filename(path, pattern=filename_date_pattern)) for path in files]
+        return [_representable_naive_utc(value) for value in timestamps]
+    return [_representable_naive_utc(timestamp_from_filename(path, pattern=filename_date_pattern)) for path in files]
+
+
+def _representable_naive_utc(value: datetime) -> datetime:
+    """Return a timestamp as naive UTC, refusing at plan time one no time coordinate can hold."""
+    # The conversion is the range check, so a plan carrying an unholdable timestamp is refused before a
+    # single file is read rather than half way through the ingest.
+    to_datetime64(value)
+    return to_naive_utc(value)
 
 
 def _open_source(path: Path) -> xarray.Dataset | xarray.DataArray:
@@ -614,7 +632,7 @@ def _stamp_timestamp(dataset: xarray.Dataset, timestamp: datetime | None, *, tim
             f"raster has no {time_dimension!r} axis, so the request must name the timestamp it stands for",
         )
     stamped = dataset.drop_vars(time_dimension) if time_dimension in dataset.coords else dataset
-    return stamped.expand_dims({time_dimension: [numpy.datetime64(to_naive_utc(timestamp), "ns")]})
+    return stamped.expand_dims({time_dimension: [to_datetime64(timestamp)]})
 
 
 def _order_dimensions(

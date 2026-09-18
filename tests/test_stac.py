@@ -8,12 +8,15 @@ from pathlib import Path
 from typing import Any
 
 import geopandas
+import icechunk
 import pytest
 
 from ocs_storage_exploration.settings import Settings
 from ocs_storage_exploration.storage.addresses import StorageScheme
 from ocs_storage_exploration.storage.errors import SnapshotNotFoundError
+from ocs_storage_exploration.storage.keys import vector_data_key
 from ocs_storage_exploration.storage.raster import TimeStep, build_synthetic_cube, build_timestamps
+from ocs_storage_exploration.storage.raster.repository import PUBLISHED_BRANCH
 from ocs_storage_exploration.storage.schemas import BoundingBox, GridSpecification
 from ocs_storage_exploration.storage.service import StorageService
 from ocs_storage_exploration.storage.stac import (
@@ -152,16 +155,22 @@ def test_every_variable_becomes_a_cube_variable(coverage_collection: dict[str, A
     assert coverage_collection["cube:variables"] == {VARIABLE: {"dimensions": ["t", "y", "x"], "type": "data"}}
 
 
-def test_the_coverage_assets_are_the_repository_and_the_query_endpoint(coverage_collection: dict[str, Any]) -> None:
+def test_the_coverage_assets_are_the_repository_and_the_query_endpoint(
+    coverage_collection: dict[str, Any],
+    storage_service: StorageService,
+) -> None:
     icechunk = coverage_collection["assets"]["icechunk"]
     api = coverage_collection["assets"]["api"]
+    record = storage_service.catalog.require(COVERAGE)
 
     assert icechunk["type"] == ZARR_V3_MEDIA_TYPE == "application/vnd.zarr; version=3"
     assert icechunk["roles"] == ["data"]
     assert icechunk["icechunk:branch"] == "published"
     # A published collection advertises the branch alone: following it is what the endpoint does too.
     assert "ocs:snapshot_identifier" not in icechunk
-    assert icechunk["href"].endswith(f"raster/{COVERAGE}")
+    # The href is built from the storage key of the record, so it names the live generation.
+    assert icechunk["href"].endswith(record.storage_key)
+    assert icechunk["href"] == storage_service.backend.address(record.storage_key).as_uri()
     assert api["href"] == f"{BASE_URL}/api/v1/raster/{COVERAGE}/query"
     assert api["type"] == "application/json"
     assert api["roles"] == ["metadata"]
@@ -274,20 +283,73 @@ def test_the_table_fields_describe_the_published_parquet(feature_collection: dic
     assert columns["geometry"] == "binary"
 
 
+def test_the_coverage_icechunk_href_follows_the_coverage_into_its_next_generation(
+    storage_service: StorageService,
+) -> None:
+    write_coverage(storage_service)
+    first = storage_service.catalog.require(COVERAGE).storage_key
+    storage_service.raster.delete(COVERAGE)
+    write_coverage(storage_service)
+
+    payload = project(storage_service, COVERAGE)
+
+    record = storage_service.catalog.require(COVERAGE)
+    assert record.storage_key != first
+    # The href names the generation the record holds, and the repository really is open there.
+    address = storage_service.backend.address(record.storage_key)
+    assert payload["assets"]["icechunk"]["href"] == address.as_uri()
+    repository = icechunk.Repository.open(storage_service.backend.icechunk_storage(address))
+    assert PUBLISHED_BRANCH in repository.list_branches()
+
+
 def test_the_feature_collection_has_no_time_axis(feature_collection: dict[str, Any]) -> None:
     assert feature_collection["extent"]["temporal"]["interval"] == [[None, None]]
     assert feature_collection["extent"]["spatial"]["bbox"] == [[0.0, 0.0, 21.5, 21.5]]
 
 
-def test_the_feature_assets_are_the_parquet_and_the_features_endpoint(feature_collection: dict[str, Any]) -> None:
+def test_the_feature_assets_are_the_parquet_and_the_features_endpoint(
+    feature_collection: dict[str, Any],
+    storage_service: StorageService,
+) -> None:
     data = feature_collection["assets"]["data"]
     api = feature_collection["assets"]["api"]
+    record = storage_service.catalog.require(COLLECTION)
 
     assert data["type"] == PARQUET_MEDIA_TYPE == "application/x-parquet"
     assert data["roles"] == ["data"]
-    assert data["href"].endswith(f"vector/{COLLECTION}/versions/v00001/data.parquet")
+    # The href is built from the storage key of the record, so it names the live generation.
+    assert data["href"].endswith(f"{record.storage_key}/versions/v00001/data.parquet")
     assert api["href"] == f"{BASE_URL}/api/v1/vector/{COLLECTION}/features"
     assert api["roles"] == ["metadata"]
+
+
+def test_the_feature_data_href_resolves_to_a_stored_object(
+    feature_collection: dict[str, Any],
+    storage_service: StorageService,
+) -> None:
+    record = storage_service.catalog.require(COLLECTION)
+    address = storage_service.backend.address(vector_data_key(record.storage_key, 1))
+
+    assert feature_collection["assets"]["data"]["href"] == address.as_uri()
+    assert storage_service.backend.exists(address) is True
+
+
+def test_the_feature_data_href_follows_the_collection_into_its_next_generation(
+    storage_service: StorageService,
+    sample_features: geopandas.GeoDataFrame,
+) -> None:
+    write_collection(storage_service, sample_features)
+    first = storage_service.catalog.require(COLLECTION).storage_key
+    storage_service.vector.delete(COLLECTION)
+    write_collection(storage_service, sample_features.iloc[:4])
+
+    payload = project(storage_service, COLLECTION)
+
+    record = storage_service.catalog.require(COLLECTION)
+    assert record.storage_key != first
+    address = storage_service.backend.address(vector_data_key(record.storage_key, 1))
+    assert payload["assets"]["data"]["href"] == address.as_uri()
+    assert storage_service.backend.exists(address) is True
 
 
 def test_the_published_version_is_the_one_advertised(
@@ -457,7 +519,7 @@ def test_a_collection_whose_parquet_cannot_be_read_falls_back_to_its_record(
     def refuse(*arguments: Any, **keywords: Any) -> None:
         raise SnapshotNotFoundError("the parquet cannot be opened")
 
-    monkeypatch.setattr(storage_service.vector, "table_schema", refuse)
+    monkeypatch.setattr(storage_service.vector, "table_schema_of", refuse)
     payload = project(storage_service, COLLECTION)
 
     assert payload["table:row_count"] == 12

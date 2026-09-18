@@ -285,7 +285,7 @@ curl -s $BASE/stac/collections/temperature-demo | jq -c '{assets, providers}'
          "y":{"type":"spatial","axis":"y","extent":[-90.0,90.0],"reference_system":4326},
          "t":{"type":"temporal","extent":["2020-01-01T00:00:00Z","2020-09-01T00:00:00Z"]}},
  "vars":{"temperature":{"dimensions":["t","y","x"],"type":"data"}}}
-{"assets":{"icechunk":{"href":"file:///tmp/ocs-demo/ocs/raster/temperature-demo",
+{"assets":{"icechunk":{"href":"file:///tmp/ocs-demo/ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d",
                        "type":"application/vnd.zarr; version=3","title":"Icechunk repository",
                        "icechunk:branch":"published","roles":["data"]},
            "api":{"href":"http://127.0.0.1:8765/api/v1/raster/temperature-demo/query",
@@ -310,7 +310,7 @@ curl -s $BASE/stac/collections/districts-demo | jq -c '.assets.data'
  "columns":[{"name":"geometry","type":"binary"},{"name":"id","type":"string"},
             {"name":"level","type":"int64"},{"name":"path","type":"string"},
             {"name":"bbox","type":"struct<xmin: double, ymin: double, xmax: double, ymax: double>"}]}
-{"href":"file:///tmp/ocs-demo/ocs/vector/districts-demo/versions/v00001/data.parquet",
+{"href":"file:///tmp/ocs-demo/ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c/versions/v00001/data.parquet",
  "type":"application/x-parquet","title":"GeoParquet data","roles":["data"]}
 ```
 
@@ -421,27 +421,29 @@ calls above leaves this in the bucket:
 ```text
 ocs/catalog/datasets/districts-demo.json
 ocs/catalog/datasets/temperature-demo.json
-ocs/raster/temperature-demo/repo
-ocs/raster/temperature-demo/snapshots/1CECHNKREP0F1RSTCMT0
-ocs/raster/temperature-demo/snapshots/36X40SW4JZCK9PQV43N0
-ocs/raster/temperature-demo/transactions/1CECHNKREP0F1RSTCMT0
-ocs/raster/temperature-demo/transactions/36X40SW4JZCK9PQV43N0
-ocs/raster/temperature-demo/manifests/12JK7D21GHC6HYNM63H0
-ocs/raster/temperature-demo/chunks/QA9BX124QHESED1QEAEG
-ocs/vector/districts-demo/current.json
-ocs/vector/districts-demo/versions/v00001/reservation.json
-ocs/vector/districts-demo/versions/v00001/data.parquet
-ocs/vector/districts-demo/versions/v00001/metadata.json
+ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/repo
+ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/snapshots/1CECHNKREP0F1RSTCMT0
+ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/snapshots/36X40SW4JZCK9PQV43N0
+ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/transactions/1CECHNKREP0F1RSTCMT0
+ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/transactions/36X40SW4JZCK9PQV43N0
+ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/manifests/12JK7D21GHC6HYNM63H0
+ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/chunks/QA9BX124QHESED1QEAEG
+ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c/current.json
+ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c/versions/v00001/reservation.json
+ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c/versions/v00001/data.parquet
+ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c/versions/v00001/metadata.json
 ```
 
 That is the layout
 [backends and key layout](../concepts/backends-and-layout.md) specifies, keys
 rather than directories, with the Icechunk repository laid out by Icechunk
 itself below its own prefix. A record holds only the key below the base prefix,
-`vector/districts-demo`, and the absolute URI is built when it is served, so the
-same record answers `s3://ocs-storage-exploration/ocs/vector/districts-demo`
-here and `file:///app/data/ocs/vector/districts-demo` inside the filesystem
-container.
+`vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c`, and the absolute URI is built when it is
+served, so the same record answers
+`s3://ocs-storage-exploration/ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c` here and
+`file:///app/data/ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c` inside the filesystem
+container. The last segment is the storage generation, minted when the
+collection was created.
 
 ## Error shape
 

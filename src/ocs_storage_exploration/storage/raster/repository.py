@@ -31,7 +31,11 @@ from ocs_storage_exploration.storage.errors import (
     SnapshotNotFoundError,
 )
 from ocs_storage_exploration.storage.failures import backend_transport_failures
-from ocs_storage_exploration.storage.keys import raster_prefix, validate_dataset_identifier
+from ocs_storage_exploration.storage.keys import (
+    mint_generation_token,
+    raster_generation_prefix,
+    validate_dataset_identifier,
+)
 from ocs_storage_exploration.storage.protocols import Catalog, StorageBackend
 from ocs_storage_exploration.storage.raster.grid import (
     CRS_WELL_KNOWN_TEXT_ATTRIBUTE,
@@ -43,10 +47,11 @@ from ocs_storage_exploration.storage.raster.grid import (
     SPATIAL_REFERENCE_NAME,
     apply_geozarr_attributes,
     assert_finite_attributes,
+    assert_variable_names_available,
     build_cell_sizes,
     build_coordinates,
+    clamp_to_datetime64,
     projection_code,
-    to_naive_utc,
     wrap_longitudes,
 )
 from ocs_storage_exploration.storage.schemas import (
@@ -79,6 +84,10 @@ MAXIMUM_DELETION_ATTEMPTS: Final[int] = 4
 BBOX_VALUE_COUNT: Final[int] = 4
 LICENSE_METADATA_KEY: Final[str] = "license"
 ATTRIBUTION_METADATA_KEY: Final[str] = "attribution"
+# How far a recorded bbox may sit from the one measured on the coordinates of a store, as a fraction of
+# a cell. Cell centres are written as floats and measured back as a median step, so the two edges agree
+# to rounding rather than exactly, and a reconciliation that rewrote the record over that would never stop.
+GRID_BBOX_TOLERANCE: Final[float] = 1e-6
 
 FloatArray = NDArray[numpy.float64]
 IndexArray = NDArray[numpy.intp]
@@ -132,6 +141,11 @@ class RasterStoreDescription:
     y_dimension: str
     x_dimension: str
     shape: tuple[int, int]
+    data_type: str
+    nodata_value: float | None
+    # The root attributes of the snapshot, which are the ones its grid was written with plus whatever
+    # the source of an ingest carried. The two GeoZarr keys the writer stamps itself are left out.
+    attributes: dict[str, str]
     # The terms the bytes of this snapshot were written under, taken from the commit that wrote them
     # rather than from the record, which describes the newest write and not the snapshot being read.
     license: str | None = None
@@ -171,8 +185,12 @@ class RasterRepository:
         return self._catalog
 
     def repository_address(self, dataset_identifier: str) -> StorageAddress:
-        """Return the address of the Icechunk repository of one coverage."""
-        return self._backend.address(raster_prefix(dataset_identifier))
+        """Return the address of the Icechunk repository of one live coverage, as its record names it."""
+        return self.repository_address_of(self._require_coverage(dataset_identifier))
+
+    def repository_address_of(self, record: CoverageDataset) -> StorageAddress:
+        """Return the address of the Icechunk repository the storage generation of a record holds."""
+        return self._backend.address(record.storage_key)
 
     def create(
         self,
@@ -191,9 +209,15 @@ class RasterRepository:
         self._assert_cube_size(identifier, grid.shape, _incoming_timestep_count(dataset, grid.time_dimension))
         existing = self._existing_entry(identifier, overwrite=overwrite)
         prepared = self._prepare(grid, dataset)
-        repository = self._open_repository(identifier)
+        # A first write mints a generation of its own; an overwrite stays in the generation of the
+        # record it read, which is the only thing that says where the live repository of a coverage is.
+        if existing is None:
+            storage_prefix = raster_generation_prefix(identifier, mint_generation_token())
+        else:
+            storage_prefix = existing.record.storage_key
         record = self._build_record(
             identifier,
+            storage_prefix,
             grid,
             prepared,
             title=title,
@@ -201,20 +225,30 @@ class RasterRepository:
             attribution=attribution,
             existing=None if existing is None else existing.record,
         )
-        snapshot_identifier = self._staged_commit(
-            repository,
-            identifier,
-            previous=repository.lookup_branch(MAIN_BRANCH),
-            message=message,
-            apply=lambda session: to_icechunk(prepared, session, mode="w"),
-            record=record,
-            # A first write claims the record, an overwrite replaces the one it read: either way a
-            # concurrent writer that got there first is refused rather than overwritten.
-            revision=None if existing is None else existing.revision,
-            # The terms travel with the commit, so a published snapshot keeps advertising the ones it
-            # was written under even after a draft replaces the record with other ones.
-            metadata=_commit_metadata(record.license, record.attribution),
-        )
+        repository = self._open_repository(record)
+        try:
+            snapshot_identifier = self._staged_commit(
+                repository,
+                identifier,
+                previous=repository.lookup_branch(MAIN_BRANCH),
+                message=message,
+                apply=lambda session: to_icechunk(prepared, session, mode="w"),
+                record=record,
+                # A first write claims the record, an overwrite replaces the one it read: either way a
+                # concurrent writer that got there first is refused rather than overwritten.
+                revision=None if existing is None else existing.revision,
+                # The terms travel with the commit, so a published snapshot keeps advertising the ones it
+                # was written under even after a draft replaces the record with other ones.
+                metadata=_commit_metadata(record.license, record.attribution),
+                replaced=None if existing is None else existing.record,
+            )
+        except DatasetAlreadyExistsError:
+            if existing is None:
+                # Another writer claimed the identifier first, so the generation minted above will never
+                # be named by a record. Nobody else knows its token, so sweeping it removes exactly the
+                # repository this write created and the loser leaves no orphan behind.
+                self._sweep(storage_prefix)
+            raise
         return self._write_result(record, snapshot_identifier)
 
     def append(
@@ -231,7 +265,7 @@ class RasterRepository:
         grid = record.grid
         self._assert_cube_size(identifier, grid.shape, _incoming_timestep_count(dataset, grid.time_dimension))
         prepared = self._prepare(grid, dataset)
-        repository = self._open_repository(identifier)
+        repository = self._open_repository(record)
         # The snapshot the append is checked against is the snapshot it is written onto, so a
         # concurrent write cannot slip between the check and the commit.
         previous = repository.lookup_branch(MAIN_BRANCH)
@@ -248,6 +282,7 @@ class RasterRepository:
             # An append declares no terms of its own, so it extends the snapshot it grows under the
             # terms that snapshot already carries.
             metadata=self._snapshot_metadata(repository, previous),
+            replaced=record,
         )
         return self._write_result(updated, snapshot_identifier)
 
@@ -262,6 +297,7 @@ class RasterRepository:
         record: CoverageDataset,
         revision: str | None,
         metadata: dict[str, Any] | None = None,
+        replaced: CoverageDataset | None = None,
     ) -> str:
         """Commit a write on a scratch branch, claim the record, then fast-forward the draft branch onto it."""
         branch = f"{SCRATCH_BRANCH_PREFIX}{uuid4().hex}"
@@ -276,13 +312,38 @@ class RasterRepository:
                 self._catalog.put(record, create=True)
             else:
                 self._catalog.put(record, revision=revision)
-            with _publication_conflicts(
-                f"draft branch of {dataset_identifier!r} moved while the write was being staged",
-            ):
-                repository.reset_branch(MAIN_BRANCH, snapshot_identifier, from_snapshot_id=previous)
+            try:
+                with _publication_conflicts(
+                    f"draft branch of {dataset_identifier!r} moved while the write was being staged",
+                ):
+                    repository.reset_branch(MAIN_BRANCH, snapshot_identifier, from_snapshot_id=previous)
+            except PublicationConflictError:
+                # The commit was rejected, so the record just claimed describes data no reader can see.
+                # Putting the replaced record back closes that window at once, and reconciliation
+                # repairs it from the store on its own when this call never gets to run.
+                if replaced is not None:
+                    self._restore_replaced_record(record, replaced)
+                raise
         finally:
             repository.delete_branch(branch)
         return snapshot_identifier
+
+    def _restore_replaced_record(self, rejected: CoverageDataset, replaced: CoverageDataset) -> None:
+        """Put the record a rejected write replaced back, leaving alone one a later writer has moved on."""
+        entry = self._catalog.get_entry(replaced.dataset_identifier)
+        # Only the record this write left behind is this write's to take back. A different one describes
+        # a commit somebody else made after it, and reconciliation repairs whichever of the two stands.
+        if entry is None or entry.record != rejected:
+            return
+        try:
+            self._catalog.put(
+                replaced.model_copy(update={"updated_at": current_timestamp()}),
+                revision=entry.revision,
+            )
+        except PublicationConflictError:
+            # Another writer claimed the record between the read and this compare-and-swap, so what
+            # stands now is that writer's record rather than the rejected one.
+            return
 
     @contextmanager
     def read(
@@ -295,7 +356,7 @@ class RasterRepository:
         """Open a readonly session on the requested snapshot and yield the dataset it holds."""
         identifier = validate_dataset_identifier(dataset_identifier)
         record = self._require_coverage(identifier)
-        repository = self._open_repository(identifier)
+        repository = self._open_repository(record)
         with self._read_opened(repository, record, version, snapshot_identifier) as handle:
             yield handle
 
@@ -325,7 +386,16 @@ class RasterRepository:
         """Describe one coverage snapshot from the store it was written to rather than from its record."""
         identifier = validate_dataset_identifier(dataset_identifier)
         record = self._require_coverage(identifier)
-        repository = self._open_repository(identifier)
+        return self._describe_opened(self._open_repository(record), record, version, snapshot_identifier)
+
+    def _describe_opened(
+        self,
+        repository: icechunk.Repository,
+        record: CoverageDataset,
+        version: VersionSelector,
+        snapshot_identifier: str | None,
+    ) -> RasterStoreDescription:
+        """Describe one snapshot of an already opened repository, reading its commit metadata with it."""
         with self._read_opened(repository, record, version, snapshot_identifier) as handle:
             metadata = self._snapshot_metadata(repository, handle.snapshot_identifier)
             return self._describe_handle(handle, record, metadata)
@@ -344,7 +414,8 @@ class RasterRepository:
         """Summarise one variable over a spatial and temporal window, guarding the window size."""
         identifier = validate_dataset_identifier(dataset_identifier)
         record = self._require_coverage(identifier)
-        with self.read(identifier, version=version, snapshot_identifier=snapshot_identifier) as handle:
+        repository = self._open_repository(record)
+        with self._read_opened(repository, record, version, snapshot_identifier) as handle:
             # Every grid fact comes from the snapshot that was opened: the record describes the newest
             # write, which is not the snapshot a published read follows.
             store_grid = self._store_grid(handle.dataset, record)
@@ -380,7 +451,7 @@ class RasterRepository:
         identifier = validate_dataset_identifier(dataset_identifier)
         entry = self._reconcile_entry(identifier)
         record = entry.record
-        repository = self._open_repository(identifier)
+        repository = self._open_repository(record)
         ancestry = {information.id for information in repository.ancestry(branch=MAIN_BRANCH)}
         target = snapshot_identifier if snapshot_identifier is not None else repository.lookup_branch(MAIN_BRANCH)
         if target not in ancestry:
@@ -404,7 +475,7 @@ class RasterRepository:
         )
 
     def reconcile_publication(self, dataset_identifier: str) -> CoverageDataset:
-        """Rewrite the publication block and the extents of a record from the store, which is the only truth."""
+        """Rewrite the publication block and everything the store describes back onto a record, from the store."""
         return self._reconcile_entry(dataset_identifier).record
 
     def _reconcile_entry(self, dataset_identifier: str) -> CoverageEntry:
@@ -412,12 +483,15 @@ class RasterRepository:
         identifier = validate_dataset_identifier(dataset_identifier)
         entry = self._require_coverage_entry(identifier)
         record = entry.record
-        published = self._published_snapshot(self._open_repository(identifier))
+        # One open serves both readings: the branch the publication truth lives on and the draft the
+        # record is checked against.
+        repository = self._open_repository(record)
+        published = self._published_snapshot(repository)
         update: dict[str, Any] = {}
         publication = self._reconciled_publication(record.publication, published)
         if publication is not None:
             update["publication"] = publication
-        update.update(self._reconciled_extents(record))
+        update.update(self._reconciled_facts(repository, record))
         if not update:
             return entry
         updated = record.model_copy(update={**update, "updated_at": current_timestamp()})
@@ -440,9 +514,9 @@ class RasterRepository:
             previous_snapshot_identifier=publication.snapshot_identifier,
         )
 
-    def _reconciled_extents(self, record: CoverageDataset) -> dict[str, Any]:
-        """Return the extent fields the draft branch disagrees with, which a rejected write can leave stale."""
-        description = self._draft_description(record.dataset_identifier)
+    def _reconciled_facts(self, repository: icechunk.Repository, record: CoverageDataset) -> dict[str, Any]:
+        """Return the record fields the draft branch disagrees with, which a rejected write can leave stale."""
+        description = self._draft_description(repository, record)
         if description is None:
             return {}
         temporal = (
@@ -454,13 +528,31 @@ class RasterRepository:
             "timestep_count": description.timestep_count,
             "variables": description.variables,
             "temporal": temporal,
+            # The terms travel with the commit, so the draft snapshot carries the ones the write that
+            # was actually accepted declared, and a rejected one leaves its own behind in the record.
+            "license": description.license,
+            "attribution": description.attribution,
         }
-        return {name: value for name, value in facts.items() if getattr(record, name) != value}
+        # The title is the one field an overwrite changes that the store never holds, so a record whose
+        # title a rejected overwrite replaced keeps the replacement rather than the title it had.
+        stale = {name: value for name, value in facts.items() if getattr(record, name) != value}
+        stored_grid = _grid_from_description(description)
+        if stored_grid is not None and not _grid_matches(record.grid, stored_grid):
+            # An overwrite writes the record before it moves the draft branch, so a rejected one leaves
+            # the record describing a grid that was never committed, and every later append is refused
+            # against a shape the store does not hold.
+            stale["grid"] = stored_grid
+            stale["bbox"] = stored_grid.bbox
+        return stale
 
-    def _draft_description(self, dataset_identifier: str) -> RasterStoreDescription | None:
+    def _draft_description(
+        self,
+        repository: icechunk.Repository,
+        record: CoverageDataset,
+    ) -> RasterStoreDescription | None:
         """Describe the draft branch of a coverage, or None when it holds nothing to describe yet."""
         try:
-            return self.describe(dataset_identifier, version=VersionSelector.DRAFT)
+            return self._describe_opened(repository, record, VersionSelector.DRAFT, None)
         except (RasterContractError, SnapshotNotFoundError, FileNotFoundError, KeyError):
             # A repository that only holds its initialisation snapshot has no extents to read back.
             return None
@@ -468,8 +560,8 @@ class RasterRepository:
     def versions(self, dataset_identifier: str, *, limit: int = DEFAULT_VERSION_LIMIT) -> list[RasterVersion]:
         """List the snapshots of the main branch newest first, marking the published one."""
         identifier = validate_dataset_identifier(dataset_identifier)
-        self.reconcile_publication(identifier)
-        repository = self._open_repository(identifier)
+        record = self.reconcile_publication(identifier)
+        repository = self._open_repository(record)
         published = self._published_snapshot(repository)
         versions: list[RasterVersion] = []
         for information in repository.ancestry(branch=MAIN_BRANCH):
@@ -496,16 +588,17 @@ class RasterRepository:
             return {str(key): value for key, value in handle.dataset.attrs.items()}
 
     def delete(self, dataset_identifier: str) -> None:
-        """Mark the record of a coverage as deleting, sweep every object of its repository, then drop it.
+        """Mark the record of a coverage as deleting, sweep the generation it names, then drop it.
 
         The record goes last rather than first: while it is there and marked, a concurrent writer is
         told a deletion is running instead of finding no record at all and writing into a prefix that
         is about to be emptied. A deletion that stops half way leaves the marked record behind, and
         deleting again, or creating the coverage again, finishes it.
 
-        Nothing is ever swept without the reservation. A mark that loses its compare-and-swap to a
-        writer is retried against the record that writer left behind, and a deletion that keeps
-        losing is refused rather than emptying a repository the live record still points at.
+        Nothing is ever swept without the reservation, and the sweep only ever empties the storage
+        prefix of the record that reservation was taken on. A coverage created again under the same
+        identifier lives in a generation of its own, so a deleter that resumes late finds its own
+        generation empty and leaves the new repository untouched.
         """
         identifier = validate_dataset_identifier(dataset_identifier)
         # Read raw: a record already marked as deleting is exactly what this call is here to finish.
@@ -516,13 +609,13 @@ class RasterRepository:
             # after that, so it belongs to the writer that created it rather than to this call, and
             # sweeping it would erase a live coverage this deletion never reserved.
             return
-        self._sweep(identifier)
-        self._drop_reserved_record(identifier, reserved)
+        self._sweep(reserved.record.storage_key)
+        self._drop_reserved_record(identifier, reserved.revision)
 
-    def _open_repository(self, dataset_identifier: str) -> icechunk.Repository:
-        """Open the Icechunk repository of a coverage, creating it when it does not exist."""
-        address = self.repository_address(dataset_identifier)
-        with backend_transport_failures(f"opening the repository of {dataset_identifier!r}"):
+    def _open_repository(self, record: CoverageDataset) -> icechunk.Repository:
+        """Open the Icechunk repository the generation of a record names, creating it when it does not exist."""
+        address = self.repository_address_of(record)
+        with backend_transport_failures(f"opening the repository of {record.dataset_identifier!r}"):
             return icechunk.Repository.open_or_create(
                 self._backend.icechunk_storage(address),
                 config=self._backend.repository_config(),
@@ -543,9 +636,9 @@ class RasterRepository:
         if existing is None:
             return None
         if existing.record.is_deleting:
-            # The prefix this write is about to fill is being emptied. Finishing that deletion first is
-            # the only way to write into a prefix nobody else is sweeping; the write then creates the
-            # record conditionally, so a second writer doing the same thing loses at the create.
+            # The generation that record names is being emptied. Finishing that deletion first is the
+            # only way to leave it behind; what follows is a first write, under a generation of its
+            # own, so the sweep of the dead one can never reach the repository written here.
             self._complete_deletion(existing)
             return None
         if not overwrite:
@@ -566,19 +659,19 @@ class RasterRepository:
             raise DatasetNotFoundError(f"coverage {dataset_identifier!r} is being deleted")
         return entry
 
-    def _sweep(self, dataset_identifier: str) -> None:
-        """Delete every object below the prefix holding the Icechunk repository of a coverage."""
-        self._backend.delete_prefix(self.repository_address(dataset_identifier))
+    def _sweep(self, storage_prefix: str) -> None:
+        """Delete every object below one storage prefix, which is one generation of one coverage."""
+        self._backend.delete_prefix(self._backend.address(storage_prefix))
 
-    def _reserve_deletion(self, entry: CoverageEntry) -> str | None:
-        """Return the revision that reserves this deletion, or None once somebody else has finished it."""
+    def _reserve_deletion(self, entry: CoverageEntry) -> CoverageEntry | None:
+        """Return the entry that reserves this deletion, or None once somebody else has finished it."""
         identifier = entry.record.dataset_identifier
         current = entry
         for _ in range(MAXIMUM_DELETION_ATTEMPTS):
             if current.record.is_deleting:
                 # Another deleter reserved it and stopped. Sweeping is idempotent and finishing that
                 # deletion is exactly what this call is for, so its mark is the reservation to run under.
-                return current.revision
+                return current
             marked = current.record.model_copy(
                 update={"lifecycle": DatasetLifecycle.DELETING, "updated_at": current_timestamp()},
             )
@@ -600,7 +693,7 @@ class RasterRepository:
             reserved = self._existing_coverage(identifier)
             if reserved is None or not reserved.record.is_deleting:
                 return None
-            return reserved.revision
+            return reserved
         raise PublicationConflictError(
             f"coverage {identifier!r} was written again during every one of the "
             f"{MAXIMUM_DELETION_ATTEMPTS} attempts to reserve its deletion",
@@ -609,18 +702,26 @@ class RasterRepository:
     def _drop_reserved_record(self, dataset_identifier: str, reserved: str) -> None:
         """Delete the record of a swept coverage, leaving alone one that was reclaimed in the meantime."""
         entry = self._catalog.get_entry(dataset_identifier)
-        # Object stores offer no conditional delete, so this is a read followed by a delete rather than
-        # one compare-and-swap. It refuses the outcome that matters: erasing the record of a coverage
-        # that was written again under the same identifier while this deletion was sweeping.
+        # obstore exposes no conditional delete on any of the three backends, so this is a read
+        # followed by a delete rather than one compare-and-swap. It refuses the outcome that matters
+        # in the common case: erasing the record of a coverage that was created again while this
+        # deletion was sweeping.
+        #
+        # One window is left, and it is narrow rather than harmless. Between this read and the delete
+        # below, another actor can finish the deletion, drop the record and let a writer create the
+        # coverage again; the delete then removes that writer's record. No bytes are lost, because the
+        # sweep above only ever emptied this deletion's own generation and the new repository is
+        # untouched, but the objects are left unreferenced and the coverage answers 404 after a write
+        # that succeeded. Closing it needs a conditional delete, which obstore does not expose, or
+        # never deleting a record at all: a tombstone the next create replaces under compare-and-swap.
         if entry is None or entry.revision != reserved:
             return
         self._catalog.delete(dataset_identifier)
 
     def _complete_deletion(self, entry: CoverageEntry) -> None:
-        """Finish a deletion that stopped half way, so the caller can start from an empty prefix."""
-        identifier = entry.record.dataset_identifier
-        self._sweep(identifier)
-        self._drop_reserved_record(identifier, entry.revision)
+        """Finish a deletion that stopped half way, emptying only the generation its record names."""
+        self._sweep(entry.record.storage_key)
+        self._drop_reserved_record(entry.record.dataset_identifier, entry.revision)
 
     def _require_coverage(self, dataset_identifier: str) -> CoverageDataset:
         """Read the coverage record of a dataset or raise."""
@@ -640,6 +741,12 @@ class RasterRepository:
         """Validate a cube against its grid and attach the GeoZarr attributes it is written with."""
         if not dataset.data_vars:
             raise RasterContractError("dataset has no data variables")
+        assert_variable_names_available(
+            dataset.data_vars,
+            time_dimension=grid.time_dimension,
+            y_dimension=grid.y_dimension,
+            x_dimension=grid.x_dimension,
+        )
         dimensions = (grid.time_dimension, grid.y_dimension, grid.x_dimension)
         for name, array in dataset.data_vars.items():
             if tuple(str(dimension) for dimension in array.dims) != dimensions:
@@ -827,9 +934,13 @@ class RasterRepository:
         dataset = handle.dataset
         store_grid = self._store_grid(dataset, record)
         timestamps = self._timestamps(dataset, store_grid.time_dimension)
+        variables = tuple(sorted(str(name) for name in dataset.data_vars))
+        # The store grid was read from the first variable, so the layout of that one is the layout the
+        # grid of this snapshot is written with.
+        leading = dataset[variables[0]]
         return RasterStoreDescription(
             snapshot_identifier=handle.snapshot_identifier,
-            variables=tuple(sorted(str(name) for name in dataset.data_vars)),
+            variables=variables,
             crs=store_grid.crs,
             bbox=self._envelope(store_grid, dataset),
             # The extent is the span the axis covers, which is not its first and last cell when a
@@ -844,6 +955,9 @@ class RasterRepository:
                 int(dataset.sizes.get(store_grid.y_dimension, 0)),
                 int(dataset.sizes.get(store_grid.x_dimension, 0)),
             ),
+            data_type=str(numpy.dtype(leading.dtype)),
+            nodata_value=self._nodata_value(leading),
+            attributes=_store_attributes(dataset),
             license=_metadata_text(metadata, LICENSE_METADATA_KEY),
             attribution=_metadata_text(metadata, ATTRIBUTION_METADATA_KEY),
         )
@@ -962,10 +1076,12 @@ class RasterRepository:
         # it reads the wrong timesteps for labels it holds and raises KeyError for every other bound.
         values = numpy.asarray(array[store_grid.time_dimension].values, dtype="datetime64[ns]")
         selected = numpy.ones(values.shape, dtype=bool)
+        # A bound the coordinate cannot hold is clamped rather than refused: asking for everything up to
+        # the year 3000 is a window a reader is entitled to, and it covers every timestep the store has.
         if start is not None:
-            selected &= values >= numpy.datetime64(to_naive_utc(start), "ns")
+            selected &= values >= clamp_to_datetime64(start)
         if end is not None:
-            selected &= values <= numpy.datetime64(to_naive_utc(end), "ns")
+            selected &= values <= clamp_to_datetime64(end)
         return array.isel({store_grid.time_dimension: numpy.flatnonzero(selected)})
 
     def _apply_spatial_window(
@@ -1065,6 +1181,7 @@ class RasterRepository:
     def _build_record(
         self,
         dataset_identifier: str,
+        storage_prefix: str,
         grid: GridSpecification,
         dataset: xarray.Dataset,
         *,
@@ -1079,7 +1196,7 @@ class RasterRepository:
         return CoverageDataset(
             dataset_identifier=dataset_identifier,
             title=title or (existing.title if existing is not None else dataset_identifier),
-            storage_key=raster_prefix(dataset_identifier),
+            storage_key=storage_prefix,
             created_at=existing.created_at if existing is not None else now,
             updated_at=now,
             bbox=grid.bbox,
@@ -1142,6 +1259,53 @@ def _metadata_text(metadata: dict[str, Any] | None, key: str) -> str | None:
         return None
     value = metadata.get(key)
     return value if isinstance(value, str) else None
+
+
+def _store_attributes(dataset: xarray.Dataset) -> dict[str, str]:
+    """Return the text root attributes of a store, without the two GeoZarr keys the writer stamps itself."""
+    stamped = {PROJECTION_CODE_ATTRIBUTE, SPATIAL_BBOX_ATTRIBUTE}
+    return {
+        str(key): value for key, value in dataset.attrs.items() if str(key) not in stamped and isinstance(value, str)
+    }
+
+
+def _grid_from_description(description: RasterStoreDescription) -> GridSpecification | None:
+    """Return the grid a described snapshot was written on, or None when its axes describe no grid at all."""
+    rows, columns = description.shape
+    if rows < 1 or columns < 1:
+        return None
+    return GridSpecification(
+        shape=description.shape,
+        bbox=description.bbox,
+        crs=description.crs,
+        data_type=description.data_type,
+        nodata_value=description.nodata_value,
+        time_dimension=description.time_dimension,
+        y_dimension=description.y_dimension,
+        x_dimension=description.x_dimension,
+        attributes=dict(description.attributes),
+    )
+
+
+def _grid_matches(recorded: GridSpecification, stored: GridSpecification) -> bool:
+    """Report whether a recorded grid still describes a store, allowing for cell sizes measured in floats."""
+    if recorded.shape != stored.shape or recorded.crs != stored.crs:
+        return False
+    if recorded.data_type != stored.data_type or recorded.nodata_value != stored.nodata_value:
+        return False
+    dimensions = (recorded.time_dimension, recorded.y_dimension, recorded.x_dimension)
+    if dimensions != (stored.time_dimension, stored.y_dimension, stored.x_dimension):
+        return False
+    # The writer only ever adds root attributes, and an ingested source carries its own, so a record the
+    # store holds every attribute of describes the same grid rather than a stale one.
+    if not recorded.attributes.items() <= stored.attributes.items():
+        return False
+    y_cell_size, x_cell_size = build_cell_sizes(stored)
+    tolerance = max(abs(y_cell_size), abs(x_cell_size)) * GRID_BBOX_TOLERANCE
+    return all(
+        math.isclose(left, right, abs_tol=tolerance)
+        for left, right in zip(recorded.bbox.as_tuple(), stored.bbox.as_tuple(), strict=True)
+    )
 
 
 def _incoming_timestep_count(dataset: xarray.Dataset, time_dimension: str) -> int:

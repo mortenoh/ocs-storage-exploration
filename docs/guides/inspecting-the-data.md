@@ -25,12 +25,12 @@ they are keys under the bucket rather than directories on disk, as
 {data_directory}/
   ocs/
     catalog/datasets/{dataset_identifier}.json   one record per dataset, either item type
-    raster/{dataset_identifier}/                 one Icechunk repository per coverage
-    vector/{dataset_identifier}/current.json     pointer naming the published version
-    vector/{dataset_identifier}/versions/v00001/reservation.json
-    vector/{dataset_identifier}/versions/v00001/data.parquet
-    vector/{dataset_identifier}/versions/v00001/metadata.json
-    vector/{dataset_identifier}/versions/v00002/...
+    raster/{dataset_identifier}/{generation}/    one Icechunk repository per coverage
+    vector/{dataset_identifier}/{generation}/current.json   pointer naming the published version
+    vector/{dataset_identifier}/{generation}/versions/v00001/reservation.json
+    vector/{dataset_identifier}/{generation}/versions/v00001/data.parquet
+    vector/{dataset_identifier}/{generation}/versions/v00001/metadata.json
+    vector/{dataset_identifier}/{generation}/versions/v00002/...
 ```
 
 Each version directory holds three objects: the `reservation.json` that claimed
@@ -38,10 +38,16 @@ the version number, the Parquet file, and the `metadata.json` sidecar that both
 completes the version and records the coordinate reference system, feature
 count, identifier property and selectable columns a read of that version uses.
 
+`{generation}` is a uuid4 in hex, minted when the dataset was created, so a
+dataset deleted and written again never reuses the prefix of the one it replaced.
+Every path below therefore carries one; the value on your machine is the
+`storage_key` of the catalog record, and every command that takes a concrete path
+expects it substituted.
+
 `find` over the directory the walkthrough wrote shows both halves:
 
 ```console
-$ find /tmp/ocs-demo -maxdepth 5
+$ find /tmp/ocs-demo -maxdepth 6
 /tmp/ocs-demo
 /tmp/ocs-demo/ocs
 /tmp/ocs-demo/ocs/catalog
@@ -52,16 +58,16 @@ $ find /tmp/ocs-demo -maxdepth 5
 /tmp/ocs-demo/ocs/vector/districts-demo
 /tmp/ocs-demo/ocs/catalog/datasets/temperature-demo.json
 /tmp/ocs-demo/ocs/catalog/datasets/districts-demo.json
-/tmp/ocs-demo/ocs/raster/temperature-demo/snapshots
-/tmp/ocs-demo/ocs/raster/temperature-demo/chunks
-/tmp/ocs-demo/ocs/raster/temperature-demo/transactions
-/tmp/ocs-demo/ocs/raster/temperature-demo/manifests
-/tmp/ocs-demo/ocs/raster/temperature-demo/repo
-/tmp/ocs-demo/ocs/raster/temperature-demo/overwritten
-/tmp/ocs-demo/ocs/vector/districts-demo/versions
-/tmp/ocs-demo/ocs/vector/districts-demo/current.json
-/tmp/ocs-demo/ocs/vector/districts-demo/versions/v00001
-/tmp/ocs-demo/ocs/vector/districts-demo/versions/v00002
+/tmp/ocs-demo/ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d
+/tmp/ocs-demo/ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c
+/tmp/ocs-demo/ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/snapshots
+/tmp/ocs-demo/ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/chunks
+/tmp/ocs-demo/ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/transactions
+/tmp/ocs-demo/ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/manifests
+/tmp/ocs-demo/ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/repo
+/tmp/ocs-demo/ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d/overwritten
+/tmp/ocs-demo/ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c/versions
+/tmp/ocs-demo/ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c/current.json
 ```
 
 (the Icechunk object names under `snapshots`, `chunks`, `manifests`,
@@ -102,8 +108,8 @@ what a rollback moved away from, which [versioning](../concepts/versioning.md)
 explains in full. The vector pointer object is the same idea in one file:
 
 ```console
-$ cat /tmp/ocs-demo/ocs/vector/districts-demo/current.json
-{"version":1,"key":"ocs/vector/districts-demo/versions/v00001/data.parquet","feature_count":3,
+$ cat /tmp/ocs-demo/ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c/current.json
+{"version":1,"key":"ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c/versions/v00001/data.parquet","feature_count":3,
  "published_at":"2026-09-15T17:15:18.434733Z"}
 ```
 
@@ -119,7 +125,7 @@ import icechunk
 import xarray
 
 repository = icechunk.Repository.open(
-    icechunk.local_filesystem_storage("/tmp/ocs-demo/ocs/raster/temperature-demo")
+    icechunk.local_filesystem_storage("/tmp/ocs-demo/ocs/raster/temperature-demo/9c5e7d2b1a3f4e6c8b0d2f4a6c8e0b2d")
 )
 print(repository.list_branches())  # {'main', 'published'}
 
@@ -184,7 +190,7 @@ bounding box and uses the covering bbox column to prune row groups:
 import geopandas
 
 frame = geopandas.read_parquet(
-    "/tmp/ocs-demo/ocs/vector/districts-demo/versions/v00001/data.parquet",
+    "/tmp/ocs-demo/ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c/versions/v00001/data.parquet",
     bbox=(5, 59, 11, 61),
 )
 print(frame[["id", "level"]])
@@ -217,7 +223,7 @@ import json
 
 import pyarrow.parquet
 
-path = "/tmp/ocs-demo/ocs/vector/districts-demo/versions/v00001/data.parquet"
+path = "/tmp/ocs-demo/ocs/vector/districts-demo/4f3b2a1c9d8e4f0a8b7c6d5e4f3a2b1c/versions/v00001/data.parquet"
 metadata = pyarrow.parquet.read_metadata(path)
 geo = json.loads(metadata.metadata[b"geo"])
 
@@ -251,7 +257,7 @@ import duckdb
 duckdb.sql("INSTALL spatial; LOAD spatial;")
 duckdb.sql("""
     SELECT id, level, ST_AsText(geometry) AS geometry
-    FROM read_parquet('/tmp/ocs-demo/ocs/vector/districts-demo/versions/v00001/data.parquet')
+    FROM read_parquet('/tmp/ocs-demo/ocs/vector/districts-demo/*/versions/v00001/data.parquet')
     WHERE level = 2
 """).show()
 PY
@@ -309,6 +315,6 @@ for item in obstore.list(store, "ocs").collect():
 
 One filesystem detail: deleting a dataset deletes every object below its prefix,
 but obstore deletes objects rather than directories, so the empty
-`raster/{dataset_identifier}` and `vector/{dataset_identifier}` directories are
-left behind on disk. An object store has no directories, so there is nothing
+`raster/{dataset_identifier}/{generation}` and
+`vector/{dataset_identifier}/{generation}` directories are left behind on disk. An object store has no directories, so there is nothing
 equivalent to leave behind there.

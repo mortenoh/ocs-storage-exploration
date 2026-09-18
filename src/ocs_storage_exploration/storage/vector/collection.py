@@ -25,6 +25,7 @@ from shapely.geometry.base import BaseGeometry
 from ocs_storage_exploration.storage.addresses import StorageAddress
 from ocs_storage_exploration.storage.errors import (
     CrsError,
+    DatasetAlreadyExistsError,
     DatasetNotFoundError,
     FeatureCountGuardError,
     FeatureIdentityError,
@@ -40,14 +41,15 @@ from ocs_storage_exploration.storage.errors import (
 from ocs_storage_exploration.storage.failures import backend_transport_failures
 from ocs_storage_exploration.storage.keys import (
     VECTOR_METADATA_NAME,
+    mint_generation_token,
     parse_vector_version,
     validate_dataset_identifier,
     vector_data_key,
+    vector_generation_prefix,
     vector_pointer_key,
-    vector_prefix,
     vector_reservation_key,
     vector_version_metadata_key,
-    vector_version_prefix,
+    vector_versions_prefix,
 )
 from ocs_storage_exploration.storage.objects import (
     create_object,
@@ -235,12 +237,6 @@ def build_frame_from_geojson(
     return geopandas.GeoDataFrame.from_features(prepared, crs=require_crs(crs))
 
 
-def versions_prefix(identifier: str) -> str:
-    """Return the key prefix holding every version directory of a collection."""
-    # Derived from the version prefix so the layout stays owned by keys.py alone.
-    return vector_version_prefix(identifier, 1).rsplit("/", maxsplit=1)[0]
-
-
 class VectorCollectionStore:
     """Stores vector collections as immutable GeoParquet versions with a published pointer object."""
 
@@ -253,11 +249,12 @@ class VectorCollectionStore:
 
     @property
     def _pointer_etags(self) -> dict[str, str]:
-        """Return the pointer etags this thread last read, so no publication writes against another thread's."""
+        """Return the pointer etags this thread last read, keyed by storage prefix rather than identifier."""
         # One store serves several requests on the threadpool. A shared cache would let a publication
         # replace a pointer using the etag a concurrent reader refreshed, which is the lost update
         # the compare-and-swap exists to refuse. Every publication reads the pointer before writing
-        # it, so a per-thread cache loses nothing.
+        # it, so a per-thread cache loses nothing. The key is the storage prefix, so an etag read
+        # from one generation of a collection is never spent on the pointer of the next one.
         etags: dict[str, str] | None = getattr(self._pointer_state, "etags", None)
         if etags is None:
             etags = {}
@@ -290,18 +287,24 @@ class VectorCollectionStore:
         identifier = validate_dataset_identifier(collection_identifier)
         existing = self._existing_collection(identifier)
         if existing is not None and existing.record.is_deleting:
-            # The prefix this write is about to fill is being emptied. Finishing that deletion first is
-            # the only way to write into a prefix nobody else is sweeping; the write then creates the
-            # record conditionally, so a second writer doing the same thing loses at the create.
+            # The generation that record names is being emptied. Finishing that deletion first is the
+            # only way to leave it behind; what follows is a first write, under a generation of its
+            # own, so the sweep of the dead one can never reach the objects written here.
             self._complete_deletion(existing)
             existing = None
         prepared = self._prepare_frame(frame, identifier_property=identifier_property)
         declared = self._validate_selectable_columns(prepared, selectable_columns)
         previous = None if existing is None else existing.record
-        version = self.reserve_version(identifier)
-        self._write_parquet(self._backend.address(vector_data_key(identifier, version)), prepared)
+        # A first write mints a generation of its own; a later one stays in the generation of the
+        # record it read, which is the only thing that says where the live data of a collection is.
+        if previous is None:
+            storage_prefix = vector_generation_prefix(identifier, mint_generation_token())
+        else:
+            storage_prefix = previous.storage_key
+        version = self._reserve_version(storage_prefix, identifier=identifier)
+        self._write_parquet(self._backend.address(vector_data_key(storage_prefix, version)), prepared)
         metadata = self._write_version_metadata(
-            identifier,
+            storage_prefix,
             version,
             prepared,
             identifier_property=identifier_property,
@@ -309,9 +312,9 @@ class VectorCollectionStore:
             license=license or (previous.license if previous is not None else None),
             attribution=attribution or (previous.attribution if previous is not None else None),
         )
-        record = self._build_record(identifier, metadata, title=title, previous=previous)
+        record = self._build_record(identifier, storage_prefix, metadata, title=title, previous=previous)
         if existing is None:
-            self._catalog.put(record, create=True)
+            self._create_record(record, storage_prefix)
         else:
             self._catalog.put(record, revision=existing.revision)
         if publish:
@@ -362,13 +365,14 @@ class VectorCollectionStore:
     ) -> VectorReadHandle:
         """Read one version of a collection, pruning by envelope and clause before the exact intersection test."""
         identifier = validate_dataset_identifier(collection_identifier)
-        # The record proves the collection exists and is a vector dataset; it describes no version.
-        self._require_collection(identifier)
-        resolved = self._resolve_version(identifier, version)
+        # The record proves the collection exists and is a vector dataset, and it names the generation
+        # holding its versions; it describes none of them.
+        storage_prefix = self._require_collection(identifier).record.storage_key
+        resolved = self._resolve_version(identifier, storage_prefix, version)
         # Every field below describes the version being read, not whatever the newest write left behind.
-        metadata = self.version_metadata(identifier, resolved)
+        metadata = self._read_version_metadata(identifier, storage_prefix, resolved)
         self._guard_unqualified_read(identifier, metadata, bbox=bbox, where=where)
-        source = self._parquet_source(self._backend.address(vector_data_key(identifier, resolved)))
+        source = self._parquet_source(self._backend.address(vector_data_key(storage_prefix, resolved)))
         schema = source.schema()
         keywords: dict[str, Any] = {}
         filters = build_filters(
@@ -395,17 +399,18 @@ class VectorCollectionStore:
         """Move the published pointer of a collection to one version, which is also how a rollback works."""
         identifier = validate_dataset_identifier(collection_identifier)
         entry = self._require_collection(identifier)
-        available = self.versions(identifier)
+        storage_prefix = entry.record.storage_key
+        available = self._list_versions(storage_prefix, completed_only=True)
         if not available:
             raise NothingToPublishError(f"collection {identifier!r} has no written version to publish")
         target = available[-1] if version is None else version
         if target not in available:
             raise SnapshotNotFoundError(f"collection {identifier!r} has no version {target}")
-        metadata = self.version_metadata(identifier, target)
-        pointer = self._read_pointer(identifier)
+        metadata = self._read_version_metadata(identifier, storage_prefix, target)
+        pointer = self._read_pointer(storage_prefix)
         previous_version = None if pointer is None else pointer.version
         if pointer is None or pointer.version != target:
-            self._write_pointer(identifier, metadata)
+            self._write_pointer(storage_prefix, metadata)
         published_at = current_timestamp()
         entry.record.publication = Publication(
             published=True,
@@ -425,11 +430,15 @@ class VectorCollectionStore:
 
     def versions(self, collection_identifier: str) -> list[int]:
         """List the version numbers a collection finished writing, in ascending order."""
-        return self._list_versions(collection_identifier, completed_only=True)
+        return self.versions_of(self._require_record(collection_identifier))
+
+    def versions_of(self, record: FeatureDataset) -> list[int]:
+        """List the version numbers the generation of a record finished writing, in ascending order."""
+        return self._list_versions(record.storage_key, completed_only=True)
 
     def claimed_versions(self, collection_identifier: str) -> list[int]:
         """List every version number a collection claimed, including a write that never finished."""
-        return self._list_versions(collection_identifier, completed_only=False)
+        return self._list_versions(self._require_record(collection_identifier).storage_key, completed_only=False)
 
     def reserve_version(
         self,
@@ -438,41 +447,35 @@ class VectorCollectionStore:
         attempts: int = MAXIMUM_RESERVATION_ATTEMPTS,
     ) -> int:
         """Claim the next free version number by creating its reservation object, which no two writers can share."""
-        identifier = validate_dataset_identifier(collection_identifier)
-        written = self.versions(identifier)
-        candidate = written[-1] + 1 if written else 1
-        store = self._backend.object_store()
-        for _ in range(attempts):
-            reservation = VectorVersionReservation(version=candidate, reserved_at=current_timestamp())
-            key = self._backend.address(vector_reservation_key(identifier, candidate)).key
-            claimed = create_object_if_absent(store, key, reservation.model_dump_json().encode(OBJECT_ENCODING))
-            # A reservation object that is ours is not enough: an earlier crash may have left data behind.
-            if claimed is not None and not self._data_object_exists(identifier, candidate):
-                return candidate
-            candidate += 1
-        raise PublicationConflictError(
-            f"collection {identifier!r} found no free version number in {attempts} attempts",
-        )
+        record = self._require_record(collection_identifier)
+        return self._reserve_version(record.storage_key, identifier=record.dataset_identifier, attempts=attempts)
 
     def version_metadata(self, collection_identifier: str, version: int) -> VectorVersionMetadata:
         """Read the metadata sidecar describing one version of a collection as it was written."""
-        identifier = validate_dataset_identifier(collection_identifier)
-        key = self._backend.address(vector_version_metadata_key(identifier, version)).key
-        stored = read_object(self._backend.object_store(), key)
-        if stored is None:
-            raise SnapshotNotFoundError(f"collection {identifier!r} has no version {version}")
-        return VectorVersionMetadata.model_validate_json(stored.payload)
+        return self.version_metadata_of(self._require_record(collection_identifier), version)
+
+    def version_metadata_of(self, record: FeatureDataset, version: int) -> VectorVersionMetadata:
+        """Read the metadata sidecar of one version in the generation a record names."""
+        return self._read_version_metadata(record.dataset_identifier, record.storage_key, version)
 
     def published_metadata(self, collection_identifier: str) -> VectorVersionMetadata | None:
         """Read the metadata sidecar of the published version, or None while nothing is published."""
-        pointer = self.pointer(collection_identifier)
-        return None if pointer is None else self.version_metadata(collection_identifier, pointer.version)
+        return self.published_metadata_of(self._require_record(collection_identifier))
+
+    def published_metadata_of(self, record: FeatureDataset) -> VectorVersionMetadata | None:
+        """Read the metadata sidecar of the published version of a record, or None while nothing is published."""
+        pointer = self._read_pointer(record.storage_key)
+        return None if pointer is None else self.version_metadata_of(record, pointer.version)
 
     def table_schema(self, collection_identifier: str, *, version: int | None = None) -> VectorTableSchema:
         """Describe one version of a collection from its Parquet footer alone, reading no row group."""
-        identifier = validate_dataset_identifier(collection_identifier)
-        resolved = self._resolve_version(identifier, version)
-        source = self._parquet_source(self._backend.address(vector_data_key(identifier, resolved)))
+        return self.table_schema_of(self._require_record(collection_identifier), version=version)
+
+    def table_schema_of(self, record: FeatureDataset, *, version: int | None = None) -> VectorTableSchema:
+        """Describe one version in the generation a record names, from its Parquet footer alone."""
+        storage_prefix = record.storage_key
+        resolved = self._resolve_version(record.dataset_identifier, storage_prefix, version)
+        source = self._parquet_source(self._backend.address(vector_data_key(storage_prefix, resolved)))
         schema, row_count = source.schema_and_row_count()
         return VectorTableSchema(
             version=resolved,
@@ -482,7 +485,7 @@ class VectorCollectionStore:
 
     def pointer(self, collection_identifier: str) -> VectorCollectionPointer | None:
         """Read the published-version pointer object of a collection, or None when nothing is published."""
-        return self._read_pointer(validate_dataset_identifier(collection_identifier))
+        return self._read_pointer(self._require_record(collection_identifier).storage_key)
 
     def current_version(self, collection_identifier: str) -> int | None:
         """Return the published version of a collection, or None when nothing is published."""
@@ -490,16 +493,17 @@ class VectorCollectionStore:
         return None if pointer is None else pointer.version
 
     def delete(self, collection_identifier: str) -> int:
-        """Mark the record of a collection as deleting, sweep every object below its prefix, then drop it.
+        """Mark the record of a collection as deleting, sweep the generation it names, then drop it.
 
         The record goes last rather than first: while it is there and marked, a concurrent writer is
         told a deletion is running instead of finding no record at all and writing into a prefix that
         is about to be emptied. A deletion that stops half way leaves the marked record behind, and
         deleting again, or writing the collection again, finishes it.
 
-        Nothing is ever swept without the reservation. A mark that loses its compare-and-swap to a
-        writer is retried against the record that writer left behind, and a deletion that keeps
-        losing is refused rather than emptying a prefix the live record still points at.
+        Nothing is ever swept without the reservation, and the sweep only ever empties the storage
+        prefix of the record that reservation was taken on. A collection written again under the same
+        identifier lives in a generation of its own, so a deleter that resumes late finds its own
+        generation empty and leaves the new one untouched.
         """
         identifier = validate_dataset_identifier(collection_identifier)
         # Read raw: a record already marked as deleting is exactly what this call is here to finish.
@@ -510,14 +514,13 @@ class VectorCollectionStore:
             # after that, so it belongs to the writer that created it rather than to this call, and
             # sweeping it would erase a live collection this deletion never reserved.
             return 0
-        removed = self._sweep(identifier)
-        self._drop_reserved_record(identifier, reserved)
+        removed = self._sweep(reserved.record.storage_key)
+        self._drop_reserved_record(identifier, reserved.revision)
         return removed
 
-    def _list_versions(self, collection_identifier: str, *, completed_only: bool) -> list[int]:
+    def _list_versions(self, storage_prefix: str, *, completed_only: bool) -> list[int]:
         """List the version numbers below the versions prefix, optionally only those with a metadata sidecar."""
-        identifier = validate_dataset_identifier(collection_identifier)
-        address = self._backend.address(versions_prefix(identifier))
+        address = self._backend.address(vector_versions_prefix(storage_prefix))
         marker = f"{address.key}/"
         found: set[int] = set()
         for key in self._backend.list_keys(address):
@@ -532,9 +535,40 @@ class VectorCollectionStore:
                 continue
         return sorted(found)
 
-    def _data_object_exists(self, identifier: str, version: int) -> bool:
+    def _reserve_version(
+        self,
+        storage_prefix: str,
+        *,
+        identifier: str,
+        attempts: int = MAXIMUM_RESERVATION_ATTEMPTS,
+    ) -> int:
+        """Claim the next free version number of one generation by creating its reservation object."""
+        written = self._list_versions(storage_prefix, completed_only=True)
+        candidate = written[-1] + 1 if written else 1
+        store = self._backend.object_store()
+        for _ in range(attempts):
+            reservation = VectorVersionReservation(version=candidate, reserved_at=current_timestamp())
+            key = self._backend.address(vector_reservation_key(storage_prefix, candidate)).key
+            claimed = create_object_if_absent(store, key, reservation.model_dump_json().encode(OBJECT_ENCODING))
+            # A reservation object that is ours is not enough: an earlier crash may have left data behind.
+            if claimed is not None and not self._data_object_exists(storage_prefix, candidate):
+                return candidate
+            candidate += 1
+        raise PublicationConflictError(
+            f"collection {identifier!r} found no free version number in {attempts} attempts",
+        )
+
+    def _read_version_metadata(self, identifier: str, storage_prefix: str, version: int) -> VectorVersionMetadata:
+        """Read the metadata sidecar of one version below a storage prefix, naming the collection when it is absent."""
+        key = self._backend.address(vector_version_metadata_key(storage_prefix, version)).key
+        stored = read_object(self._backend.object_store(), key)
+        if stored is None:
+            raise SnapshotNotFoundError(f"collection {identifier!r} has no version {version}")
+        return VectorVersionMetadata.model_validate_json(stored.payload)
+
+    def _data_object_exists(self, storage_prefix: str, version: int) -> bool:
         """Report whether the GeoParquet object of one version is already on the backend."""
-        return self._backend.exists(self._backend.address(vector_data_key(identifier, version)))
+        return self._backend.exists(self._backend.address(vector_data_key(storage_prefix, version)))
 
     def _prepare_frame(self, frame: geopandas.GeoDataFrame, *, identifier_property: str) -> geopandas.GeoDataFrame:
         """Validate feature identity and the coordinate reference system, then Hilbert-sort the frame."""
@@ -618,7 +652,7 @@ class VectorCollectionStore:
 
     def _write_version_metadata(
         self,
-        identifier: str,
+        storage_prefix: str,
         version: int,
         frame: geopandas.GeoDataFrame,
         *,
@@ -641,7 +675,7 @@ class VectorCollectionStore:
             license=license,
             attribution=attribution,
         )
-        key = self._backend.address(vector_version_metadata_key(identifier, version)).key
+        key = self._backend.address(vector_version_metadata_key(storage_prefix, version)).key
         payload = metadata.model_dump_json().encode(OBJECT_ENCODING)
         create_object(self._backend.object_store(), key, payload, label=METADATA_LABEL)
         return metadata
@@ -649,6 +683,7 @@ class VectorCollectionStore:
     def _build_record(
         self,
         identifier: str,
+        storage_prefix: str,
         metadata: VectorVersionMetadata,
         *,
         title: str | None,
@@ -658,7 +693,7 @@ class VectorCollectionStore:
         return FeatureDataset(
             dataset_identifier=identifier,
             title=title or (previous.title if previous is not None else identifier),
-            storage_key=vector_prefix(identifier),
+            storage_key=storage_prefix,
             created_at=previous.created_at if previous is not None else metadata.written_at,
             updated_at=metadata.written_at,
             bbox=metadata.bbox,
@@ -692,21 +727,36 @@ class VectorCollectionStore:
             raise DatasetNotFoundError(f"collection {identifier!r} is being deleted")
         return entry
 
-    def _sweep(self, identifier: str) -> int:
-        """Delete every object below the prefix of a collection and forget the pointer etag of this thread."""
-        removed = self._backend.delete_prefix(self._backend.address(vector_prefix(identifier)))
-        self._pointer_etags.pop(identifier, None)
+    def _require_record(self, collection_identifier: str) -> FeatureDataset:
+        """Read the record of a live collection, which is what names the generation holding its objects."""
+        return self._require_collection(validate_dataset_identifier(collection_identifier)).record
+
+    def _create_record(self, record: FeatureDataset, storage_prefix: str) -> None:
+        """Create the record of a new collection, sweeping the generation this write minted when it loses."""
+        try:
+            self._catalog.put(record, create=True)
+        except DatasetAlreadyExistsError:
+            # Another writer claimed the identifier first, so this generation will never be named by a
+            # record. Nobody else knows its token, so sweeping it removes exactly what this write put
+            # there and the loser leaves no orphan behind.
+            self._sweep(storage_prefix)
+            raise
+
+    def _sweep(self, storage_prefix: str) -> int:
+        """Delete every object below one storage prefix and forget the pointer etag of this thread."""
+        removed = self._backend.delete_prefix(self._backend.address(storage_prefix))
+        self._pointer_etags.pop(storage_prefix, None)
         return removed
 
-    def _reserve_deletion(self, entry: CollectionEntry) -> str | None:
-        """Return the revision that reserves this deletion, or None once somebody else has finished it."""
+    def _reserve_deletion(self, entry: CollectionEntry) -> CollectionEntry | None:
+        """Return the entry that reserves this deletion, or None once somebody else has finished it."""
         identifier = entry.record.dataset_identifier
         current = entry
         for _ in range(MAXIMUM_DELETION_ATTEMPTS):
             if current.record.is_deleting:
                 # Another deleter reserved it and stopped. Sweeping is idempotent and finishing that
                 # deletion is exactly what this call is for, so its mark is the reservation to run under.
-                return current.revision
+                return current
             marked = current.record.model_copy(
                 update={"lifecycle": DatasetLifecycle.DELETING, "updated_at": current_timestamp()},
             )
@@ -728,7 +778,7 @@ class VectorCollectionStore:
             reserved = self._existing_collection(identifier)
             if reserved is None or not reserved.record.is_deleting:
                 return None
-            return reserved.revision
+            return reserved
         raise PublicationConflictError(
             f"collection {identifier!r} was written again during every one of the "
             f"{MAXIMUM_DELETION_ATTEMPTS} attempts to reserve its deletion",
@@ -737,18 +787,27 @@ class VectorCollectionStore:
     def _drop_reserved_record(self, identifier: str, reserved: str) -> None:
         """Delete the record of a swept collection, leaving alone one that was reclaimed in the meantime."""
         entry = self._catalog.get_entry(identifier)
-        # Object stores offer no conditional delete, so this is a read followed by a delete rather than
-        # one compare-and-swap. It refuses the outcome that matters: erasing the record of a collection
-        # that was written again under the same identifier while this deletion was sweeping.
+        # obstore exposes no conditional delete on any of the three backends, so this is a read
+        # followed by a delete rather than one compare-and-swap. It refuses the outcome that matters
+        # in the common case: erasing the record of a collection that was written again while this
+        # deletion was sweeping.
+        #
+        # One window is left, and it is narrow rather than harmless. Between this read and the delete
+        # below, another actor can finish the deletion, drop the record and let a writer create the
+        # collection again; the delete then removes that writer's record. No bytes are lost, because
+        # the sweep above only ever emptied this deletion's own generation and the new versions are
+        # untouched, but the objects are left unreferenced and the collection answers 404 after a
+        # write that succeeded. Closing it needs a conditional delete, which obstore does not expose,
+        # or never deleting a record at all: a tombstone the next create replaces under
+        # compare-and-swap.
         if entry is None or entry.revision != reserved:
             return
         self._catalog.delete(identifier)
 
     def _complete_deletion(self, entry: CollectionEntry) -> None:
-        """Finish a deletion that stopped half way, so the caller can start from an empty prefix."""
-        identifier = entry.record.dataset_identifier
-        self._sweep(identifier)
-        self._drop_reserved_record(identifier, entry.revision)
+        """Finish a deletion that stopped half way, emptying only the generation its record names."""
+        self._sweep(entry.record.storage_key)
+        self._drop_reserved_record(entry.record.dataset_identifier, entry.revision)
 
     def _guard_unqualified_read(
         self,
@@ -768,16 +827,16 @@ class VectorCollectionStore:
                 f"an unqualified read is limited to {threshold}",
             )
 
-    def _resolve_version(self, identifier: str, version: int | None) -> int:
+    def _resolve_version(self, identifier: str, storage_prefix: str, version: int | None) -> int:
         """Resolve the version to read: the requested one, else the published one, else the latest written."""
-        available = self.versions(identifier)
+        available = self._list_versions(storage_prefix, completed_only=True)
         if not available:
             raise SnapshotNotFoundError(f"collection {identifier!r} has no written version")
         if version is not None:
             if version not in available:
                 raise SnapshotNotFoundError(f"collection {identifier!r} has no version {version}")
             return version
-        pointer = self._read_pointer(identifier)
+        pointer = self._read_pointer(storage_prefix)
         if pointer is not None and pointer.version in available:
             return pointer.version
         return available[-1]
@@ -810,42 +869,42 @@ class VectorCollectionStore:
             selected.append(column)
         return selected
 
-    def _pointer_address(self, identifier: str) -> StorageAddress:
-        """Return the address of the published-version pointer object of a collection."""
-        return self._backend.address(vector_pointer_key(identifier))
+    def _pointer_address(self, storage_prefix: str) -> StorageAddress:
+        """Return the address of the published-version pointer object below one storage prefix."""
+        return self._backend.address(vector_pointer_key(storage_prefix))
 
-    def _read_pointer(self, identifier: str) -> VectorCollectionPointer | None:
-        """Read the pointer object of a collection and remember its etag, or return None when it is absent."""
-        key = self._pointer_address(identifier).key
+    def _read_pointer(self, storage_prefix: str) -> VectorCollectionPointer | None:
+        """Read the pointer object of one generation and remember its etag, or return None when it is absent."""
+        key = self._pointer_address(storage_prefix).key
         stored = read_object(self._backend.object_store(), key)
         if stored is None:
-            self._pointer_etags.pop(identifier, None)
+            self._pointer_etags.pop(storage_prefix, None)
             return None
-        self._remember_pointer_etag(identifier, stored.revision)
+        self._remember_pointer_etag(storage_prefix, stored.revision)
         return VectorCollectionPointer.model_validate_json(stored.payload)
 
-    def _write_pointer(self, identifier: str, metadata: VectorVersionMetadata) -> VectorCollectionPointer:
-        """Write the pointer object of a collection under compare-and-swap against the etag last read."""
+    def _write_pointer(self, storage_prefix: str, metadata: VectorVersionMetadata) -> VectorCollectionPointer:
+        """Write the pointer object of one generation under compare-and-swap against the etag last read."""
         pointer = VectorCollectionPointer(
             version=metadata.version,
-            key=self._backend.address(vector_data_key(identifier, metadata.version)).key,
+            key=self._backend.address(vector_data_key(storage_prefix, metadata.version)).key,
             feature_count=metadata.feature_count,
             published_at=current_timestamp(),
         )
-        key = self._pointer_address(identifier).key
+        key = self._pointer_address(storage_prefix).key
         store = self._backend.object_store()
         payload = pointer.model_dump_json().encode(OBJECT_ENCODING)
-        known_etag = self._pointer_etags.get(identifier)
+        known_etag = self._pointer_etags.get(storage_prefix)
         if known_etag is None:
             result = create_object(store, key, payload, label=POINTER_LABEL)
         else:
             result = replace_object(store, key, payload, known_etag, label=POINTER_LABEL)
-        self._remember_pointer_etag(identifier, result.get("e_tag"))
+        self._remember_pointer_etag(storage_prefix, result.get("e_tag"))
         return pointer
 
-    def _remember_pointer_etag(self, identifier: str, etag: str | None) -> None:
-        """Record or drop the etag last seen for the pointer object of one collection."""
+    def _remember_pointer_etag(self, storage_prefix: str, etag: str | None) -> None:
+        """Record or drop the etag last seen for the pointer object of one generation."""
         if etag is None:
-            self._pointer_etags.pop(identifier, None)
+            self._pointer_etags.pop(storage_prefix, None)
         else:
-            self._pointer_etags[identifier] = etag
+            self._pointer_etags[storage_prefix] = etag

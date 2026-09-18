@@ -307,6 +307,68 @@ def test_a_raster_without_a_time_axis_needs_a_timestamp(tmp_path: Path) -> None:
         open_raster_file(path, variable="rain")
 
 
+def test_a_variable_a_written_coordinate_takes_is_refused_before_the_rename(tmp_path: Path) -> None:
+    path = write_geotiff(
+        tmp_path / "reserved.tif",
+        values=ramp(2, 2),
+        y_values=numpy.array([2.5, 1.5]),
+        x_values=numpy.array([10.5, 11.5]),
+    )
+    with pytest.raises(RasterContractError, match="taken by the coordinates"):
+        open_raster_file(path, variable=SPATIAL_REFERENCE_NAME, timestamp=datetime(2024, 1, 1, tzinfo=UTC))
+
+
+def test_a_timestamp_no_time_coordinate_can_hold_is_refused_when_a_raster_is_stamped(tmp_path: Path) -> None:
+    path = write_geotiff(
+        tmp_path / "undated.tif",
+        values=ramp(2, 2),
+        y_values=numpy.array([2.5, 1.5]),
+        x_values=numpy.array([10.5, 11.5]),
+    )
+    with pytest.raises(RasterContractError, match="outside the range"):
+        open_raster_file(path, variable="rain", timestamp=datetime(2500, 1, 1, tzinfo=UTC))
+
+
+def test_reconciling_an_ingested_coverage_rewrites_nothing(storage_service: StorageService, tmp_path: Path) -> None:
+    write_geotiff(
+        tmp_path / "rain-2024-01-01.tif",
+        values=ramp(2, 2),
+        y_values=numpy.array([2.5, 1.5]),
+        x_values=numpy.array([10.5, 11.5]),
+    )
+    plan = build_raster_ingest_plan(
+        files=["rain-2024-01-01.tif"],
+        variable="rain",
+        roots=[tmp_path],
+        working_directory=tmp_path,
+    )
+    ingest_raster_files(storage_service.raster, "settled", plan)
+    written = storage_service.catalog.require_entry("settled")
+
+    storage_service.raster.reconcile_publication("settled")
+
+    # A grid measured back from float coordinates, and the source attributes an ingest carries into the
+    # root, must not read as stale, or every publication would rewrite the record it reconciles.
+    assert storage_service.catalog.require_entry("settled").revision == written.revision
+
+
+def test_a_plan_is_refused_before_a_file_is_read_when_a_timestamp_cannot_be_held(tmp_path: Path) -> None:
+    write_geotiff(
+        tmp_path / "rain-2024-01-01.tif",
+        values=ramp(2, 2),
+        y_values=numpy.array([2.5, 1.5]),
+        x_values=numpy.array([10.5, 11.5]),
+    )
+    with pytest.raises(RasterContractError, match="outside the range"):
+        build_raster_ingest_plan(
+            files=["rain-2024-01-01.tif"],
+            variable="rain",
+            roots=[tmp_path],
+            timestamp=datetime(2500, 1, 1),
+            working_directory=tmp_path,
+        )
+
+
 def test_timestamp_is_read_from_the_file_name() -> None:
     assert timestamp_from_filename(Path("chirps3-2024-01-07.tif")) == datetime(2024, 1, 7)
     assert timestamp_from_filename(

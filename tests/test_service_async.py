@@ -16,10 +16,11 @@ from ocs_storage_exploration.settings import Settings
 from ocs_storage_exploration.storage.addresses import StorageScheme
 from ocs_storage_exploration.storage.errors import (
     DatasetNotFoundError,
+    IngestPathError,
     ItemTypeMismatchError,
     StorageTimeoutError,
 )
-from ocs_storage_exploration.storage.keys import raster_prefix, vector_prefix
+from ocs_storage_exploration.storage.keys import RASTER_PREFIX, VECTOR_PREFIX
 from ocs_storage_exploration.storage.protocols import AsyncCatalog
 from ocs_storage_exploration.storage.raster import TimeStep, VersionSelector, build_synthetic_cube, build_timestamps
 from ocs_storage_exploration.storage.raster.repository import RasterRepository
@@ -252,6 +253,25 @@ async def test_the_raster_facade_builds_a_deferred_cube_on_the_worker_thread(
     assert all(name.startswith("AnyIO worker thread") for name in threads)
 
 
+async def test_both_ingest_facades_resolve_their_plan_on_the_worker_thread(
+    async_storage_service: AsyncStorageService,
+) -> None:
+    threads: list[str] = []
+
+    def refuse(pattern: str) -> Any:
+        threads.append(threading.current_thread().name)
+        raise IngestPathError(f"no readable file matches {pattern!r}")
+
+    with pytest.raises(IngestPathError):
+        await async_storage_service.raster.ingest(COVERAGE, partial(refuse, "rain-*.tif"))
+    with pytest.raises(IngestPathError):
+        await async_storage_service.vector.ingest(COLLECTION, partial(refuse, "districts.geojson"))
+
+    # Resolving a plan walks the filesystem, so the facades take a factory and call it where the writes
+    # run, under the same limiter token and the same timeout. What it raises there still reaches the caller.
+    assert [name.startswith("AnyIO worker thread") for name in threads] == [True, True]
+
+
 async def test_the_vector_engine_round_trips_through_the_facade(populated: AsyncStorageService) -> None:
     published = await populated.vector.publish(COLLECTION)
     handle = await populated.vector.read(COLLECTION)
@@ -318,7 +338,7 @@ async def test_delete_dataset_routes_a_coverage_to_the_raster_engine(populated: 
     deleted = await populated.delete_dataset(COVERAGE)
 
     assert isinstance(deleted, CoverageDataset)
-    assert populated.backend.list_keys(populated.backend.address(raster_prefix(COVERAGE))) == []
+    assert populated.backend.list_keys(populated.backend.address(RASTER_PREFIX, COVERAGE)) == []
     assert [record.dataset_identifier for record in await populated.list_datasets()] == [COLLECTION]
 
 
@@ -326,7 +346,7 @@ async def test_delete_dataset_routes_a_collection_to_the_vector_engine(populated
     deleted = await populated.delete_dataset(COLLECTION)
 
     assert isinstance(deleted, FeatureDataset)
-    assert populated.backend.list_keys(populated.backend.address(vector_prefix(COLLECTION))) == []
+    assert populated.backend.list_keys(populated.backend.address(VECTOR_PREFIX, COLLECTION)) == []
     assert [record.dataset_identifier for record in await populated.list_datasets()] == [COVERAGE]
 
 

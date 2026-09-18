@@ -44,8 +44,11 @@ Only after the claim succeeds does `main` move, and it moves as a fast-forward
 under its own compare-and-swap: `from_snapshot_id=previous` is the tip the write
 was staged on, so a commit that landed on `main` in between is not overwritten.
 That reset is the one Icechunk conflict a caller can still see, and it is
-reported as 409 rather than escaping as a 500. When it happens the record is
-already one write ahead of the store, which the next reconciliation repairs.
+reported as 409 rather than escaping as a 500. When it happens the record the
+write claimed is already one write ahead of the store, so an overwrite or an
+append puts the record it replaced back before it raises, and only if what
+stands is still the record it just wrote. A crash between the two steps leaves
+the disagreement for the next reconciliation to repair.
 
 `GET /api/v1/raster/{id}/versions` walks `Repository.ancestry(branch="main")`
 newest first and marks the snapshot the published branch points at:
@@ -116,12 +119,18 @@ rewrites its `publication` block from the branch tip, and both `publish()` and
 `versions()` call it first, so the next call after an interrupted publication
 repairs the record.
 
-The same call also rewrites the extents. `timestep_count`, `variables` and
-`temporal` are read back from `describe(version=draft)` and written to the
+The same call also rewrites everything the store holds. `timestep_count`,
+`variables`, `temporal`, the grid with its `bbox`, the licence and the
+attribution are read back from `describe(version=draft)` and written to the
 record whenever they disagree, because a write that claimed the record and then
-lost the fast-forward onto `main` leaves exactly that disagreement. A repository
-that holds only its initialisation snapshot has nothing to read back, so the
-extents of its record are left alone rather than blanked.
+lost the fast-forward onto `main` leaves exactly that disagreement. The bbox is
+compared to within a millionth of a cell: cell centres are written as floats and
+measured back as a median step, so a record that already matches is left alone
+rather than rewritten on every call. The title is the one field an overwrite
+changes that the store never holds, so a record whose title a rejected overwrite
+replaced keeps the replacement. A repository that holds only its initialisation
+snapshot has nothing to read back, so the extents of its record are left alone
+rather than blanked.
 
 ### An append must extend the time axis
 
@@ -142,6 +151,15 @@ Queries do not rely on it. `_apply_time_window` selects with a boolean mask and
 across the antimeridian, so a store written before this guard existed still
 answers correctly, and an empty window falls to the existing size guard rather
 than to a `KeyError`.
+
+The axis itself is nanosecond `datetime64`, which reaches from 1677-09-21 to
+2262-04-11. A timestamp outside that is refused with 422, both at a write and
+when an ingest plan is built, rather than wrapping silently into another
+century; a query bound outside it is clamped onto the end it ran past, because a
+window ending in the year 3000 still names every timestep the store holds. A
+coarser resolution was ruled out: xarray decodes a time coordinate back onto
+nanoseconds whatever unit it was written with, so a coordinate outside the span
+could not be read back either.
 
 ### Metadata comes from the store, not from the record
 
@@ -165,18 +183,35 @@ the snapshot it opened. Nothing falls back to the record: a draft that declares
 zero as its fill value would otherwise make a published query over genuine zeros
 report no statistics at all.
 
+The coordinates that reading depends on are reserved at write time.
+`spatial_ref` and the grid's own `t`, `y` and `x` names are refused as data
+variable names with 422, by a create, an append and an ingest alike: assigning
+the coordinate replaces a variable of the same name, so the coverage would be
+written, and reported as created, with that variable's data silently gone.
+
 ## Vector: one Parquet file per version
 
 A Parquet file has no history, so the version is the file. Each write lands in
 its own directory and no write ever replaces an earlier one:
 
 ```text
-ocs/vector/{dataset_identifier}/versions/v00001/reservation.json
-ocs/vector/{dataset_identifier}/versions/v00001/data.parquet
-ocs/vector/{dataset_identifier}/versions/v00001/metadata.json
-ocs/vector/{dataset_identifier}/versions/v00002/...
-ocs/vector/{dataset_identifier}/current.json
+ocs/vector/{dataset_identifier}/{generation}/versions/v00001/reservation.json
+ocs/vector/{dataset_identifier}/{generation}/versions/v00001/data.parquet
+ocs/vector/{dataset_identifier}/{generation}/versions/v00001/metadata.json
+ocs/vector/{dataset_identifier}/{generation}/versions/v00002/...
+ocs/vector/{dataset_identifier}/{generation}/current.json
 ```
+
+`{generation}` is a uuid4 in hex, minted when the collection is created. Writing
+a collection that has a record stays in the generation that record names; only a
+first write mints one. Both engines work this way: a coverage keeps its Icechunk
+repository at `ocs/raster/{dataset_identifier}/{generation}`, an overwrite stays
+in the generation of the record it read, and only a create without a record
+mints a new one. The record's `storage_key` holds exactly that prefix, so the
+record is the only thing that says where the live data of a dataset is, and a
+dataset deleted and written again under the same identifier never shares a
+prefix with the one it replaced. See "Deleting a dataset marks the record before
+it sweeps" below for what that buys.
 
 The version number is zero-padded to five digits so that a lexicographic object
 listing, which is the only ordering an object store guarantees, is also numeric
@@ -237,7 +272,7 @@ block, and nothing else depends on it.
 data file, the feature count and when it was published:
 
 ```json
-{"version":1,"key":"ocs/vector/districts-demo/versions/v00001/data.parquet",
+{"version":1,"key":"ocs/vector/districts-demo/{generation}/versions/v00001/data.parquet",
  "feature_count":3,"published_at":"2026-09-15T17:15:18.434733Z"}
 ```
 
@@ -276,12 +311,11 @@ be swept, and the sweep then erases what it wrote.
 
 The record now goes last. A delete reads the record raw, marks it
 `lifecycle: "deleting"` under a compare-and-swap, sweeps every object below the
-dataset prefix - `ocs/raster/{id}/` for a coverage, `ocs/vector/{id}/` for a
-collection - and only then deletes the record, and only if the record is still
-the one it reserved. A record marked `deleting` is a deletion in progress, not a
-dataset: listings skip it, and reads, publications and the STAC projection
-answer 404. Deleting and writing read it raw, because they are the two calls
-that can finish it.
+`storage_key` of the record it marked - and nothing else - and only then deletes
+the record, and only if the record is still the one it reserved. A record marked
+`deleting` is a deletion in progress, not a dataset: listings skip it, and reads,
+publications and the STAC projection answer 404. Deleting and writing read it
+raw, because they are the two calls that can finish it.
 
 That makes the state after a crash recoverable rather than ambiguous. A delete
 that stops after the mark leaves a marked record and some objects behind, and
@@ -301,16 +335,37 @@ returns: what stands under the identifier now belongs to the writer that made
 it, not to this call. A delete that loses every attempt is refused with
 `PublicationConflictError`, 409, and removes nothing.
 
-One window is left, and it is the one an object store cannot close. There is no
+### What the generation prefix closes, and what it does not
+
+Deleting used to be able to erase a dataset that had been written again. The
+sweep is a listing followed by a delete, so a writer that took the deletion over
+while the original deleter was between those two steps had its new objects
+removed by that deleter's sweep: the record survived, because a deleter refuses
+to delete a record it did not reserve, but the data under it did not. That is
+closed. A dataset written again lives under a generation the dead record does
+not name, so a deleter that resumes late finds its own generation already empty
+and never reaches the new one, however long it was away. A writer that then
+loses the conditional create sweeps the generation it minted itself, which
+nobody else knows the token of, so a loser leaves no orphan behind either.
+
+One window is left, and it is narrow rather than harmless. There is still no
 conditional delete, so dropping the record is a read followed by a delete rather
-than one compare-and-swap, and the sweep itself is a listing followed by a
-delete. A writer that takes a deletion over while the original deleter is still
-between those two steps can have its new objects removed by that deleter's
-sweep: the record survives, because the deleter refuses to delete a record it
-did not reserve, but the data under it does not. Closing that needs a lease
-rather than a marker, which this pass does not have. What the marker buys is the
-common case: a reused identifier never inherits the versions of the dataset it
-replaced.
+than one compare-and-swap. Between that read and that delete, another actor can
+finish the same deletion, drop the record, and leave a writer free to create the
+dataset again; the delete then removes the new record. No bytes are lost - the
+sweep only ever emptied the deleter's own generation, and the new data is intact
+under a prefix nothing now names - but the dataset answers 404 after a write
+that succeeded, and its objects are left unreferenced. The window is one read
+and one delete wide rather than a whole sweep wide, which is what generations
+bought, and it is not zero.
+
+Closing it takes one of two things this pass does not have. A conditional delete
+would make dropping the record a compare-and-swap, but obstore exposes none on
+any of the three backends: `obstore.delete(store, paths)` takes no etag and no
+mode. The alternative is never deleting a record at all - writing a tombstone
+that the next create replaces under compare-and-swap - which trades the window
+for a record that outlives its dataset and a listing that has to filter it out.
+Neither is implemented here.
 
 ## Side by side
 

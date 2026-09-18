@@ -18,7 +18,12 @@ from ocs_storage_exploration.storage.errors import (
     QuerySizeGuardError,
     RasterContractError,
 )
-from ocs_storage_exploration.storage.keys import raster_prefix
+from ocs_storage_exploration.storage.keys import (
+    RASTER_PREFIX,
+    mint_generation_token,
+    raster_generation_prefix,
+    validate_generation_token,
+)
 from ocs_storage_exploration.storage.protocols import StorageBackend
 from ocs_storage_exploration.storage.raster import (
     PROJECTION_CODE_ATTRIBUTE,
@@ -105,7 +110,9 @@ def test_create_then_read_round_trips_values_and_dimensions(
     assert record.timestep_count == 3
     assert record.temporal is not None
     assert record.temporal.start == START
-    assert record.storage_key == "raster/roundtrip"
+    engine, identifier, generation = record.storage_key.split("/")
+    assert (engine, identifier) == ("raster", IDENTIFIER)
+    assert validate_generation_token(generation) == generation
 
 
 def test_read_side_carries_the_coordinate_reference_system(
@@ -228,6 +235,35 @@ def test_create_refuses_dimensions_in_the_wrong_order(raster_repository: RasterR
         raster_repository.create(IDENTIFIER, grid, transposed)
 
 
+def test_create_refuses_a_variable_the_spatial_reference_coordinate_would_replace(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+    catalog: ObjectCatalog,
+):
+    reserved = build_cube(grid).rename({VARIABLE: SPATIAL_REFERENCE_NAME})
+
+    with pytest.raises(RasterContractError, match=SPATIAL_REFERENCE_NAME):
+        raster_repository.create(IDENTIFIER, grid, reserved)
+
+    # Writing it would have reported a coverage created with no variables in it at all.
+    assert catalog.get(IDENTIFIER) is None
+
+
+def test_append_refuses_a_variable_the_spatial_reference_coordinate_would_replace(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+):
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid, count=3))
+    reserved = build_cube(grid, count=1, start=datetime(2020, 1, 4)).rename({VARIABLE: SPATIAL_REFERENCE_NAME})
+
+    with pytest.raises(RasterContractError, match=SPATIAL_REFERENCE_NAME):
+        raster_repository.append(IDENTIFIER, reserved)
+
+    with raster_repository.read(IDENTIFIER, version=VersionSelector.DRAFT) as handle:
+        assert handle.dataset.sizes["t"] == 3
+        assert sorted(str(name) for name in handle.dataset.data_vars) == [VARIABLE]
+
+
 def mark_deleting(catalog: ObjectCatalog) -> None:
     """Leave the coverage in the state a deletion that stopped before its sweep leaves behind."""
     entry = catalog.require_entry(IDENTIFIER)
@@ -307,7 +343,7 @@ def test_a_second_delete_finishes_a_deletion_that_stopped_before_its_sweep(
     raster_repository.delete(IDENTIFIER)
 
     assert catalog.get(IDENTIFIER) is None
-    assert storage_backend.list_keys(raster_repository.repository_address(IDENTIFIER)) == []
+    assert storage_backend.list_keys(storage_backend.address(RASTER_PREFIX, IDENTIFIER)) == []
 
 
 def test_a_coverage_being_deleted_is_absent_for_reads_publications_and_listings(
@@ -346,6 +382,39 @@ def test_rioxarray_reads_the_written_coordinate_reference_system(
         assert CRS.from_user_input(handle.dataset.rio.crs.to_wkt()) == CRS.from_user_input(grid.crs)
 
 
+def test_a_record_written_before_generations_still_opens_its_repository(
+    raster_repository: RasterRepository,
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+    grid: GridSpecification,
+):
+    identifier = "legacy"
+    cube = apply_geozarr_attributes(build_cube(grid), grid)
+    # The layout before storage generations: the repository sat directly under the identifier. Every
+    # open follows the storage key of the record, so such a record keeps working without a migration.
+    storage_prefix = f"{RASTER_PREFIX}/{identifier}"
+    address = storage_backend.address(storage_prefix)
+    icechunk_repository = icechunk.Repository.open_or_create(storage_backend.icechunk_storage(address))
+    session = icechunk_repository.writable_session("main")
+    to_icechunk(cube, session, mode="w")
+    session.commit("initial write")
+    catalog.put(
+        CoverageDataset(
+            dataset_identifier=identifier,
+            title="Legacy",
+            storage_key=storage_prefix,
+            grid=grid,
+            variables=(VARIABLE,),
+            timestep_count=3,
+        ),
+    )
+
+    assert raster_repository.repository_address(identifier) == address
+    with raster_repository.read(identifier, version=VersionSelector.DRAFT) as handle:
+        assert numpy.allclose(handle.dataset[VARIABLE].values, cube[VARIABLE].values)
+    assert raster_repository.describe(identifier, version=VersionSelector.DRAFT).timestep_count == 3
+
+
 def test_read_falls_back_to_the_first_multiscale_group(
     raster_repository: RasterRepository,
     storage_backend: StorageBackend,
@@ -354,7 +423,9 @@ def test_read_falls_back_to_the_first_multiscale_group(
 ):
     identifier = "multiscale"
     cube = apply_geozarr_attributes(build_cube(grid), grid)
-    address = raster_repository.repository_address(identifier)
+    # No record exists yet, so this stands in for the generation a create would have minted.
+    storage_prefix = raster_generation_prefix(identifier, mint_generation_token())
+    address = storage_backend.address(storage_prefix)
     icechunk_repository = icechunk.Repository.open_or_create(storage_backend.icechunk_storage(address))
     session = icechunk_repository.writable_session("main")
     to_icechunk(cube, session, group="0", mode="w")
@@ -363,7 +434,7 @@ def test_read_falls_back_to_the_first_multiscale_group(
         CoverageDataset(
             dataset_identifier=identifier,
             title="Multiscale",
-            storage_key=raster_prefix(identifier),
+            storage_key=storage_prefix,
             grid=grid,
             variables=(VARIABLE,),
             timestep_count=3,

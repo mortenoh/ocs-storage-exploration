@@ -393,6 +393,108 @@ def test_reconcile_rebuilds_the_extents_a_record_disagrees_with(
     assert stored.variables == (VARIABLE,)
 
 
+def build_wider_grid() -> GridSpecification:
+    """Build a grid of a different shape from build_grid, so a record describing it is visibly stale."""
+    return GridSpecification(
+        shape=(6, 9),
+        bbox=BoundingBox(minimum_x=0.0, minimum_y=0.0, maximum_x=18.0, maximum_y=12.0),
+        crs="EPSG:4326",
+    )
+
+
+def move_the_draft_branch_under_the_next_write(
+    raster_repository: RasterRepository,
+    storage_backend: StorageBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Make the next staged write find the draft branch moved on, so its commit loses the compare-and-swap."""
+    address = raster_repository.repository_address(IDENTIFIER)
+    written = repository_module.to_icechunk
+    raced = {"done": False}
+
+    def to_icechunk_after_a_racing_commit(dataset: xarray.Dataset, session: Any, **keywords: Any) -> None:
+        if not raced["done"]:
+            raced["done"] = True
+            racing = icechunk.Repository.open(storage_backend.icechunk_storage(address))
+            racing.writable_session("main").commit("a racing writer moved the draft branch", allow_empty=True)
+        written(dataset, session, **keywords)
+
+    monkeypatch.setattr(repository_module, "to_icechunk", to_icechunk_after_a_racing_commit)
+
+
+def test_a_rejected_overwrite_puts_the_record_it_replaced_back(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid, count=3))
+    wider = build_wider_grid()
+    move_the_draft_branch_under_the_next_write(raster_repository, storage_backend, monkeypatch)
+
+    with pytest.raises(PublicationConflictError):
+        raster_repository.create(IDENTIFIER, wider, build_cube(wider, count=1), overwrite=True, title="Rejected")
+
+    record = catalog.require(IDENTIFIER)
+    assert isinstance(record, CoverageDataset)
+    assert record.grid.shape == grid.shape
+    assert record.bbox == grid.bbox
+    assert record.timestep_count == 3
+    assert record.title == IDENTIFIER
+
+
+def test_reconcile_restores_the_grid_a_rejected_overwrite_left_behind(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid, count=3))
+    wider = build_wider_grid()
+    move_the_draft_branch_under_the_next_write(raster_repository, storage_backend, monkeypatch)
+    # A crash between the catalog claim and the record being put back is exactly what reconciliation is
+    # for, so the write is stopped after the claim and before it takes the replaced record back.
+    monkeypatch.setattr(raster_repository, "_restore_replaced_record", lambda rejected, replaced: None)
+
+    with pytest.raises(PublicationConflictError):
+        raster_repository.create(IDENTIFIER, wider, build_cube(wider, count=1), overwrite=True)
+
+    stale = catalog.require(IDENTIFIER)
+    assert isinstance(stale, CoverageDataset)
+    assert stale.grid.shape == wider.shape
+
+    reconciled = raster_repository.reconcile_publication(IDENTIFIER)
+
+    assert reconciled.grid.shape == grid.shape
+    assert reconciled.grid.bbox == grid.bbox
+    assert reconciled.bbox == grid.bbox
+    assert reconciled.timestep_count == 3
+    assert reconciled.variables == (VARIABLE,)
+    # The grid an append is checked against is the record's, so a repaired one lets the coverage grow.
+    raster_repository.append(IDENTIFIER, build_cube(grid, count=2, start=datetime(2020, 1, 4), seed=1))
+    summary = raster_repository.query(IDENTIFIER, version=VersionSelector.DRAFT)
+    assert summary.timestep_count == 5
+    assert summary.cell_count == 5 * 4 * 6
+    assert summary.bbox.as_tuple() == grid.bbox.as_tuple()
+
+
+def test_reconcile_rewrites_nothing_when_the_record_already_describes_the_store(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+    catalog: ObjectCatalog,
+):
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid, count=3))
+    written = catalog.require_entry(IDENTIFIER)
+
+    raster_repository.reconcile_publication(IDENTIFIER)
+
+    # The grid is measured back from coordinates written as floats, so a reconciliation comparing it
+    # exactly would find the record stale every time and rewrite it on every read of the versions.
+    assert catalog.require_entry(IDENTIFIER).revision == written.revision
+
+
 def test_reconcile_leaves_a_record_alone_when_the_store_holds_no_data_yet(
     raster_repository: RasterRepository,
     grid: GridSpecification,

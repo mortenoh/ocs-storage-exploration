@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import numpy
 import pytest
@@ -67,6 +69,73 @@ def test_an_absolute_path_outside_the_roots_is_refused(sample_tree: Path, tmp_pa
 def test_an_absolute_path_inside_the_roots_is_allowed(sample_tree: Path, tmp_path: Path) -> None:
     resolved = resolve_ingest_paths([str(sample_tree / "one.tif")], roots=[sample_tree], working_directory=tmp_path)
     assert resolved == [(sample_tree / "one.tif").resolve()]
+
+
+def test_an_absolute_glob_inside_the_roots_is_expanded(sample_tree: Path, tmp_path: Path) -> None:
+    resolved = resolve_ingest_paths([f"{sample_tree}/*.tif"], roots=[sample_tree], working_directory=tmp_path)
+
+    assert [path.name for path in resolved] == ["one.tif", "two.tif"]
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        # Every one of these names a directory outside the roots as the place the walk would start.
+        "/**/*.tif",
+        "**/*.tif",
+        "../**/*.tif",
+        "samples/../**/*.tif",
+        "samples/../nested/*.tif",
+    ],
+)
+def test_a_glob_starting_outside_the_roots_is_refused_before_it_traverses(
+    pattern: str,
+    sample_tree: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse_to_walk(self: Path, *arguments: Any, **keywords: Any) -> Iterator[Path]:
+        raise AssertionError(f"walking {self} should have been refused before it started")
+
+    monkeypatch.setattr(Path, "glob", refuse_to_walk)
+
+    # The working directory is the parent of the only root, so a pattern anchored there is outside it.
+    with pytest.raises(IngestPathError, match="resolves outside"):
+        resolve_ingest_paths([pattern], roots=[sample_tree], working_directory=tmp_path)
+
+
+def test_a_glob_inside_the_roots_still_walks(sample_tree: Path, tmp_path: Path) -> None:
+    resolved = resolve_ingest_paths(["samples/**/*.tif"], roots=[sample_tree], working_directory=tmp_path)
+
+    assert {path.name for path in resolved} == {"one.tif", "two.tif", "three.tif"}
+
+
+def test_a_recursive_glob_does_not_walk_a_symbolic_link_out_of_a_root(sample_tree: Path, tmp_path: Path) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "four.tif").write_bytes(b"four")
+    (sample_tree / "linked").symlink_to(elsewhere, target_is_directory=True)
+
+    resolved = resolve_ingest_paths(["samples/**/*.tif"], roots=[sample_tree], working_directory=tmp_path)
+
+    # Path.glob takes recurse_symlinks=False on this Python, so `**` never descends through the link,
+    # and the tree it points at costs nothing to refuse.
+    assert {path.name for path in resolved} == {"one.tif", "two.tif", "three.tif"}
+    # Naming the link outright is followed rather than recursed into, and that is refused where the
+    # walk would start, because the link is what the literal part of the pattern resolves to.
+    with pytest.raises(IngestPathError, match="resolves outside"):
+        resolve_ingest_paths(["samples/linked/*.tif"], roots=[sample_tree], working_directory=tmp_path)
+
+
+def test_a_matched_symbolic_link_out_of_a_root_is_refused_by_the_check_on_every_match(
+    sample_tree: Path, tmp_path: Path
+) -> None:
+    (sample_tree / "linked.tif").symlink_to(tmp_path / "outside.tif")
+
+    # The walk starts inside the root and the match is a file inside it too, so only resolving the
+    # match itself shows where it leads: that second check is what refuses it.
+    with pytest.raises(IngestPathError, match="resolves outside"):
+        resolve_ingest_paths(["samples/link*.tif"], roots=[sample_tree], working_directory=tmp_path)
 
 
 def test_a_directory_is_not_a_file(sample_tree: Path, tmp_path: Path) -> None:

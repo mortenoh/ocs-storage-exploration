@@ -103,7 +103,9 @@ async def ingest_raster(
     settings: SettingsDependency,
 ) -> RasterIngestResult:
     """Read local GeoTIFF, COG, NetCDF or Zarr files below the ingest roots and write them as one coverage."""
-    return await storage.raster.ingest(dataset_identifier, request.to_plan(settings))
+    # The plan is handed over unresolved: expanding its globs walks the filesystem, so it belongs on
+    # the worker thread with the writes rather than on the event loop in front of them.
+    return await storage.raster.ingest(dataset_identifier, partial(request.to_plan, settings))
 
 
 @router.get("/{dataset_identifier}/query", summary="Summarise a window of a coverage")

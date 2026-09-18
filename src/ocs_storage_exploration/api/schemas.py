@@ -197,7 +197,11 @@ class IngestRasterRequest(BaseModel):
         return self
 
     def to_plan(self, settings: Settings) -> RasterIngestPlan:
-        """Resolve the requested globs against the ingest roots and pair every file with its timestamp."""
+        """Resolve the requested globs against the ingest roots and pair every file with its timestamp.
+
+        The route hands this over as a factory, so it is called on the worker thread of the ingest it
+        plans: it walks the filesystem, which the event loop has no business waiting for.
+        """
         listed = None if isinstance(self.timestamps, str) else self.timestamps
         return build_raster_ingest_plan(
             files=self.files,
@@ -247,7 +251,11 @@ class IngestVectorRequest(BaseModel):
         return normalise_attribution(value)
 
     def to_plan(self, settings: Settings) -> VectorIngestPlan:
-        """Resolve the requested path against the ingest roots and record the metadata of the write."""
+        """Resolve the requested path against the ingest roots and record the metadata of the write.
+
+        The route hands this over as a factory, so it is called on the worker thread of the ingest it
+        plans: it touches the filesystem, which the event loop has no business waiting for.
+        """
         return build_vector_ingest_plan(
             path=self.path,
             roots=settings.ingest_roots,

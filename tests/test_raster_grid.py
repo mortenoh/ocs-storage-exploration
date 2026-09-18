@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import numpy
 import pytest
@@ -18,6 +18,12 @@ from ocs_storage_exploration.storage.raster import (
     build_coordinates,
     build_synthetic_cube,
     build_timestamps,
+)
+from ocs_storage_exploration.storage.raster.grid import (
+    MAXIMUM_TIMESTAMP,
+    MINIMUM_TIMESTAMP,
+    clamp_to_datetime64,
+    to_datetime64,
 )
 from ocs_storage_exploration.storage.schemas import BoundingBox, GridSpecification
 
@@ -91,6 +97,58 @@ def test_build_synthetic_cube_has_time_y_x_dimensions_and_the_grid_dtype():
     assert cube[VARIABLE].dtype == numpy.dtype(grid.data_type)
     assert str(cube["t"].dtype).startswith("datetime64")
     assert numpy.isfinite(cube[VARIABLE].values).all()
+
+
+@pytest.mark.parametrize("reserved", [SPATIAL_REFERENCE_NAME, "t", "y", "x"])
+def test_build_synthetic_cube_refuses_a_variable_a_coordinate_takes(reserved: str):
+    timestamps = build_timestamps(datetime(2020, 1, 1), 2, TimeStep.DAY)
+
+    with pytest.raises(RasterContractError, match="taken by the coordinates"):
+        build_synthetic_cube(build_grid(), variable=reserved, timestamps=timestamps)
+
+
+def test_build_synthetic_cube_refuses_a_variable_named_after_a_renamed_dimension():
+    grid = build_grid().model_copy(update={"y_dimension": "latitude", "x_dimension": "longitude"})
+    timestamps = build_timestamps(datetime(2020, 1, 1), 2, TimeStep.DAY)
+
+    with pytest.raises(RasterContractError, match="latitude"):
+        build_synthetic_cube(grid, variable="latitude", timestamps=timestamps)
+
+
+def test_build_synthetic_cube_refuses_a_timestamp_no_time_coordinate_can_hold():
+    with pytest.raises(RasterContractError, match="outside the range"):
+        build_synthetic_cube(build_grid(), variable=VARIABLE, timestamps=build_timestamps(datetime(2500, 1, 1), 3))
+
+
+@pytest.mark.parametrize("boundary", [MINIMUM_TIMESTAMP, MAXIMUM_TIMESTAMP])
+def test_a_timestamp_on_the_edge_of_the_representable_range_is_written_unchanged(boundary: datetime):
+    cube = build_synthetic_cube(build_grid(), variable=VARIABLE, timestamps=[boundary])
+
+    assert cube["t"].values[0] == numpy.datetime64(boundary, "ns")
+
+
+@pytest.mark.parametrize(
+    "outside",
+    [MINIMUM_TIMESTAMP - timedelta(microseconds=1), MAXIMUM_TIMESTAMP + timedelta(microseconds=1)],
+)
+def test_a_timestamp_one_microsecond_outside_the_representable_range_is_refused(outside: datetime):
+    with pytest.raises(RasterContractError, match="outside the range"):
+        to_datetime64(outside)
+
+
+def test_a_timestamp_carrying_a_time_zone_is_converted_before_it_is_ranged():
+    assert to_datetime64(datetime(2020, 1, 1, 12, tzinfo=UTC)) == numpy.datetime64("2020-01-01T12:00:00", "ns")
+
+
+@pytest.mark.parametrize(
+    ("bound", "expected"),
+    [(datetime(1000, 1, 1), MINIMUM_TIMESTAMP), (datetime(3000, 1, 1), MAXIMUM_TIMESTAMP)],
+)
+def test_a_query_bound_outside_the_representable_range_is_clamped_rather_than_refused(
+    bound: datetime,
+    expected: datetime,
+):
+    assert clamp_to_datetime64(bound) == numpy.datetime64(expected, "ns")
 
 
 def test_build_synthetic_cube_is_deterministic_for_one_seed():
@@ -176,3 +234,11 @@ def test_apply_geozarr_attributes_stamps_no_nodata_value_when_the_grid_declares_
     decorated = apply_geozarr_attributes(build_single_step_cube(grid), grid)
 
     assert NODATA_ATTRIBUTE not in decorated[VARIABLE].attrs
+
+
+def test_apply_geozarr_attributes_refuses_a_variable_the_grid_mapping_coordinate_would_replace():
+    grid = build_grid()
+    cube = build_single_step_cube(grid).rename({VARIABLE: SPATIAL_REFERENCE_NAME})
+
+    with pytest.raises(RasterContractError, match=SPATIAL_REFERENCE_NAME):
+        apply_geozarr_attributes(cube, grid)

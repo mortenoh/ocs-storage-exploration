@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import calendar
 import math
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any, Final
@@ -28,6 +28,12 @@ MAXIMUM_LONGITUDE: Final[float] = 180.0
 LONGITUDE_SPAN: Final[float] = 360.0
 MONTHS_PER_YEAR: Final[int] = 12
 NOISE_SCALE: Final[float] = 0.01
+# The span a nanosecond datetime64 covers, rounded inwards onto the microsecond resolution a Python
+# datetime holds. It bounds every stored time coordinate rather than only the ones written as
+# nanoseconds: xarray decodes a time axis onto nanoseconds whatever unit it was written with, so a
+# coarser coordinate outside this span cannot be read back either.
+MINIMUM_TIMESTAMP: Final[datetime] = datetime(1677, 9, 21, 0, 12, 43, 145225)
+MAXIMUM_TIMESTAMP: Final[datetime] = datetime(2262, 4, 11, 23, 47, 16, 854775)
 
 FloatArray = NDArray[numpy.float64]
 
@@ -93,6 +99,45 @@ def to_naive_utc(value: datetime) -> datetime:
     return value.astimezone(UTC).replace(tzinfo=None)
 
 
+def to_datetime64(value: datetime) -> numpy.datetime64:
+    """Convert one timestamp into the naive UTC datetime64 a Zarr time coordinate holds, refusing an unholdable one."""
+    naive = to_naive_utc(value)
+    # numpy wraps rather than raises here, so an unchecked conversion of the year 2500 stores the year
+    # 1915 and the coverage silently describes a time axis nobody asked for.
+    if naive < MINIMUM_TIMESTAMP or naive > MAXIMUM_TIMESTAMP:
+        raise RasterContractError(
+            f"timestamp {naive.isoformat()} is outside the range a time coordinate holds, "
+            f"{MINIMUM_TIMESTAMP.isoformat()} to {MAXIMUM_TIMESTAMP.isoformat()}",
+        )
+    return numpy.datetime64(naive, "ns")
+
+
+def clamp_to_datetime64(value: datetime) -> numpy.datetime64:
+    """Convert one query bound into a datetime64, clamping it onto the range rather than refusing it."""
+    # Everything up to the year 3000 is a window a reader is entitled to ask for, and it selects every
+    # timestep there is. Only a wrapped bound is wrong, so the bound is moved onto the end it ran past.
+    naive = min(max(to_naive_utc(value), MINIMUM_TIMESTAMP), MAXIMUM_TIMESTAMP)
+    return numpy.datetime64(naive, "ns")
+
+
+def assert_variable_names_available(
+    names: Iterable[Any],
+    *,
+    time_dimension: str,
+    y_dimension: str,
+    x_dimension: str,
+) -> None:
+    """Refuse data variable names that a coordinate of the written coverage already takes."""
+    reserved = {SPATIAL_REFERENCE_NAME, time_dimension, y_dimension, x_dimension}
+    # Assigning the coordinate would replace a data variable of the same name, so the coverage would be
+    # written, and reported as created, with the data of that variable silently gone.
+    taken = sorted({str(name) for name in names} & reserved)
+    if taken:
+        raise RasterContractError(
+            f"variable names {taken} are taken by the coordinates a coverage is written with, {sorted(reserved)}",
+        )
+
+
 def build_synthetic_cube(
     grid: GridSpecification,
     *,
@@ -105,6 +150,12 @@ def build_synthetic_cube(
         raise RasterContractError("a synthetic cube needs at least one timestamp")
     if not variable:
         raise RasterContractError("a synthetic cube needs a variable name")
+    assert_variable_names_available(
+        [variable],
+        time_dimension=grid.time_dimension,
+        y_dimension=grid.y_dimension,
+        x_dimension=grid.x_dimension,
+    )
     coordinates = build_coordinates(grid)
     y_values = coordinates[grid.y_dimension]
     x_values = coordinates[grid.x_dimension]
@@ -127,6 +178,12 @@ def build_synthetic_cube(
 
 def apply_geozarr_attributes(dataset: xarray.Dataset, grid: GridSpecification) -> xarray.Dataset:
     """Attach the CF grid mapping coordinate and the GeoZarr root attributes to a dataset."""
+    assert_variable_names_available(
+        dataset.data_vars,
+        time_dimension=grid.time_dimension,
+        y_dimension=grid.y_dimension,
+        x_dimension=grid.x_dimension,
+    )
     crs = CRS.from_user_input(grid.crs)
     well_known_text = crs.to_wkt()
     decorated = dataset.assign_coords({SPATIAL_REFERENCE_NAME: numpy.int32(0)})
@@ -184,7 +241,7 @@ def _iter_numbers(value: Any) -> Iterator[float]:
 
 def _as_datetime64(timestamps: Sequence[datetime]) -> NDArray[numpy.datetime64]:
     """Convert timestamps into the naive UTC datetime64 array a Zarr coordinate holds."""
-    return numpy.array([to_naive_utc(value) for value in timestamps], dtype="datetime64[ns]")
+    return numpy.array([to_datetime64(value) for value in timestamps], dtype="datetime64[ns]")
 
 
 def _variable_attributes(grid: GridSpecification, variable: str) -> dict[str, Any]:

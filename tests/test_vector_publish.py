@@ -22,6 +22,11 @@ from ocs_storage_exploration.storage.vector.collection import VectorCollectionSt
 COLLECTION = "districts"
 
 
+def collection_prefix(catalog: ObjectCatalog) -> str:
+    """Return the storage prefix of the generation the catalog record of the collection names."""
+    return catalog.require(COLLECTION).storage_key
+
+
 @pytest.fixture
 def two_versions(
     storage_backend: StorageBackend, catalog: ObjectCatalog, settings: Settings, sample_features: geopandas.GeoDataFrame
@@ -44,7 +49,9 @@ def test_read_before_publish_sees_the_latest_written_version(two_versions: Vecto
     assert two_versions.current_version(COLLECTION) is None
 
 
-def test_publish_flips_the_pointer(two_versions: VectorCollectionStore, storage_backend: StorageBackend) -> None:
+def test_publish_flips_the_pointer(
+    two_versions: VectorCollectionStore, storage_backend: StorageBackend, catalog: ObjectCatalog
+) -> None:
     result = two_versions.publish(COLLECTION)
 
     assert result.item_type is ItemType.FEATURE
@@ -52,7 +59,7 @@ def test_publish_flips_the_pointer(two_versions: VectorCollectionStore, storage_
     assert result.version == 2
     assert result.previous_version is None
     assert two_versions.current_version(COLLECTION) == 2
-    assert storage_backend.exists(storage_backend.address(vector_pointer_key(COLLECTION)))
+    assert storage_backend.exists(storage_backend.address(vector_pointer_key(collection_prefix(catalog))))
 
 
 def test_publish_records_the_publication_on_the_catalog_record(
@@ -78,7 +85,7 @@ def test_read_after_publish_follows_the_pointer(two_versions: VectorCollectionSt
 
 
 def test_rollback_is_a_publish_of_an_older_version(
-    two_versions: VectorCollectionStore, storage_backend: StorageBackend
+    two_versions: VectorCollectionStore, storage_backend: StorageBackend, catalog: ObjectCatalog
 ) -> None:
     two_versions.publish(COLLECTION, version=2)
 
@@ -89,7 +96,7 @@ def test_rollback_is_a_publish_of_an_older_version(
     assert two_versions.current_version(COLLECTION) == 1
     assert two_versions.read(COLLECTION).version == 1
     # Rolling back moves a pointer; it never removes the version that was published before.
-    assert storage_backend.exists(storage_backend.address(vector_data_key(COLLECTION, 2)))
+    assert storage_backend.exists(storage_backend.address(vector_data_key(collection_prefix(catalog), 2)))
 
 
 def test_republishing_the_same_version_changes_nothing(two_versions: VectorCollectionStore) -> None:
@@ -119,7 +126,7 @@ def test_publish_refuses_a_collection_with_no_version(
 ) -> None:
     store = VectorCollectionStore(storage_backend, catalog, settings)
     store.write(COLLECTION, sample_features, identifier_property="id")
-    storage_backend.delete_prefix(storage_backend.address(vector_version_prefix(COLLECTION, 1)))
+    storage_backend.delete_prefix(storage_backend.address(vector_version_prefix(collection_prefix(catalog), 1)))
 
     with pytest.raises(NothingToPublishError):
         store.publish(COLLECTION)
@@ -275,11 +282,15 @@ def test_two_writes_taking_over_the_same_deletion_meet_at_the_conditional_create
     with pytest.raises(DatasetAlreadyExistsError):
         two_versions.write(COLLECTION, sample_features.iloc[:3], identifier_property="id")
 
-    # The record is the winner's, and the loser left only an unreferenced version behind.
+    # The record is the winner's, and the loser swept the generation it minted rather than leaving
+    # its objects under the identifier forever: nothing stands outside the prefix the record names.
     record = catalog.get(COLLECTION)
     assert isinstance(record, FeatureDataset)
     assert record.features.feature_count == 2
     assert len(competitor.read(COLLECTION, version=1).frame) == 2
+    stored = storage_backend.list_keys(storage_backend.address("vector", COLLECTION))
+    assert stored
+    assert all(key.startswith(storage_backend.address(record.storage_key).key) for key in stored)
 
 
 def test_a_collection_being_deleted_is_absent_for_reads_publications_and_listings(

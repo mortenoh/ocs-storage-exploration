@@ -235,16 +235,22 @@ class AsyncRasterRepository:
             description=f"appending to coverage {dataset_identifier!r}",
         )
 
-    async def ingest(self, dataset_identifier: str, plan: RasterIngestPlan) -> RasterIngestResult:
-        """Write the files of an ingest plan as one coverage, creating it and appending the rest in order.
+    async def ingest(self, dataset_identifier: str, build_plan: Callable[[], RasterIngestPlan]) -> RasterIngestResult:
+        """Resolve an ingest plan and write its files as one coverage, creating it and appending the rest in order.
 
-        The whole plan runs as one operation rather than one per file: it spends a single limiter token
-        for a sequence of writes that have to stay in order anyway, and the timeout then bounds the
+        The plan arrives as a factory rather than ready made, and is resolved here: expanding its globs
+        walks directories and stats every match, which on the event loop blocks every other request for
+        as long as the walk takes, and outside the runner is bounded by neither the limiter nor the
+        timeout. The factory is passed in because the storage layer knows nothing of the API request it
+        is resolved from.
+
+        The whole plan then runs as one operation rather than one per file: it spends a single limiter
+        token for a sequence of writes that have to stay in order anyway, and the timeout bounds the
         ingest a caller is waiting on rather than each file inside it.
         """
         return await self._runner.run(
-            lambda: ingest_raster_files(self._repository, dataset_identifier, plan),
-            description=f"ingesting {len(plan.files)} files into coverage {dataset_identifier!r}",
+            lambda: ingest_raster_files(self._repository, dataset_identifier, build_plan()),
+            description=f"ingesting files into coverage {dataset_identifier!r}",
         )
 
     async def describe(
@@ -399,11 +405,20 @@ class AsyncVectorCollectionStore:
             description=f"writing collection {collection_identifier!r}",
         )
 
-    async def ingest(self, collection_identifier: str, plan: VectorIngestPlan) -> VectorWriteResult:
-        """Read one local vector file and write it as the next version of a collection."""
+    async def ingest(
+        self,
+        collection_identifier: str,
+        build_plan: Callable[[], VectorIngestPlan],
+    ) -> VectorWriteResult:
+        """Resolve an ingest plan and write the local file it names as the next version of a collection.
+
+        The plan arrives as a factory rather than ready made, and is resolved here: resolving a path
+        touches the filesystem, which on the event loop blocks every other request for as long as it
+        takes, and outside the runner is bounded by neither the limiter nor the timeout.
+        """
         return await self._runner.run(
-            lambda: ingest_vector_file(self._store, collection_identifier, plan),
-            description=f"ingesting {plan.path.name!r} into collection {collection_identifier!r}",
+            lambda: ingest_vector_file(self._store, collection_identifier, build_plan()),
+            description=f"ingesting a file into collection {collection_identifier!r}",
         )
 
     async def read(

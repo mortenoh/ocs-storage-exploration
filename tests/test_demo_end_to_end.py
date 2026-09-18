@@ -23,6 +23,7 @@ from ocs_storage_exploration.demo import (
     vector_demos,
 )
 from ocs_storage_exploration.storage.errors import StorageError
+from ocs_storage_exploration.storage.keys import validate_generation_token
 from ocs_storage_exploration.storage.service import StorageService
 from tests.ingest_helpers import SAMPLES_DIRECTORY
 
@@ -95,7 +96,11 @@ def test_the_catalog_records_hold_relative_storage_keys(seeded_client: TestClien
     items = seeded_client.get("/api/v1/datasets").json()["items"]
 
     keys = {item["dataset_identifier"]: item["storage_key"] for item in items}
-    assert keys == {WORLDPOP: f"raster/{WORLDPOP}", DISTRICTS: f"vector/{DISTRICTS}", LAKES: f"vector/{LAKES}"}
+    # A dataset is created into a generation of its own, so its record names the prefix it minted.
+    for dataset_identifier, engine_prefix in ((WORLDPOP, "raster"), (DISTRICTS, "vector"), (LAKES, "vector")):
+        engine, identifier, generation = keys[dataset_identifier].split("/")
+        assert (engine, identifier) == (engine_prefix, dataset_identifier)
+        assert validate_generation_token(generation) == generation
 
 
 def test_a_worldpop_window_summarises_real_cells(seeded_client: TestClient) -> None:
