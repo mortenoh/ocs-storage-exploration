@@ -75,6 +75,7 @@ DEFAULT_VERSION_LIMIT: Final[int] = 100
 DEFAULT_CREATE_MESSAGE: Final[str] = "initial write"
 DEFAULT_APPEND_MESSAGE: Final[str] = "append"
 CUBE_DIMENSION_COUNT: Final[int] = 3
+MAXIMUM_DELETION_ATTEMPTS: Final[int] = 4
 BBOX_VALUE_COUNT: Final[int] = 4
 LICENSE_METADATA_KEY: Final[str] = "license"
 ATTRIBUTION_METADATA_KEY: Final[str] = "attribution"
@@ -501,11 +502,20 @@ class RasterRepository:
         told a deletion is running instead of finding no record at all and writing into a prefix that
         is about to be emptied. A deletion that stops half way leaves the marked record behind, and
         deleting again, or creating the coverage again, finishes it.
+
+        Nothing is ever swept without the reservation. A mark that loses its compare-and-swap to a
+        writer is retried against the record that writer left behind, and a deletion that keeps
+        losing is refused rather than emptying a repository the live record still points at.
         """
         identifier = validate_dataset_identifier(dataset_identifier)
         # Read raw: a record already marked as deleting is exactly what this call is here to finish.
         entry = self._coverage_entry(identifier)
         reserved = self._reserve_deletion(entry)
+        if reserved is None:
+            # Somebody else finished this deletion. Whatever stands under the identifier now was written
+            # after that, so it belongs to the writer that created it rather than to this call, and
+            # sweeping it would erase a live coverage this deletion never reserved.
+            return
         self._sweep(identifier)
         self._drop_reserved_record(identifier, reserved)
 
@@ -518,14 +528,20 @@ class RasterRepository:
                 config=self._backend.repository_config(),
             )
 
-    def _existing_entry(self, dataset_identifier: str, *, overwrite: bool) -> CoverageEntry | None:
-        """Return the entry being overwritten, refusing an existing dataset unless overwrite is set."""
+    def _existing_coverage(self, dataset_identifier: str) -> CoverageEntry | None:
+        """Read the coverage entry of a dataset, or None when the catalog holds no record for it."""
         entry = self._catalog.get_entry(dataset_identifier)
         if entry is None:
             return None
         if not isinstance(entry.record, CoverageDataset):
             raise ItemTypeMismatchError(f"dataset {dataset_identifier!r} is not a coverage")
-        existing = CoverageEntry(record=entry.record, revision=entry.revision)
+        return CoverageEntry(record=entry.record, revision=entry.revision)
+
+    def _existing_entry(self, dataset_identifier: str, *, overwrite: bool) -> CoverageEntry | None:
+        """Return the entry being overwritten, refusing an existing dataset unless overwrite is set."""
+        existing = self._existing_coverage(dataset_identifier)
+        if existing is None:
+            return None
         if existing.record.is_deleting:
             # The prefix this write is about to fill is being emptied. Finishing that deletion first is
             # the only way to write into a prefix nobody else is sweeping; the write then creates the
@@ -555,26 +571,43 @@ class RasterRepository:
         self._backend.delete_prefix(self.repository_address(dataset_identifier))
 
     def _reserve_deletion(self, entry: CoverageEntry) -> str | None:
-        """Mark a record as deleting under compare-and-swap, or report that another deleter got there first."""
+        """Return the revision that reserves this deletion, or None once somebody else has finished it."""
         identifier = entry.record.dataset_identifier
-        if entry.record.is_deleting:
-            return entry.revision
-        marked = entry.record.model_copy(
-            update={"lifecycle": DatasetLifecycle.DELETING, "updated_at": current_timestamp()},
+        current = entry
+        for _ in range(MAXIMUM_DELETION_ATTEMPTS):
+            if current.record.is_deleting:
+                # Another deleter reserved it and stopped. Sweeping is idempotent and finishing that
+                # deletion is exactly what this call is for, so its mark is the reservation to run under.
+                return current.revision
+            marked = current.record.model_copy(
+                update={"lifecycle": DatasetLifecycle.DELETING, "updated_at": current_timestamp()},
+            )
+            try:
+                self._catalog.put(marked, revision=current.revision)
+            except PublicationConflictError:
+                # A writer changed the record between the read and this compare-and-swap. Sweeping now
+                # would erase the snapshots that writer just committed while its record stayed live, so
+                # the reservation is reacquired against the record it left behind instead.
+                refreshed = self._existing_coverage(identifier)
+                if refreshed is None:
+                    return None
+                current = refreshed
+                continue
+            # The mark landed, but the record it landed on need not still be there: another deleter can
+            # have seen it, finished the deletion and dropped the record, leaving a writer free to
+            # create the coverage again under the same name. Only a record still marked as deleting is
+            # this call's reservation; a live one is the new coverage of whoever wrote it.
+            reserved = self._existing_coverage(identifier)
+            if reserved is None or not reserved.record.is_deleting:
+                return None
+            return reserved.revision
+        raise PublicationConflictError(
+            f"coverage {identifier!r} was written again during every one of the "
+            f"{MAXIMUM_DELETION_ATTEMPTS} attempts to reserve its deletion",
         )
-        try:
-            self._catalog.put(marked, revision=entry.revision)
-        except PublicationConflictError:
-            # Another deleter marked it first, or a writer changed it. Sweeping is still correct and
-            # idempotent, but dropping a record this call never reserved is not, so it is left alone.
-            return None
-        reserved = self._catalog.get_entry(identifier)
-        return None if reserved is None else reserved.revision
 
-    def _drop_reserved_record(self, dataset_identifier: str, reserved: str | None) -> None:
+    def _drop_reserved_record(self, dataset_identifier: str, reserved: str) -> None:
         """Delete the record of a swept coverage, leaving alone one that was reclaimed in the meantime."""
-        if reserved is None:
-            return
         entry = self._catalog.get_entry(dataset_identifier)
         # Object stores offer no conditional delete, so this is a read followed by a delete rather than
         # one compare-and-swap. It refuses the outcome that matters: erasing the record of a coverage
@@ -1120,6 +1153,10 @@ def _coordinate_indices(values: FloatArray, minimum: float, maximum: float, *, w
     """Return the positions of the coordinate values inside a closed range, wrapping longitudes when asked."""
     if not wrap:
         return numpy.flatnonzero((values >= minimum) & (values <= maximum))
+    if maximum - minimum >= LONGITUDE_SPAN:
+        # The window goes the whole way round, so every cell is inside it. Wrapping the two endpoints
+        # first would fold them onto one meridian and leave 0 to 360 selecting a single column of cells.
+        return numpy.arange(values.size, dtype=numpy.intp)
     bounds = wrap_longitudes(numpy.asarray([minimum, maximum], dtype="float64"))
     low, high = float(bounds[0]), float(bounds[1])
     if low <= high:

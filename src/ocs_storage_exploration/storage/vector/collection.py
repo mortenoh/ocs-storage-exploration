@@ -82,6 +82,7 @@ OBJECT_ENCODING: Final[str] = "utf-8"
 POINTER_LABEL: Final[str] = "pointer"
 METADATA_LABEL: Final[str] = "version metadata"
 MAXIMUM_RESERVATION_ATTEMPTS: Final[int] = 32
+MAXIMUM_DELETION_ATTEMPTS: Final[int] = 4
 
 
 class VectorCollectionPointer(BaseModel):
@@ -495,11 +496,20 @@ class VectorCollectionStore:
         told a deletion is running instead of finding no record at all and writing into a prefix that
         is about to be emptied. A deletion that stops half way leaves the marked record behind, and
         deleting again, or writing the collection again, finishes it.
+
+        Nothing is ever swept without the reservation. A mark that loses its compare-and-swap to a
+        writer is retried against the record that writer left behind, and a deletion that keeps
+        losing is refused rather than emptying a prefix the live record still points at.
         """
         identifier = validate_dataset_identifier(collection_identifier)
         # Read raw: a record already marked as deleting is exactly what this call is here to finish.
         entry = self._collection_entry(identifier)
         reserved = self._reserve_deletion(entry)
+        if reserved is None:
+            # Somebody else finished this deletion. Whatever stands under the identifier now was written
+            # after that, so it belongs to the writer that created it rather than to this call, and
+            # sweeping it would erase a live collection this deletion never reserved.
+            return 0
         removed = self._sweep(identifier)
         self._drop_reserved_record(identifier, reserved)
         return removed
@@ -660,7 +670,7 @@ class VectorCollectionStore:
         )
 
     def _existing_collection(self, identifier: str) -> CollectionEntry | None:
-        """Read the catalog entry of a collection, or None when this write is the first one."""
+        """Read the catalog entry of a collection, or None when the catalog holds no record for it."""
         entry = self._catalog.get_entry(identifier)
         if entry is None:
             return None
@@ -689,26 +699,43 @@ class VectorCollectionStore:
         return removed
 
     def _reserve_deletion(self, entry: CollectionEntry) -> str | None:
-        """Mark a record as deleting under compare-and-swap, or report that another deleter got there first."""
+        """Return the revision that reserves this deletion, or None once somebody else has finished it."""
         identifier = entry.record.dataset_identifier
-        if entry.record.is_deleting:
-            return entry.revision
-        marked = entry.record.model_copy(
-            update={"lifecycle": DatasetLifecycle.DELETING, "updated_at": current_timestamp()},
+        current = entry
+        for _ in range(MAXIMUM_DELETION_ATTEMPTS):
+            if current.record.is_deleting:
+                # Another deleter reserved it and stopped. Sweeping is idempotent and finishing that
+                # deletion is exactly what this call is for, so its mark is the reservation to run under.
+                return current.revision
+            marked = current.record.model_copy(
+                update={"lifecycle": DatasetLifecycle.DELETING, "updated_at": current_timestamp()},
+            )
+            try:
+                self._catalog.put(marked, revision=current.revision)
+            except PublicationConflictError:
+                # A writer changed the record between the read and this compare-and-swap. Sweeping now
+                # would erase the versions that writer just published while its record stayed live, so
+                # the reservation is reacquired against the record it left behind instead.
+                refreshed = self._existing_collection(identifier)
+                if refreshed is None:
+                    return None
+                current = refreshed
+                continue
+            # The mark landed, but the record it landed on need not still be there: another deleter can
+            # have seen it, finished the deletion and dropped the record, leaving a writer free to
+            # create the collection again under the same name. Only a record still marked as deleting
+            # is this call's reservation; a live one is the new collection of whoever wrote it.
+            reserved = self._existing_collection(identifier)
+            if reserved is None or not reserved.record.is_deleting:
+                return None
+            return reserved.revision
+        raise PublicationConflictError(
+            f"collection {identifier!r} was written again during every one of the "
+            f"{MAXIMUM_DELETION_ATTEMPTS} attempts to reserve its deletion",
         )
-        try:
-            self._catalog.put(marked, revision=entry.revision)
-        except PublicationConflictError:
-            # Another deleter marked it first, or a writer changed it. Sweeping is still correct and
-            # idempotent, but dropping a record this call never reserved is not, so it is left alone.
-            return None
-        reserved = self._catalog.get_entry(identifier)
-        return None if reserved is None else reserved.revision
 
-    def _drop_reserved_record(self, identifier: str, reserved: str | None) -> None:
+    def _drop_reserved_record(self, identifier: str, reserved: str) -> None:
         """Delete the record of a swept collection, leaving alone one that was reclaimed in the meantime."""
-        if reserved is None:
-            return
         entry = self._catalog.get_entry(identifier)
         # Object stores offer no conditional delete, so this is a read followed by a delete rather than
         # one compare-and-swap. It refuses the outcome that matters: erasing the record of a collection

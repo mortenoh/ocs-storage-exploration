@@ -143,6 +143,7 @@ def ingest_raster_demo(service: StorageService, demo: RasterDemo) -> DemoOutcome
         # The demo is meant to be run again after a change, so it replaces what it wrote last time.
         overwrite=True,
         publish=demo.publish,
+        max_cube_cells=service.settings.max_cube_cells,
     )
     result = ingest_raster_files(service.raster, demo.dataset_identifier, plan)
     count = result.timestep_count

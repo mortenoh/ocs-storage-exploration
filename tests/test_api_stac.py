@@ -14,6 +14,7 @@ from ocs_storage_exploration.settings import Settings
 COVERAGE = "stac-api-coverage"
 COLLECTION = "stac-api-collection"
 DRAFT = "stac-api-draft"
+DRAFT_COLLECTION = "stac-api-draft-collection"
 
 RASTER_BODY: dict[str, Any] = {
     "title": "Synthetic temperature",
@@ -49,7 +50,16 @@ def populated_client(client: TestClient) -> TestClient:
     assert client.post(f"/api/v1/raster/{COVERAGE}", json=RASTER_BODY).status_code == 201
     assert client.post(f"/api/v1/vector/{COLLECTION}", json=VECTOR_BODY).status_code == 201
     assert client.post(f"/api/v1/raster/{DRAFT}", json={**RASTER_BODY, "publish": False}).status_code == 201
+    draft_collection = {**VECTOR_BODY, "publish": False}
+    assert client.post(f"/api/v1/vector/{DRAFT_COLLECTION}", json=draft_collection).status_code == 201
     return client
+
+
+def draft_collection_payload(client: TestClient, dataset_identifier: str) -> dict[str, Any]:
+    response = client.get(f"/stac/collections/{dataset_identifier}", params={"published_only": False})
+    assert response.status_code == 200, response.text
+    payload: dict[str, Any] = response.json()
+    return payload
 
 
 def test_the_landing_page_names_the_conformance_classes(populated_client: TestClient) -> None:
@@ -121,6 +131,46 @@ def test_an_unpublished_collection_is_hidden_until_drafts_are_asked_for(populate
     assert hidden.json()["error"] == "DatasetNotFoundError"
     assert shown.status_code == 200
     assert shown.json()["id"] == DRAFT
+
+
+def test_the_selectors_of_a_draft_coverage_resolve_to_the_advertised_snapshot(populated_client: TestClient) -> None:
+    payload = draft_collection_payload(populated_client, DRAFT)
+    icechunk = payload["assets"]["icechunk"]
+
+    followed = populated_client.get(payload["assets"]["api"]["href"])
+
+    # The branch a draft asset names has to be one the repository actually has, and following the
+    # endpoint href has to answer the snapshot the document describes rather than 404 on a branch
+    # a coverage with nothing published never created.
+    assert icechunk["icechunk:branch"] == "main"
+    assert icechunk["ocs:snapshot_identifier"] == payload["ocs:snapshot_identifier"]
+    assert followed.status_code == 200, followed.text
+    assert followed.json()["snapshot_identifier"] == payload["ocs:snapshot_identifier"]
+
+
+def test_the_published_coverage_selectors_still_follow_the_published_branch(populated_client: TestClient) -> None:
+    payload = populated_client.get(f"/stac/collections/{COVERAGE}").json()
+
+    followed = populated_client.get(payload["assets"]["api"]["href"])
+
+    assert payload["assets"]["icechunk"]["icechunk:branch"] == "published"
+    assert payload["assets"]["api"]["href"] == f"http://testserver/api/v1/raster/{COVERAGE}/query"
+    assert followed.status_code == 200, followed.text
+    assert followed.json()["snapshot_identifier"] == payload["ocs:snapshot_identifier"]
+
+
+def test_the_features_href_of_a_draft_collection_resolves_to_the_advertised_version(
+    populated_client: TestClient,
+) -> None:
+    payload = draft_collection_payload(populated_client, DRAFT_COLLECTION)
+
+    followed = populated_client.get(payload["assets"]["api"]["href"])
+
+    assert payload["assets"]["api"]["href"] == (
+        f"http://testserver/api/v1/vector/{DRAFT_COLLECTION}/features?version={payload['ocs:version']}"
+    )
+    assert followed.status_code == 200, followed.text
+    assert followed.json()["version"] == payload["ocs:version"]
 
 
 def test_the_base_url_follows_the_root_path(settings: Settings) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Annotated, Final
 
 from fastapi import APIRouter, Query, status
@@ -86,8 +87,11 @@ async def read_features(
 ) -> FeatureCollectionResponse:
     """Read features as GeoJSON, keeping the coordinates in the frame the collection was written in."""
     selected = parse_columns(columns)
-    handle = await storage.vector.read(
+    # The GeoJSON conversion is as blocking as the read, so it runs on the same worker thread rather
+    # than on the event loop: a fifty thousand feature answer would otherwise stall every other request.
+    return await storage.vector.read_as(
         dataset_identifier,
+        partial(FeatureCollectionResponse.from_handle, limit=limit),
         bbox=parse_bbox(bbox),
         bbox_crs=parse_crs(bbox_crs, parameter="bbox-crs") or DEFAULT_CRS,
         where=parse_where(where or []),
@@ -95,7 +99,6 @@ async def read_features(
         limit=limit,
         version=version,
     )
-    return FeatureCollectionResponse.from_handle(handle, limit=limit)
 
 
 @router.post("/{dataset_identifier}/publish", summary="Publish a collection version")

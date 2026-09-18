@@ -418,15 +418,48 @@ class AsyncVectorCollectionStore:
         version: int | None = None,
     ) -> VectorReadHandle:
         """Read one version of a collection, pruning by envelope and clause before the exact intersection test."""
+        return await self.read_as(
+            collection_identifier,
+            lambda handle: handle,
+            bbox=bbox,
+            bbox_crs=bbox_crs,
+            where=where,
+            columns=columns,
+            limit=limit,
+            version=version,
+        )
+
+    async def read_as(
+        self,
+        collection_identifier: str,
+        build: Callable[[VectorReadHandle], ResultT],
+        *,
+        bbox: BoundingBox | None = None,
+        bbox_crs: str = DEFAULT_CRS,
+        where: WhereClause | None = None,
+        columns: Sequence[str] | None = None,
+        limit: int | None = None,
+        version: int | None = None,
+    ) -> ResultT:
+        """Read one version of a collection and turn the handle into a result inside the same bounded call.
+
+        Rendering a read is as blocking as the read itself: converting a frame of fifty thousand features
+        into GeoJSON and validating it costs the best part of a second. The builder therefore runs on the
+        worker thread that produced the handle, under the same limiter token and the same timeout, rather
+        than on the event loop of a caller that would block every other request while it converts. The
+        builder is passed in because the storage layer knows nothing of the API schemas it renders into.
+        """
         return await self._runner.run(
-            lambda: self._store.read(
-                collection_identifier,
-                bbox=bbox,
-                bbox_crs=bbox_crs,
-                where=where,
-                columns=columns,
-                limit=limit,
-                version=version,
+            lambda: build(
+                self._store.read(
+                    collection_identifier,
+                    bbox=bbox,
+                    bbox_crs=bbox_crs,
+                    where=where,
+                    columns=columns,
+                    limit=limit,
+                    version=version,
+                ),
             ),
             description=f"reading collection {collection_identifier!r}",
         )

@@ -33,6 +33,7 @@ from ocs_storage_exploration.storage.schemas import (
 )
 from ocs_storage_exploration.storage.service import StorageService
 from ocs_storage_exploration.storage.service_async import AsyncStorageService, StorageOperationRunner
+from ocs_storage_exploration.storage.vector.collection import VectorReadHandle
 
 COVERAGE = "coverage-one"
 COLLECTION = "collection-one"
@@ -270,6 +271,22 @@ async def test_the_vector_engine_round_trips_through_the_facade(populated: Async
     assert schema.row_count == 12
     assert pointer is not None
     assert await populated.vector.current_version(COLLECTION) == 1
+
+
+async def test_the_vector_facade_builds_a_read_result_on_the_worker_thread(populated: AsyncStorageService) -> None:
+    threads: list[str] = []
+
+    def build(handle: VectorReadHandle) -> int:
+        threads.append(threading.current_thread().name)
+        return len(handle.frame)
+
+    feature_count = await populated.vector.read_as(COLLECTION, build)
+
+    assert feature_count == 12
+    # Rendering a read is as blocking as the read itself, so it shares its thread, its limiter token
+    # and its timeout rather than running on the event loop of the caller.
+    assert len(threads) == 1
+    assert threads[0].startswith("AnyIO worker thread")
 
 
 async def test_writing_geojson_through_the_facade_reserves_the_next_version(

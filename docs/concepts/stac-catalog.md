@@ -82,10 +82,16 @@ Assets:
   string no client matches; the repository is a Zarr v3 store, so it is
   advertised as one. The string is byte-identical to the one OCS publishes,
   because stac-js compares media types as literals rather than parsing their
-  parameters. Which branch to open is a separate `icechunk:branch` field, set to
-  `published`.
+  parameters. Which branch to open is a separate `icechunk:branch` field:
+  `published` for a published coverage, and `main` for a draft-only one, which
+  has no published branch a reader could open. A draft asset also pins the
+  advertised snapshot as `ocs:snapshot_identifier`, so it stays unambiguous when
+  `main` moves on; the field is omitted when no snapshot could be read.
 - `api`, pointing at `{base_url}/api/v1/raster/{id}/query` with role `metadata`,
-  for a client that wants a summary rather than the bytes.
+  for a client that wants a summary rather than the bytes. The endpoint defaults
+  to the published branch, so a draft-only coverage carries its selector in the
+  href: `?snapshot_identifier=...`, or `?version=draft` when there is no snapshot
+  to pin.
 
 The advertised snapshot is on the collection as `ocs:snapshot_identifier` — the
 one the `published` branch points at, or the head of `main` for a draft — and the
@@ -169,7 +175,9 @@ Assets:
   version directory name is the same one the pointer object names, so the href
   is stable until the pointer moves.
 - `api`, pointing at `{base_url}/api/v1/vector/{id}/features` with role
-  `metadata`.
+  `metadata`. As with a coverage, a draft-only collection carries its selector in
+  the href, `?version=` the advertised version, because the endpoint otherwise
+  answers the published version it does not have.
 
 The advertised version is on the collection as `ocs:version`.
 

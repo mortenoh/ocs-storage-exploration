@@ -216,8 +216,11 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/raster/my-rainfall/ingest \
 The files are sorted by timestamp, the first one creates the coverage and the
 rest are appended in order, through the same `create` and `append` the synthetic
 endpoints use, so the cube size guard, the coordinate check and the variable
-check all apply. The response is the usual `RasterWriteResult` plus the files
-read and the timestamps they carried:
+check all apply. Each source file is measured against the guard on its own as
+well, after the bounding box has clipped it and before a cell is read, so a file
+whose cube would hold more than `OCS_STORAGE_MAX_CUBE_CELLS` cells is refused
+with 413 naming that file rather than after it is in memory. The response is the
+usual `RasterWriteResult` plus the files read and the timestamps they carried:
 
 ```json
 {

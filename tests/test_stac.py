@@ -159,10 +159,51 @@ def test_the_coverage_assets_are_the_repository_and_the_query_endpoint(coverage_
     assert icechunk["type"] == ZARR_V3_MEDIA_TYPE == "application/vnd.zarr; version=3"
     assert icechunk["roles"] == ["data"]
     assert icechunk["icechunk:branch"] == "published"
+    # A published collection advertises the branch alone: following it is what the endpoint does too.
+    assert "ocs:snapshot_identifier" not in icechunk
     assert icechunk["href"].endswith(f"raster/{COVERAGE}")
     assert api["href"] == f"{BASE_URL}/api/v1/raster/{COVERAGE}/query"
     assert api["type"] == "application/json"
     assert api["roles"] == ["metadata"]
+
+
+def test_a_draft_coverage_names_the_branch_it_was_written_on_and_pins_its_snapshot(
+    storage_service: StorageService,
+) -> None:
+    write_coverage(storage_service, publish=False)
+
+    payload = project(storage_service, COVERAGE)
+    icechunk = payload["assets"]["icechunk"]
+    snapshot = payload["ocs:snapshot_identifier"]
+
+    # There is no published branch to open, so the asset names the branch the draft was committed to
+    # and pins the snapshot the rest of the document describes.
+    assert snapshot
+    assert icechunk["icechunk:branch"] == "main"
+    assert icechunk["ocs:snapshot_identifier"] == snapshot
+    assert payload["assets"]["api"]["href"] == (
+        f"{BASE_URL}/api/v1/raster/{COVERAGE}/query?snapshot_identifier={snapshot}"
+    )
+
+
+def test_a_draft_coverage_without_a_readable_snapshot_selects_the_draft_pointer(
+    storage_service: StorageService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_coverage(storage_service, publish=False)
+
+    def refuse(*arguments: Any, **keywords: Any) -> None:
+        raise SnapshotNotFoundError("the store cannot be opened")
+
+    monkeypatch.setattr(storage_service.raster, "describe", refuse)
+    payload = project(storage_service, COVERAGE)
+    icechunk = payload["assets"]["icechunk"]
+
+    # With no snapshot to pin, the selectors still have to name the draft rather than a branch that
+    # a coverage with nothing published does not have.
+    assert icechunk["icechunk:branch"] == "main"
+    assert "ocs:snapshot_identifier" not in icechunk
+    assert payload["assets"]["api"]["href"] == f"{BASE_URL}/api/v1/raster/{COVERAGE}/query?version=draft"
 
 
 def test_the_coverage_links_point_back_at_the_catalog(coverage_collection: dict[str, Any]) -> None:
@@ -314,6 +355,9 @@ def test_a_draft_collection_still_projects_with_its_newest_written_version(
 
     assert payload["ocs:version"] == 2
     assert payload["assets"]["data"]["href"].endswith("versions/v00002/data.parquet")
+    # The endpoint follows the published pointer by default, so a draft href pins the advertised
+    # version rather than whatever a later write leaves behind.
+    assert payload["assets"]["api"]["href"] == f"{BASE_URL}/api/v1/vector/{COLLECTION}/features?version=2"
 
 
 def test_the_row_count_follows_the_published_version_rather_than_the_newest_write(
@@ -421,6 +465,8 @@ def test_a_collection_whose_parquet_cannot_be_read_falls_back_to_its_record(
     assert payload["table:primary_geometry"] == "geometry"
     assert "data" not in payload["assets"]
     assert "ocs:version" not in payload
+    # With no version to pin, the endpoint href is left to follow the published pointer.
+    assert payload["assets"]["api"]["href"] == f"{BASE_URL}/api/v1/vector/{COLLECTION}/features"
     # With no version to read, the record is the documented fallback for the licence too.
     assert payload["license"] == "proprietary"
     assert payload["providers"] == [{"name": "Statistics Norway", "roles": ["producer", "licensor"]}]

@@ -17,7 +17,11 @@ import xarray.backends
 from numpy.typing import NDArray
 from pyproj import CRS
 
-from ocs_storage_exploration.storage.errors import BackendNotSupportedError, RasterContractError
+from ocs_storage_exploration.storage.errors import (
+    BackendNotSupportedError,
+    QuerySizeGuardError,
+    RasterContractError,
+)
 from ocs_storage_exploration.storage.paths import relative_to_working_directory, resolve_ingest_paths
 from ocs_storage_exploration.storage.raster.grid import (
     MAXIMUM_LONGITUDE,
@@ -41,6 +45,8 @@ DEFAULT_X_DIMENSION: Final[str] = "x"
 BAND_DIMENSION: Final[str] = "band"
 DEFAULT_CRS: Final[str] = "EPSG:4326"
 DEFAULT_FILENAME_DATE_PATTERN: Final[str] = r"(\d{4}-\d{2}-\d{2})"
+# What the cube guard calls a source that is normalised without a file behind it to name.
+DEFAULT_SOURCE_LABEL: Final[str] = "raster"
 
 # Source spellings of each axis, first match wins. They mirror the ones the Open Climate Service
 # normalises today, so a file that works there works here.
@@ -84,6 +90,9 @@ class RasterIngestPlan:
     overwrite: bool = False
     publish: bool = False
     working_directory: Path | None = None
+    # The cell guard of the deployment that resolved the plan. It travels on the plan because the
+    # engine keeps its settings to itself, and reading a file is what has to be stopped in time.
+    max_cube_cells: int | None = None
 
     def __post_init__(self) -> None:
         """Refuse a plan whose files and timestamps do not line up one to one."""
@@ -111,6 +120,7 @@ def build_raster_ingest_plan(
     overwrite: bool = False,
     publish: bool = False,
     working_directory: Path | None = None,
+    max_cube_cells: int | None = None,
 ) -> RasterIngestPlan:
     """Expand the requested globs, resolve one timestamp per file and order the pair by timestamp."""
     base = (working_directory if working_directory is not None else Path.cwd()).resolve()
@@ -133,6 +143,7 @@ def build_raster_ingest_plan(
         overwrite=overwrite,
         publish=publish,
         working_directory=base,
+        max_cube_cells=max_cube_cells,
     )
 
 
@@ -142,7 +153,13 @@ def ingest_raster_files(
     plan: RasterIngestPlan,
 ) -> RasterIngestResult:
     """Write the first file of a plan as a new coverage and append the rest in timestamp order."""
-    first = open_raster_file(plan.files[0], variable=plan.variable, timestamp=plan.timestamps[0], bbox=plan.bbox)
+    first = open_raster_file(
+        plan.files[0],
+        variable=plan.variable,
+        timestamp=plan.timestamps[0],
+        bbox=plan.bbox,
+        max_cube_cells=plan.max_cube_cells,
+    )
     grid = grid_from_dataset(first, variable=plan.variable)
     result = repository.create(
         dataset_identifier,
@@ -155,7 +172,13 @@ def ingest_raster_files(
         message=f"ingest {plan.files[0].name}",
     )
     for path, moment in zip(plan.files[1:], plan.timestamps[1:], strict=True):
-        appended = open_raster_file(path, variable=plan.variable, timestamp=moment, bbox=plan.bbox)
+        appended = open_raster_file(
+            path,
+            variable=plan.variable,
+            timestamp=moment,
+            bbox=plan.bbox,
+            max_cube_cells=plan.max_cube_cells,
+        )
         result = repository.append(dataset_identifier, appended, message=f"ingest {path.name}")
     published = result.published
     if plan.publish:
@@ -181,6 +204,7 @@ def open_raster_file(
     timestamp: datetime | None = None,
     bbox: BoundingBox | None = None,
     nodata_value: float | None = None,
+    max_cube_cells: int | None = None,
     time_dimension: str = DEFAULT_TIME_DIMENSION,
     y_dimension: str = DEFAULT_Y_DIMENSION,
     x_dimension: str = DEFAULT_X_DIMENSION,
@@ -194,6 +218,8 @@ def open_raster_file(
             timestamp=timestamp,
             bbox=bbox,
             nodata_value=nodata_value,
+            max_cube_cells=max_cube_cells,
+            source_label=path.name,
             time_dimension=time_dimension,
             y_dimension=y_dimension,
             x_dimension=x_dimension,
@@ -212,6 +238,8 @@ def normalise_for_contract(
     timestamp: datetime | None = None,
     bbox: BoundingBox | None = None,
     nodata_value: float | None = None,
+    max_cube_cells: int | None = None,
+    source_label: str = DEFAULT_SOURCE_LABEL,
     time_dimension: str = DEFAULT_TIME_DIMENSION,
     y_dimension: str = DEFAULT_Y_DIMENSION,
     x_dimension: str = DEFAULT_X_DIMENSION,
@@ -233,6 +261,17 @@ def normalise_for_contract(
     clipped = _clip_to_bbox(renamed, bbox)
     squeezed = _squeeze_band(clipped)
     selected = _select_variable(squeezed, variable)
+    # The last point at which every reader is still lazy: the axes are named and the bounding box has
+    # already shrunk them, while masking the fill value below reads every cell of the source. The
+    # engine guards the cube again before it writes, and by then the cells are in memory.
+    _assert_cube_size(
+        selected,
+        source_label=source_label,
+        max_cube_cells=max_cube_cells,
+        time_dimension=time_dimension,
+        y_dimension=y_dimension,
+        x_dimension=x_dimension,
+    )
     crs = _resolve_crs(selected, y_dimension=y_dimension, x_dimension=x_dimension)
     geographic = bool(CRS.from_user_input(crs).is_geographic)
     wrapped = _wrap_longitudes(selected, x_dimension=x_dimension, geographic=geographic)
@@ -453,6 +492,27 @@ def _select_variable(dataset: xarray.Dataset | xarray.DataArray, variable: str) 
     if len(names) != 1:
         raise RasterContractError(f"variable {variable!r} is not one of {sorted(names)}")
     return dataset.rename({names[0]: variable})[[variable]]
+
+
+def _assert_cube_size(
+    dataset: xarray.Dataset,
+    *,
+    source_label: str,
+    max_cube_cells: int | None,
+    time_dimension: str,
+    y_dimension: str,
+    x_dimension: str,
+) -> None:
+    """Refuse a raster larger than the configured guard, counting its cells the way the engine does."""
+    if max_cube_cells is None:
+        return
+    rows = int(dataset.sizes.get(y_dimension, 0))
+    columns = int(dataset.sizes.get(x_dimension, 0))
+    cell_count = rows * columns * max(int(dataset.sizes.get(time_dimension, 1)), 1)
+    if cell_count > max_cube_cells:
+        raise QuerySizeGuardError(
+            f"cube of {source_label!r} holds {cell_count} cells, more than the {max_cube_cells} allowed",
+        )
 
 
 def _resolve_crs(dataset: xarray.Dataset, *, y_dimension: str, x_dimension: str) -> str:

@@ -17,12 +17,16 @@ from ocs_storage_exploration.storage.raster import (
     build_synthetic_cube,
     build_timestamps,
 )
+from ocs_storage_exploration.storage.raster.repository import _coordinate_indices
 from ocs_storage_exploration.storage.schemas import BoundingBox, GridSpecification
 
 IDENTIFIER = "query"
+GLOBAL_IDENTIFIER = "global"
 VARIABLE = "temperature"
 START = datetime(2020, 1, 1)
 NORTHERN_HALF = BoundingBox(minimum_x=0.0, minimum_y=4.0, maximum_x=12.0, maximum_y=8.0)
+# The cell centres of an eight column global grid, which is what build_global_grid writes.
+GLOBAL_CENTRES = numpy.asarray([-157.5, -112.5, -67.5, -22.5, 22.5, 67.5, 112.5, 157.5], dtype="float64")
 
 
 def build_grid() -> GridSpecification:
@@ -326,3 +330,87 @@ def test_a_query_spanning_a_non_monotonic_time_axis_reads_every_timestep_inside_
 
     assert summary.timestep_count == 4
     assert summary.cell_count == 4 * 4 * 6
+
+
+def build_global_grid() -> GridSpecification:
+    return GridSpecification(
+        shape=(2, 8),
+        bbox=BoundingBox(minimum_x=-180.0, minimum_y=-90.0, maximum_x=180.0, maximum_y=90.0),
+        crs="EPSG:4326",
+    )
+
+
+@pytest.fixture
+def global_repository(
+    storage_backend: StorageBackend,
+    catalog: ObjectCatalog,
+    settings: Settings,
+) -> RasterRepository:
+    repository = RasterRepository(storage_backend, catalog, settings)
+    grid = build_global_grid()
+    repository.create(GLOBAL_IDENTIFIER, grid, build_cube(grid, count=1))
+    repository.publish(GLOBAL_IDENTIFIER)
+    return repository
+
+
+def test_a_full_circle_longitude_window_selects_every_cell():
+    # Wrapping the two endpoints on their own folds each of these onto one meridian.
+    assert _coordinate_indices(GLOBAL_CENTRES, 0.0, 360.0, wrap=True).tolist() == list(range(8))
+    assert _coordinate_indices(GLOBAL_CENTRES, -180.0, 180.0, wrap=True).tolist() == list(range(8))
+    assert _coordinate_indices(GLOBAL_CENTRES, 10.0, 370.0, wrap=True).tolist() == list(range(8))
+    assert _coordinate_indices(GLOBAL_CENTRES, -180.0, 540.0, wrap=True).tolist() == list(range(8))
+
+
+def test_a_longitude_window_of_no_width_stays_a_single_meridian():
+    meridians = numpy.asarray([-180.0, -90.0, 0.0, 90.0], dtype="float64")
+
+    assert _coordinate_indices(meridians, 0.0, 0.0, wrap=True).tolist() == [2]
+    assert _coordinate_indices(GLOBAL_CENTRES, 0.0, 0.0, wrap=True).tolist() == []
+
+
+def test_a_near_full_longitude_window_still_covers_both_halves():
+    # 359 degrees wide, so the only gap is between minus one and zero, where no cell centre sits.
+    assert _coordinate_indices(GLOBAL_CENTRES, 0.0, 359.0, wrap=True).tolist() == list(range(8))
+
+
+def test_a_longitude_window_crossing_the_antimeridian_is_the_union_of_its_halves():
+    assert _coordinate_indices(GLOBAL_CENTRES, 150.0, 210.0, wrap=True).tolist() == [0, 7]
+
+
+def test_a_projected_axis_reads_a_full_circle_span_as_plain_numbers():
+    metres = numpy.asarray([0.0, 200.0, 400.0, 600.0], dtype="float64")
+
+    assert _coordinate_indices(metres, 0.0, 360.0, wrap=False).tolist() == [0, 1]
+
+
+def test_a_global_query_selects_every_cell_in_either_longitude_convention(global_repository: RasterRepository):
+    whole = global_repository.query(GLOBAL_IDENTIFIER)
+
+    eastward = global_repository.query(
+        GLOBAL_IDENTIFIER,
+        bbox=BoundingBox(minimum_x=0.0, minimum_y=-90.0, maximum_x=360.0, maximum_y=90.0),
+    )
+    signed = global_repository.query(
+        GLOBAL_IDENTIFIER,
+        bbox=BoundingBox(minimum_x=-180.0, minimum_y=-90.0, maximum_x=180.0, maximum_y=90.0),
+    )
+
+    assert whole.cell_count == 2 * 8
+    assert eastward.cell_count == whole.cell_count
+    assert signed.cell_count == whole.cell_count
+    assert whole.mean is not None
+    assert eastward.mean == pytest.approx(whole.mean)
+    assert signed.mean == pytest.approx(whole.mean)
+    assert eastward.bbox.as_tuple() == pytest.approx((-180.0, -90.0, 180.0, 90.0))
+    assert signed.bbox.as_tuple() == pytest.approx((-180.0, -90.0, 180.0, 90.0))
+
+
+def test_a_global_query_across_the_antimeridian_still_reads_two_halves(global_repository: RasterRepository):
+    crossing = global_repository.query(
+        GLOBAL_IDENTIFIER,
+        bbox=BoundingBox(minimum_x=150.0, minimum_y=-90.0, maximum_x=210.0, maximum_y=90.0),
+    )
+
+    assert crossing.cell_count == 2 * 2
+    assert crossing.bbox.minimum_x == pytest.approx(-180.0)
+    assert crossing.bbox.maximum_x == pytest.approx(180.0)

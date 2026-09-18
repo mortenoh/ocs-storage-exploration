@@ -290,6 +290,17 @@ drops the record before doing its own work. A write that takes a deletion over
 then creates its record conditionally, so two writers taking over the same
 deletion meet at that conditional create and exactly one of them wins.
 
+Nothing is swept without that reservation. A mark that lost its
+compare-and-swap to a writer used to sweep anyway, emptying the prefix a record
+that was still live pointed at. It is now retried against the record that
+writer left behind, `MAXIMUM_DELETION_ATTEMPTS` (four) times before it gives
+up. A retry that finds the record already marked finishes that deletion
+instead. One that finds no record, or a live one because another deleter
+finished this deletion and the identifier was written again, sweeps nothing and
+returns: what stands under the identifier now belongs to the writer that made
+it, not to this call. A delete that loses every attempt is refused with
+`PublicationConflictError`, 409, and removes nothing.
+
 One window is left, and it is the one an object store cannot close. There is no
 conditional delete, so dropping the record is a read followed by a delete rather
 than one compare-and-swap, and the sweep itself is a listing followed by a

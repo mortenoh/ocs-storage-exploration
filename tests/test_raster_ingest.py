@@ -12,7 +12,11 @@ import xarray.backends
 from fastapi.testclient import TestClient
 
 from ocs_storage_exploration.settings import Settings
-from ocs_storage_exploration.storage.errors import BackendNotSupportedError, RasterContractError
+from ocs_storage_exploration.storage.errors import (
+    BackendNotSupportedError,
+    QuerySizeGuardError,
+    RasterContractError,
+)
 from ocs_storage_exploration.storage.raster import (
     NODATA_ATTRIBUTE,
     PROJECTION_CODE_ATTRIBUTE,
@@ -27,6 +31,7 @@ from ocs_storage_exploration.storage.raster.ingest import (
     open_raster_file,
     timestamp_from_filename,
 )
+from ocs_storage_exploration.storage.schemas import BoundingBox
 from ocs_storage_exploration.storage.service import StorageService
 from tests.ingest_helpers import (
     CHIRPS_DIRECTORY,
@@ -40,6 +45,21 @@ from tests.ingest_helpers import (
 )
 
 WORLDPOP_TIMESTAMP = datetime(2026, 1, 1, tzinfo=UTC)
+# An 8 by 8 source over one timestep holds 64 cells, so a limit of 16 refuses it and a clip saves it.
+GUARDED_ROW_COUNT = 8
+GUARDED_COLUMN_COUNT = 8
+GUARDED_CELL_LIMIT = 16
+
+
+def write_guarded_netcdf(path: Path, moment: datetime) -> Path:
+    regular = ramp(GUARDED_ROW_COUNT, GUARDED_COLUMN_COUNT).reshape(1, GUARDED_ROW_COUNT, GUARDED_COLUMN_COUNT)
+    return write_netcdf(
+        path,
+        values=regular,
+        y_values=numpy.linspace(4.5, -2.5, GUARDED_ROW_COUNT),
+        x_values=numpy.linspace(10.5, 17.5, GUARDED_COLUMN_COUNT),
+        timestamps=[moment],
+    )
 
 
 def test_band_is_squeezed_and_dimensions_are_named(tmp_path: Path) -> None:
@@ -211,6 +231,55 @@ def test_a_zarr_directory_store_is_ingested_end_to_end(storage_service: StorageS
     assert description.shape == (2, 3)
     assert description.temporal_start == datetime(2024, 3, 5)
     assert description.temporal_end == datetime(2024, 3, 6)
+
+
+def test_an_oversized_raster_is_refused_before_its_cells_are_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = write_guarded_netcdf(tmp_path / "rain-2024-01-01.nc", datetime(2024, 1, 1))
+
+    def refuse_load(dataset: xarray.Dataset, **keywords: object) -> xarray.Dataset:
+        raise AssertionError("the cube guard has to fire before the values are read into memory")
+
+    monkeypatch.setattr(xarray.Dataset, "load", refuse_load)
+    with pytest.raises(QuerySizeGuardError, match=r"rain-2024-01-01\.nc' holds 64 cells, more than the 16 allowed"):
+        open_raster_file(path, variable="rain", max_cube_cells=GUARDED_CELL_LIMIT)
+
+
+def test_a_bbox_clip_brings_an_oversized_raster_under_the_guard(tmp_path: Path) -> None:
+    path = write_guarded_netcdf(tmp_path / "rain-2024-01-02.nc", datetime(2024, 1, 2))
+    clipped = open_raster_file(
+        path,
+        variable="rain",
+        bbox=BoundingBox(minimum_x=11.4, minimum_y=1.6, maximum_x=13.6, maximum_y=3.4),
+        max_cube_cells=GUARDED_CELL_LIMIT,
+    )
+    # The guard counts the cells the clip left, not the ones the file holds, so a window of a large
+    # source is ingested while the whole source is refused.
+    assert (clipped.sizes["y"], clipped.sizes["x"]) == (3, 3)
+    with pytest.raises(QuerySizeGuardError, match="more than the 16 allowed"):
+        open_raster_file(path, variable="rain", max_cube_cells=GUARDED_CELL_LIMIT)
+
+
+def test_an_ingest_plan_carries_the_cube_guard_onto_every_file(
+    storage_service: StorageService,
+    tmp_path: Path,
+) -> None:
+    write_guarded_netcdf(tmp_path / "rain-2024-01-01.nc", datetime(2024, 1, 1))
+    plan = build_raster_ingest_plan(
+        files=["rain-2024-01-01.nc"],
+        variable="rain",
+        roots=[tmp_path],
+        working_directory=tmp_path,
+        max_cube_cells=GUARDED_CELL_LIMIT,
+    )
+    assert plan.max_cube_cells == GUARDED_CELL_LIMIT
+
+    # The file is named in the failure, which is the guard of the reader rather than the one the
+    # engine runs on a cube it has already been handed.
+    with pytest.raises(QuerySizeGuardError, match="rain-2024-01-01"):
+        ingest_raster_files(storage_service.raster, "guarded-cube", plan)
 
 
 def test_projection_is_written_as_spatial_ref_and_projection_code(tmp_path: Path) -> None:

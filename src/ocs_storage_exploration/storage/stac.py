@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Final, assert_never
+from urllib.parse import urlencode
 
 import pystac
 from pyproj import CRS, Transformer
@@ -19,6 +20,7 @@ from pystac.utils import datetime_to_str
 from ocs_storage_exploration.storage.addresses import StorageAddress
 from ocs_storage_exploration.storage.keys import VECTOR_DATA_NAME, format_vector_version
 from ocs_storage_exploration.storage.raster.repository import (
+    MAIN_BRANCH,
     PUBLISHED_BRANCH,
     RasterRepository,
     RasterStoreDescription,
@@ -210,6 +212,7 @@ def _build_coverage_collection(
 ) -> dict[str, Any]:
     """Build the datacube Collection of a coverage, with its Icechunk repository as the data asset."""
     facts = _coverage_facts(record, repository)
+    selector = _advertised_selector(record)
     collection = pystac.Collection(
         id=record.dataset_identifier,
         title=record.title,
@@ -234,13 +237,18 @@ def _build_coverage_collection(
             title="Icechunk repository",
             media_type=ZARR_V3_MEDIA_TYPE,
             roles=["data"],
-            extra_fields={ICECHUNK_BRANCH_FIELD: PUBLISHED_BRANCH},
+            extra_fields=_icechunk_asset_fields(selector, facts.snapshot_identifier),
         ),
     )
     collection.add_asset(
         "api",
         pystac.Asset(
-            href=f"{base_url}/api/v1/raster/{record.dataset_identifier}/query",
+            href=_raster_query_href(
+                base_url,
+                record.dataset_identifier,
+                selector=selector,
+                snapshot_identifier=facts.snapshot_identifier,
+            ),
             title="Raster query endpoint",
             media_type=JSON_MEDIA_TYPE,
             roles=["metadata"],
@@ -287,13 +295,63 @@ def _build_feature_collection(
     collection.add_asset(
         "api",
         pystac.Asset(
-            href=f"{base_url}/api/v1/vector/{record.dataset_identifier}/features",
+            href=_feature_query_href(
+                base_url,
+                record.dataset_identifier,
+                published=record.publication.published,
+                version=facts.version,
+            ),
             title="Feature query endpoint",
             media_type=JSON_MEDIA_TYPE,
             roles=["metadata"],
         ),
     )
     return _finish(collection, base_url=base_url, dataset_identifier=record.dataset_identifier)
+
+
+def _advertised_selector(record: CoverageDataset) -> VersionSelector:
+    """Return the pointer a coverage advertises: the published branch, or the draft when nothing is published."""
+    return VersionSelector.PUBLISHED if record.publication.published else VersionSelector.DRAFT
+
+
+def _icechunk_asset_fields(selector: VersionSelector, snapshot_identifier: str | None) -> dict[str, Any]:
+    """Name the branch the advertised coverage snapshot lives on, pinning the snapshot itself for a draft."""
+    if selector is VersionSelector.PUBLISHED:
+        return {ICECHUNK_BRANCH_FIELD: PUBLISHED_BRANCH}
+    # A draft-only coverage has no published branch at all, so naming it would send a reader to a
+    # branch that does not exist. Drafts are committed to the main branch, and the snapshot the rest of
+    # the document describes is pinned alongside it so the asset stays unambiguous when main moves on.
+    fields: dict[str, Any] = {ICECHUNK_BRANCH_FIELD: MAIN_BRANCH}
+    if snapshot_identifier is not None:
+        fields[SNAPSHOT_FIELD] = snapshot_identifier
+    return fields
+
+
+def _raster_query_href(
+    base_url: str,
+    dataset_identifier: str,
+    *,
+    selector: VersionSelector,
+    snapshot_identifier: str | None,
+) -> str:
+    """Return the raster query URL, selecting the advertised snapshot when it is not the published one."""
+    href = f"{base_url}/api/v1/raster/{dataset_identifier}/query"
+    if selector is VersionSelector.PUBLISHED:
+        return href
+    # The endpoint defaults to the published branch, which a draft-only coverage does not have.
+    parameters = (
+        {"snapshot_identifier": snapshot_identifier} if snapshot_identifier is not None else {"version": selector.value}
+    )
+    return f"{href}?{urlencode(parameters)}"
+
+
+def _feature_query_href(base_url: str, dataset_identifier: str, *, published: bool, version: int | None) -> str:
+    """Return the features URL, selecting the advertised version when it is not the published one."""
+    href = f"{base_url}/api/v1/vector/{dataset_identifier}/features"
+    if published or version is None:
+        return href
+    # The endpoint defaults to the published version, which a draft-only collection does not have.
+    return f"{href}?{urlencode({'version': version})}"
 
 
 def _finish(collection: pystac.Collection, *, base_url: str, dataset_identifier: str) -> dict[str, Any]:
@@ -373,7 +431,7 @@ def _describe_store(record: CoverageDataset, repository: RasterRepository) -> Ra
     """Describe the snapshot a coverage advertises: the published one, or the draft when nothing is published."""
     # The advertised snapshot is the one the reader would get, so a coverage rolled back to an older
     # snapshot advertises that snapshot's time axis rather than everything ever written.
-    selector = VersionSelector.PUBLISHED if record.publication.published else VersionSelector.DRAFT
+    selector = _advertised_selector(record)
     try:
         return repository.describe(record.dataset_identifier, version=selector)
     except Exception:

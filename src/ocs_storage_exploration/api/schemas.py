@@ -212,6 +212,7 @@ class IngestRasterRequest(BaseModel):
             attribution=self.attribution,
             overwrite=self.overwrite,
             publish=self.publish,
+            max_cube_cells=settings.max_cube_cells,
         )
 
 

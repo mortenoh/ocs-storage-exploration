@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
 from typing import Any
 
@@ -9,8 +10,10 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 
+from ocs_storage_exploration.api.schemas import FeatureCollectionResponse
 from ocs_storage_exploration.main import create_app
 from ocs_storage_exploration.settings import Settings
+from ocs_storage_exploration.storage.vector.collection import VectorReadHandle
 
 IDENTIFIER = "collection-api"
 
@@ -98,6 +101,26 @@ def test_features_are_answered_as_geojson_in_the_collection_frame(client: TestCl
         "east",
         "far-east",
     }
+
+
+def test_the_geojson_conversion_runs_off_the_event_loop(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    create_collection(client)
+    threads: list[str] = []
+    render = FeatureCollectionResponse.from_handle
+
+    def recording_from_handle(handle: VectorReadHandle, *, limit: int | None = None) -> FeatureCollectionResponse:
+        threads.append(threading.current_thread().name)
+        return render(handle, limit=limit)
+
+    monkeypatch.setattr(FeatureCollectionResponse, "from_handle", recording_from_handle)
+    response = client.get(f"/api/v1/vector/{IDENTIFIER}/features")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["number_returned"] == 4
+    # The conversion is as blocking as the read, so it runs on the worker thread that produced the
+    # handle rather than on the event loop, where it would stall every other request.
+    assert len(threads) == 1
+    assert threads[0].startswith("AnyIO worker thread")
 
 
 def test_a_bbox_narrows_the_feature_read(client: TestClient) -> None:
