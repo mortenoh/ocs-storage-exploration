@@ -143,7 +143,7 @@ def test_write_can_publish_immediately(
     assert store.current_version(COLLECTION) == 1
 
 
-def test_delete_removes_the_record_and_every_object(
+def test_delete_tombstones_the_record_and_removes_every_object(
     two_versions: VectorCollectionStore, storage_backend: StorageBackend, catalog: ObjectCatalog
 ) -> None:
     two_versions.publish(COLLECTION)
@@ -151,7 +151,8 @@ def test_delete_removes_the_record_and_every_object(
     removed = two_versions.delete(COLLECTION)
 
     assert removed >= 3
-    assert catalog.get(COLLECTION) is None
+    assert catalog.require(COLLECTION).is_tombstone is True
+    assert catalog.list_datasets() == []
     assert storage_backend.list_keys(storage_backend.address("vector", COLLECTION)) == []
 
 
@@ -188,7 +189,11 @@ def test_delete_marks_the_record_before_it_sweeps_the_objects(
     assert marked is not None
     assert marked.lifecycle is DatasetLifecycle.DELETING
     assert marked.is_deleting is True
-    assert catalog.get(COLLECTION) is None
+    # The record outlives the dataset as a tombstone, and a tombstone answers as an absent identifier.
+    tombstone = catalog.require(COLLECTION)
+    assert tombstone.lifecycle is DatasetLifecycle.DELETED
+    assert tombstone.is_tombstone is True
+    assert catalog.list_datasets() == []
 
 
 def mark_deleting(catalog: ObjectCatalog) -> None:
@@ -211,9 +216,7 @@ def test_a_write_takes_over_a_deletion_that_stopped_before_its_sweep(
     assert result.version == 1
     assert two_versions.versions(COLLECTION) == [1]
     assert len(two_versions.read(COLLECTION).frame) == 3
-    record = catalog.get(COLLECTION)
-    assert record is not None
-    assert record.is_deleting is False
+    assert catalog.require(COLLECTION).is_live is True
 
 
 def test_a_second_delete_finishes_a_deletion_that_stopped_before_its_sweep(
@@ -226,7 +229,7 @@ def test_a_second_delete_finishes_a_deletion_that_stopped_before_its_sweep(
     removed = two_versions.delete(COLLECTION)
 
     assert removed >= 3
-    assert catalog.get(COLLECTION) is None
+    assert catalog.require(COLLECTION).is_tombstone is True
     assert storage_backend.list_keys(storage_backend.address("vector", COLLECTION)) == []
 
 
@@ -252,13 +255,11 @@ def test_delete_leaves_a_record_that_was_reclaimed_while_it_swept_alone(
 
     two_versions.delete(COLLECTION)
 
-    record = catalog.get(COLLECTION)
-    assert record is not None
-    assert record.is_deleting is False
+    assert catalog.require(COLLECTION).is_live is True
     assert reclaiming.versions(COLLECTION) == [1]
 
 
-def test_two_writes_taking_over_the_same_deletion_meet_at_the_conditional_create(
+def test_two_writes_taking_over_the_same_deletion_meet_at_one_compare_and_swap(
     two_versions: VectorCollectionStore,
     storage_backend: StorageBackend,
     catalog: ObjectCatalog,

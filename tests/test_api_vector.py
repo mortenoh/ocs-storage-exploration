@@ -7,6 +7,8 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from httpx import Response
 
@@ -103,24 +105,67 @@ def test_features_are_answered_as_geojson_in_the_collection_frame(client: TestCl
     }
 
 
-def test_the_geojson_conversion_runs_off_the_event_loop(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_geojson_body_is_rendered_off_the_event_loop(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     create_collection(client)
     threads: list[str] = []
-    render = FeatureCollectionResponse.from_handle
+    render = FeatureCollectionResponse.body_from_handle
 
-    def recording_from_handle(handle: VectorReadHandle, *, limit: int | None = None) -> FeatureCollectionResponse:
+    def recording_body_from_handle(handle: VectorReadHandle, *, limit: int | None = None) -> bytes:
         threads.append(threading.current_thread().name)
         return render(handle, limit=limit)
 
-    monkeypatch.setattr(FeatureCollectionResponse, "from_handle", recording_from_handle)
+    monkeypatch.setattr(FeatureCollectionResponse, "body_from_handle", recording_body_from_handle)
     response = client.get(f"/api/v1/vector/{IDENTIFIER}/features")
 
     assert response.status_code == 200, response.text
     assert response.json()["number_returned"] == 4
-    # The conversion is as blocking as the read, so it runs on the worker thread that produced the
-    # handle rather than on the event loop, where it would stall every other request.
+    # The conversion and the JSON encoding are both as blocking as the read, so the worker thread that
+    # produced the handle hands back the finished bytes. Returning the model instead left FastAPI
+    # dumping, re-validating and encoding it on the event loop, where it stalls every other request.
     assert len(threads) == 1
     assert threads[0].startswith("AnyIO worker thread")
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        pytest.param({}, id="every-feature"),
+        pytest.param({"limit": 2}, id="a-limited-page"),
+        pytest.param({"where": "level:9"}, id="an-empty-answer"),
+    ],
+)
+def test_the_body_is_the_bytes_fastapi_serialised_before(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, parameters: dict[str, Any]
+) -> None:
+    create_collection(client)
+    built: list[FeatureCollectionResponse] = []
+    render = FeatureCollectionResponse.from_handle
+
+    def capturing_from_handle(handle: VectorReadHandle, *, limit: int | None = None) -> FeatureCollectionResponse:
+        model = render(handle, limit=limit)
+        built.append(model)
+        return model
+
+    monkeypatch.setattr(FeatureCollectionResponse, "from_handle", capturing_from_handle)
+    response = client.get(f"/api/v1/vector/{IDENTIFIER}/features", params=parameters)
+
+    assert response.status_code == 200, response.text
+    # What the route answered before it rendered its own body: the model through FastAPI's encoder and
+    # the JSON response class it was returned to. The bytes are identical for a full page, a limited
+    # one and an empty answer, down to the compact separators and the content type.
+    expected = JSONResponse(content=jsonable_encoder(built[-1])).body
+    assert response.content == expected
+    assert response.headers["content-type"] == "application/json"
+
+
+def test_the_feature_body_is_still_documented_as_the_response_model(client: TestClient) -> None:
+    schema = client.get("/openapi.json").json()
+
+    answer = schema["paths"]["/api/v1/vector/{dataset_identifier}/features"]["get"]["responses"]["200"]
+    # FastAPI documents a returned Response as an empty body unless the route declares its model, and
+    # a client generated from this schema would then have no feature collection to deserialise into.
+    assert answer["content"]["application/json"]["schema"]["$ref"].endswith("/FeatureCollectionResponse")
+    assert "FeatureCollectionResponse" in schema["components"]["schemas"]
 
 
 def test_a_bbox_narrows_the_feature_read(client: TestClient) -> None:

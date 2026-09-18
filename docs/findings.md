@@ -1,12 +1,15 @@
 # Findings
 
-The executive summary of this exploration for the OCS team. Eight passes stand
+The executive summary of this exploration for the OCS team. Twelve passes stand
 behind it: the storage model, the S3 backend and Docker, the STAC catalog, a
 hardening review that found eleven ways the prototype was right in the happy
 path and wrong under a second writer and closed them all, pluggable backends,
-an async surface over bounded S3 clients, real-data ingestion, and a second
-review that closed fourteen more findings the same way. Every claim about OCS is cited as
-a `file:line` against [the checkout](research/ocs-storage-today.md).
+an async surface over bounded S3 clients, real-data ingestion, a second review
+that closed fourteen more findings the same way, seeded Docker demo stacks with
+an end-to-end test, a third and a fourth review that closed five findings each,
+and a fifth that closed the last window in the deletion protocol by never
+deleting a catalog record again. Every claim about OCS is cited as a `file:line`
+against [the checkout](research/ocs-storage-today.md).
 
 ## TLDR
 
@@ -17,7 +20,7 @@ a `file:line` against [the checkout](research/ocs-storage-today.md).
 - Publication becomes one conditional write with no window where the dataset is absent and no recovery routine; rollback is the same call against an older target.
 - The vector half arrives at the same time: GeoParquet 1.1 with a covering bounding-box column, bounding-box and attribute pushdown, and per-version metadata.
 - One catalogue and one tagged union cover both kinds of dataset, and a STAC catalog falls out as a projection of those records rather than a second index to keep in sync.
-- The API is awaitable without pretending the engines are: every route is an `async def`, the catalogue is awaited natively through obstore, and the blocking engines run on worker threads behind a capacity limiter and a 504 timeout, with the S3 clients bounded per request in all three libraries.
+- The API is awaitable without pretending the engines are: every route is an `async def`, the catalogue is awaited natively through obstore, and the blocking engines run on worker threads behind a capacity limiter and a 504 timeout, with the S3 clients bounded per request in all three libraries. An answer is rendered and encoded on that thread as well, so nothing of a fifty thousand feature response is built on the event loop.
 - The largest risks: Icechunk's conformance on non-AWS S3, rustfs being pre-1.0, retention bounding how far a rollback reaches, serving Zarr chunks for remote stores, and one JSON object per dataset at thousands of datasets.
 - Not proven: real ingestion sources, multiscale pyramids, moto as a Docker-free S3 double, and any scale beyond synthetic data.
 
@@ -28,8 +31,8 @@ dataset, no real ingestion source, and no file large enough to make row-group
 pruning or pyramids measurable. The fixtures are cheap enough to run the whole
 suite once per backend.
 Addresses, keys, schemas, both catalogues, both engines and the API are
-parametrised over all three. The default run is 906 tests at about 93 percent
-statement and branch coverage; 344 of them carry the `s3` marker and run again
+parametrised over all three. The default run is 1123 tests at about 93 percent
+statement and branch coverage; 430 more carry the `s3` marker and run again
 against rustfs `1.0.0-rc.6` under `make test-s3`, which starts the container and
 stops it again even when a test fails.
 
@@ -53,11 +56,11 @@ deletes are swept on teardown and a full run leaves the bucket empty.
 | Publication without rename (vector) | An immutable `versions/vNNNNN` plus a conditionally written `current.json` | Create and etag replace both lose correctly on rustfs; `reservation.json` makes the number unique | High | `LocalStore` has no conditional update, so the filesystem backend emulates it |
 | obstore vs fsspec vs `pyarrow.fs` | obstore for objects, `pyarrow.fs` for Parquet, fsspec rejected | Icechunk does its own I/O through Arrow `object_store` and never sees fsspec | High | obstore 0.11 is young and has no pyarrow adapter |
 | GeoParquet encoding and pushdown | 1.1.0 declared, WKB, covering bbox, zstd, Hilbert sort | `bbox=` prunes row groups and composes with `filters=`; envelope hits are re-filtered | Medium | The row-group hit rate is unmeasured |
-| Catalogue storage | One JSON object per dataset, conditional create or revision compare-and-swap | Replaces `records.json` under portalocker; concurrent writers lose correctly on S3 | Medium | Thousands of datasets need a derived index |
+| Catalogue storage | One JSON object per dataset, conditional create or revision compare-and-swap; a record is never deleted, only tombstoned | Replaces `records.json` under portalocker; concurrent writers lose correctly on S3, a deletion reserves the record before it sweeps the one generation its storage key names, and every transition of a record is conditional although obstore offers no conditional delete | Medium | Thousands of datasets need a derived index, and a tombstone per deleted identifier is kept for ever |
 | `item_type` discriminator | A pydantic tagged union of `coverage` and `feature` | One exhaustive `match` replaces 16 scattered `ArtifactFormat.ICECHUNK` comparisons | High | A third item type has not been tried |
 | STAC projection | Projected from the version advertised, never stored | Round-tripped through `pystac` and checked once with `stac-validator` | Medium | datacube v2.2.0 has a dead schema reference; listings need paging |
 | Local S3 testing | rustfs behind a marker, with the whole suite re-run | Found what two local backends could not: `create_dir` leaves undeletable markers | Medium | rustfs is pre-1.0, MinIO untried, moto unverified |
-| Sync engines behind an async facade | Routes are `async def`; the catalogue is awaited through obstore and the engines run on bounded worker threads | A saturation test answers `/health` while sixteen storage calls are in flight, the limiter caps them and an over-long call answers 504 | High | A timed-out thread is abandoned, not cancelled, because no library here can be interrupted |
+| Sync engines behind an async facade | Routes are `async def`; the catalogue is awaited through obstore and the engines run on bounded worker threads | A saturation test answers `/health` while sixteen storage calls are in flight, the limiter caps them and an over-long call answers 504; resolving an ingest plan and rendering a feature answer down to its bytes happen inside the same bounded call | High | A timed-out thread is abandoned, not cancelled, because no library here can be interrupted |
 | Bounded S3 clients | One block of timeouts and retries translated into obstore, Icechunk and pyarrow | An unreachable endpoint fails a raster create, a catalogue put and a Parquet write in under a second each, as 503 | Medium | The three clients only approximate one another; a slow endpoint, as opposed to an absent one, is untested |
 
 ## Recommendation for OCS

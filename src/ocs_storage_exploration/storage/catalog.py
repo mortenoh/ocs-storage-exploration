@@ -22,7 +22,6 @@ from ocs_storage_exploration.storage.keys import (
 from ocs_storage_exploration.storage.objects import (
     ObjectPayload,
     create_object,
-    delete_objects,
     put_object,
     read_object,
     replace_object,
@@ -73,7 +72,12 @@ def identifiers_from_keys(keys: Iterable[str]) -> Iterator[str]:
 
 
 class ObjectCatalog:
-    """Reads and writes dataset records as JSON objects, remembering nothing between calls."""
+    """Reads and writes dataset records as JSON objects, remembering nothing between calls.
+
+    There is no delete. A record is created, replaced under compare-and-swap, or overwritten, and a
+    finished deletion replaces it with a tombstone instead of removing it, so every transition a
+    record makes is conditional even though obstore exposes no conditional delete on any backend.
+    """
 
     def __init__(self, backend: StorageBackend) -> None:
         """Bind the catalog to one backend."""
@@ -133,23 +137,17 @@ class ObjectCatalog:
         return entry
 
     def list_datasets(self, item_type: ItemType | None = None) -> list[Dataset]:
-        """List dataset records, optionally filtered by item type, skipping datasets being deleted."""
+        """List dataset records, optionally filtered by item type, skipping everything that is not live."""
         datasets: list[Dataset] = []
         for identifier in self.iter_identifiers():
             dataset = self.get(identifier)
-            if dataset is None or dataset.is_deleting:
-                # A deletion marks its record before it sweeps; from here on the dataset is gone.
+            if dataset is None or not dataset.is_live:
+                # A deletion marks its record before it sweeps and tombstones it afterwards; from
+                # the mark onwards the dataset is gone as far as a listing is concerned.
                 continue
             if item_type is None or dataset.item_type is item_type:
                 datasets.append(dataset)
         return datasets
-
-    def delete(self, identifier: str) -> None:
-        """Delete a dataset record, raising DatasetNotFoundError when it is absent."""
-        address = self.record_address(identifier)
-        if not self._backend.exists(address):
-            raise no_such_record(identifier)
-        delete_objects(self._backend.object_store(), address.key)
 
     def iter_identifiers(self) -> Iterator[str]:
         """Iterate over the identifiers of every known dataset in key order."""

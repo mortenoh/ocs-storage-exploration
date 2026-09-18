@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, assert_never
 from pluginkit import PluginManager
 
 from ocs_storage_exploration.storage.backends import default_plugin_manager
-from ocs_storage_exploration.storage.catalog import ObjectCatalog
+from ocs_storage_exploration.storage.catalog import ObjectCatalog, no_such_record
 from ocs_storage_exploration.storage.errors import DatasetNotFoundError, ItemTypeMismatchError
 from ocs_storage_exploration.storage.plugins import (
     backend_for_scheme,
@@ -31,10 +31,14 @@ if TYPE_CHECKING:
 
 
 def require_live_record(record: Dataset, dataset_identifier: str) -> Dataset:
-    """Refuse a record whose dataset is being deleted, which is already gone as far as a reader is concerned."""
+    """Refuse a record whose dataset is being deleted or already gone, either way nothing a reader may see."""
+    if record.is_live:
+        return record
     if record.is_deleting:
         raise DatasetNotFoundError(f"dataset {dataset_identifier!r} is being deleted")
-    return record
+    # A tombstone stands for no dataset at all, so it answers exactly as an identifier nothing was
+    # ever written under: the record a finished deletion leaves behind is not a reader's business.
+    raise no_such_record(dataset_identifier)
 
 
 def require_coverage_record(record: Dataset, dataset_identifier: str) -> CoverageDataset:
@@ -119,6 +123,8 @@ class StorageService:
         """Read the record of a dataset and delete it through the engine its item type names.
 
         The record is read raw rather than through ``get_dataset``: a deletion that did not finish
-        leaves a record marked as deleting, and deleting again is how that deletion is completed.
+        leaves a record marked as deleting, and deleting again is how that deletion is completed. A
+        tombstone is dispatched the same way and refused by the engine, so deleting a dataset that is
+        already gone answers exactly as deleting an identifier nothing was ever written under does.
         """
         return self.delete_record(self.catalog.require(dataset_identifier))

@@ -120,17 +120,20 @@ rewrites its `publication` block from the branch tip, and both `publish()` and
 repairs the record.
 
 The same call also rewrites everything the store holds. `timestep_count`,
-`variables`, `temporal`, the grid with its `bbox`, the licence and the
+`variables`, `temporal`, the grid with its `bbox`, the title, the licence and the
 attribution are read back from `describe(version=draft)` and written to the
 record whenever they disagree, because a write that claimed the record and then
 lost the fast-forward onto `main` leaves exactly that disagreement. The bbox is
 compared to within a millionth of a cell: cell centres are written as floats and
 measured back as a median step, so a record that already matches is left alone
-rather than rewritten on every call. The title is the one field an overwrite
-changes that the store never holds, so a record whose title a rejected overwrite
-replaced keeps the replacement. A repository that holds only its initialisation
-snapshot has nothing to read back, so the extents of its record are left alone
-rather than blanked.
+rather than rewritten on every call. The title travels the way the terms do: a
+create writes it into the commit metadata, an append carries forward the metadata
+of the snapshot it extends, and a read of that metadata is what puts the title of
+the accepted write back over the one a rejected overwrite left in the record. A
+snapshot committed before titles travelled with them carries none, and
+reconciliation then leaves the title of the record alone rather than blanking it.
+A repository that holds only its initialisation snapshot has nothing to read back
+at all, so the extents of its record are left alone rather than blanked.
 
 ### An append must extend the time axis
 
@@ -309,63 +312,113 @@ order has a window: between the two, the dataset looks like it never existed, so
 a writer using the same identifier starts writing into a prefix that is about to
 be swept, and the sweep then erases what it wrote.
 
-The record now goes last. A delete reads the record raw, marks it
-`lifecycle: "deleting"` under a compare-and-swap, sweeps every object below the
-`storage_key` of the record it marked - and nothing else - and only then deletes
-the record, and only if the record is still the one it reserved. A record marked
-`deleting` is a deletion in progress, not a dataset: listings skip it, and reads,
-publications and the STAC projection answer 404. Deleting and writing read it
-raw, because they are the two calls that can finish it.
+The record now goes last, and it is never removed. A delete reads the record raw,
+marks it `lifecycle: "deleting"` under a compare-and-swap, sweeps every object
+below the `storage_key` of the record it marked - and nothing else - and then
+swaps that mark for a tombstone: the same record under `lifecycle: "deleted"`,
+written under the revision of the mark it holds. A record marked `deleting` is a
+deletion in progress and a tombstone is a dataset that is gone; neither is a
+dataset. Listings skip both, and reads, publications, `DELETE`, the datasets API
+and the STAC projection answer 404 for both - a tombstone exactly as for an
+identifier nothing was ever written under. Deleting and writing read the record
+raw, because they are the two calls that can finish a deletion.
 
 That makes the state after a crash recoverable rather than ambiguous. A delete
 that stops after the mark leaves a marked record and some objects behind, and
-either a second delete or a write of the same identifier finishes the sweep and
-drops the record before doing its own work. A write that takes a deletion over
-then creates its record conditionally, so two writers taking over the same
-deletion meet at that conditional create and exactly one of them wins.
+either a second delete or a write of the same identifier finishes the sweep
+before doing its own work. A write that takes a deletion over swaps the mark
+straight for its own record rather than tombstoning it first, so two writers
+taking over the same deletion meet at that one compare-and-swap and exactly one
+of them wins; the loser is told the dataset already exists, 409, and sweeps the
+generation it minted.
+
+The commoner case, though, is a deletion that has not crashed at all and is
+simply still running. It finishes while the write that took it over is putting
+its bytes down, so by the time that write claims the record the mark it read has
+already become a tombstone. That is not losing the identifier, and it is covered
+in "Writing over a tombstone" below.
 
 Nothing is swept without that reservation. A mark that lost its
 compare-and-swap to a writer used to sweep anyway, emptying the prefix a record
 that was still live pointed at. It is now retried against the record that
 writer left behind, `MAXIMUM_DELETION_ATTEMPTS` (four) times before it gives
 up. A retry that finds the record already marked finishes that deletion
-instead. One that finds no record, or a live one because another deleter
-finished this deletion and the identifier was written again, sweeps nothing and
-returns: what stands under the identifier now belongs to the writer that made
-it, not to this call. A delete that loses every attempt is refused with
-`PublicationConflictError`, 409, and removes nothing.
+instead. One that finds no record, a tombstone, or a record in a generation this
+call never read - because another deleter finished this deletion and the
+identifier was written again - sweeps nothing and returns: what stands under the
+identifier now belongs to whoever made it, not to this call. A delete that loses
+every attempt is refused with `PublicationConflictError`, 409, and removes
+nothing.
 
-### What the generation prefix closes, and what it does not
+### Writing over a tombstone
 
-Deleting used to be able to erase a dataset that had been written again. The
-sweep is a listing followed by a delete, so a writer that took the deletion over
-while the original deleter was between those two steps had its new objects
-removed by that deleter's sweep: the record survived, because a deleter refuses
-to delete a record it did not reserve, but the data under it did not. That is
-closed. A dataset written again lives under a generation the dead record does
-not name, so a deleter that resumes late finds its own generation already empty
-and never reaches the new one, however long it was away. A writer that then
-loses the conditional create sweeps the generation it minted itself, which
-nobody else knows the token of, so a loser leaves no orphan behind either.
+A tombstone is not an obstacle. It is a free identifier that happens to carry a
+revision, and a writer that finds one replaces it with its own record under a
+compare-and-swap against that revision. The write is a first write in every other
+respect: a generation of its own, a fresh `created_at`, no title, terms or
+publication block inherited from the dataset that is gone, and, for a coverage,
+no `overwrite` flag needed. The tombstone check runs before the item type check,
+so a coverage may be created over the tombstone of a vector collection and a
+collection written over the tombstone of a coverage: what an identifier used to
+hold says nothing about what it may hold next.
 
-One window is left, and it is narrow rather than harmless. There is still no
-conditional delete, so dropping the record is a read followed by a delete rather
-than one compare-and-swap. Between that read and that delete, another actor can
-finish the same deletion, drop the record, and leave a writer free to create the
-dataset again; the delete then removes the new record. No bytes are lost - the
-sweep only ever emptied the deleter's own generation, and the new data is intact
-under a prefix nothing now names - but the dataset answers 404 after a write
-that succeeded, and its objects are left unreferenced. The window is one read
-and one delete wide rather than a whole sweep wide, which is what generations
-bought, and it is not zero.
+Which dead record a write swaps away is decided when it claims, not when it
+starts. Writing the bytes takes as long as it takes, and the record moves while
+it happens: the deletion the write took over finishes and tombstones the mark, or
+a deleter reserves the record again. Losing the compare-and-swap to one of those
+means nothing owns the identifier, so the claim is read again and retried against
+whatever the record has become, and the generation the write already filled is
+kept rather than swept and written a second time. It is safe to keep precisely
+because no record names that generation yet and nobody else knows its token, so
+nothing a competing actor does can have touched it. A retry that finds a
+`deleting` mark empties the generation *that mark* names before replacing it,
+exactly as a takeover does, and never its own. Only a live record means another
+writer really took the name, which is the 409 `DatasetAlreadyExistsError` a
+create has always answered, with the generation this write minted swept behind
+it. `MAXIMUM_CLAIM_ATTEMPTS` (four) bounds the retries; an identifier that
+changed hands under every one of them is refused with `PublicationConflictError`,
+409, and swept the same way. Two writers retrying against the same tombstone
+still meet at one compare-and-swap, so exactly one of them wins the name.
 
-Closing it takes one of two things this pass does not have. A conditional delete
-would make dropping the record a compare-and-swap, but obstore exposes none on
-any of the three backends: `obstore.delete(store, paths)` takes no etag and no
-mode. The alternative is never deleting a record at all - writing a tombstone
-that the next create replaces under compare-and-swap - which trades the window
-for a record that outlives its dataset and a listing that has to filter it out.
-Neither is implemented here.
+### Every record transition is a compare-and-swap
+
+obstore exposes no conditional delete on any of the three backends -
+`obstore.delete(store, paths)` takes no etag and no mode - so for as long as a
+deletion removed its record, dropping it had to be a read followed by a delete
+rather than one compare-and-swap. Between that read and that delete, another
+actor could finish the same deletion, drop the record, and leave a writer free to
+create the dataset again; the delete then removed the new record. No bytes were
+lost, because the sweep only ever emptied the deleter's own generation, but the
+dataset answered 404 after a write that had succeeded, and its objects were left
+unreferenced under a prefix nothing named.
+
+Not deleting the record at all is what closes it. Every transition a record makes
+- live to `deleting`, `deleting` to `deleted`, and `deleting` or `deleted` back to
+live - is a `put` under the revision the caller read, so exactly one of two racing
+callers lands each one. A deleter that loses its tombstone leaves the record
+alone, because whoever moved it on owns what stands under the name now, and a
+writer that loses its claim to a record that is still dead reads it again and
+claims that one instead. The `Catalog.delete` that used to remove a record went
+with the window: nothing in the service removes a catalog record any more.
+
+Generations closed a second version of the same failure, and still do. The sweep
+is a listing followed by a delete, so a writer that took the deletion over while
+the original deleter was between those two steps had its new objects removed by
+that deleter's sweep. A dataset written again lives under a generation the dead
+record does not name, so a deleter that resumes late finds its own generation
+already empty and never reaches the new one, however long it was away. A writer
+that then loses its claim sweeps the generation it minted itself, which nobody
+else knows the token of, so a loser leaves no orphan behind either.
+
+What it costs is a record that outlives its dataset: one small JSON object per
+identifier ever deleted, read and skipped by every listing. There is deliberately
+no purge operation, because purging a tombstone is precisely the unconditional
+record delete this design removes. It would be a read of the tombstone followed
+by a delete, with the same window between them, and the prize for losing that
+race is the old failure back again: a dataset written in between answering 404
+over objects that are perfectly intact. A deployment with enough tombstones to
+care would need a conditional delete first, and with one it would not need the
+tombstones.
 
 ## Side by side
 

@@ -78,7 +78,7 @@ is where that split is decided:
 | Catalog reads and writes | `AsyncObjectCatalog`, natively on the event loop through obstore's async API |
 | Raster and vector engine calls | a worker thread, through `anyio.to_thread.run_sync` |
 | Resolving an ingest plan | the worker thread of the ingest it plans; the route hands the plan over as a factory rather than ready made, because expanding a glob walks directories and stats every match |
-| Rendering a feature read as GeoJSON | the worker call that produced the handle, through `AsyncVectorCollectionStore.read_as`; converting fifty thousand features is as blocking as reading them |
+| Rendering a feature read as GeoJSON | the worker call that produced the handle, through `AsyncVectorCollectionStore.read_as`, serialisation included: the builder returns the finished body bytes and the route hands them back as a `Response`, which FastAPI neither re-validates nor re-encodes. Converting fifty thousand features is as blocking as reading them, and serialising them costs as much again |
 | The STAC projection of a collection | one worker-thread call for the whole projection, through `run_blocking` |
 | `GET /health` | the event loop; it touches no storage at all |
 

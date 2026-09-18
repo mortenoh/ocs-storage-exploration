@@ -166,4 +166,4 @@ def test_a_dataset_being_deleted_is_gone_for_readers_but_can_still_be_deleted(
 
     # Deleting again is how a deletion that stopped half way is finished, so it reads the record raw.
     assert populated.delete_dataset(COLLECTION).dataset_identifier == COLLECTION
-    assert populated.catalog.get(COLLECTION) is None
+    assert populated.catalog.require(COLLECTION).is_tombstone is True

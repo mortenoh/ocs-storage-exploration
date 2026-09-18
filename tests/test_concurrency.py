@@ -15,6 +15,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from ocs_storage_exploration.api import backends, datasets, health, raster, stac, vector
+from ocs_storage_exploration.api.schemas import FeatureCollectionResponse
 from ocs_storage_exploration.main import create_app
 from ocs_storage_exploration.settings import Settings
 from ocs_storage_exploration.storage.addresses import StorageAddress, StorageScheme
@@ -24,6 +25,7 @@ from ocs_storage_exploration.storage.paths import resolve_ingest_path, resolve_i
 from ocs_storage_exploration.storage.raster import ingest as raster_ingest
 from ocs_storage_exploration.storage.raster.repository import RasterRepository
 from ocs_storage_exploration.storage.vector import ingest as vector_ingest
+from ocs_storage_exploration.storage.vector.collection import VectorReadHandle
 
 COVERAGE = "concurrent-coverage"
 COLLECTION = "concurrent-collection"
@@ -226,6 +228,38 @@ def test_a_slow_ingest_path_lookup_times_out_while_health_answers_promptly(
     # The lookup is inside the runner, so the storage timeout is what bounds it rather than nothing.
     assert response.status_code == 504, response.text
     assert response.json()["error"] == "StorageTimeoutError"
+
+
+def test_a_slow_feature_rendering_leaves_health_answering_promptly(
+    memory_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started_rendering = threading.Event()
+    render = FeatureCollectionResponse.body_from_handle
+
+    def slow_render(handle: VectorReadHandle, *, limit: int | None = None) -> bytes:
+        # A stand-in for the fifty thousand features that make the rendering take this long for real.
+        started_rendering.set()
+        time.sleep(SLOW_CALL_SECONDS)
+        return render(handle, limit=limit)
+
+    monkeypatch.setattr(FeatureCollectionResponse, "body_from_handle", slow_render)
+
+    with TestClient(create_app(settings=memory_settings)) as client, ThreadPoolExecutor(max_workers=1) as pool:
+        assert client.post(f"/api/v1/vector/{COLLECTION}", json=VECTOR_BODY).status_code == 201
+        reading = pool.submit(client.get, f"/api/v1/vector/{COLLECTION}/features")
+        assert started_rendering.wait(timeout=HEALTH_BUDGET_SECONDS), "the read never reached the rendering"
+        # The probe is issued while the body is still being built: a rendering on the event loop would
+        # hold it for the whole of SLOW_CALL_SECONDS, and so would serialising the model afterwards.
+        probed = time.perf_counter()
+        health = client.get("/health")
+        elapsed = time.perf_counter() - probed
+        response: httpx.Response = reading.result()
+
+    assert health.status_code == 200
+    assert elapsed < BLOCKED_LOOP_BUDGET_SECONDS
+    # Nothing of the answer is left for the loop: the route returns the bytes the worker produced.
+    assert response.status_code == 200, response.text
+    assert response.json()["number_returned"] == 1
 
 
 def test_the_limiter_caps_how_many_engine_calls_run_at_once(

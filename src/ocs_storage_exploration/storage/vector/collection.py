@@ -23,6 +23,7 @@ from pyproj.exceptions import CRSError as PyprojCrsError
 from shapely.geometry.base import BaseGeometry
 
 from ocs_storage_exploration.storage.addresses import StorageAddress
+from ocs_storage_exploration.storage.catalog import already_exists, no_such_record
 from ocs_storage_exploration.storage.errors import (
     CrsError,
     DatasetAlreadyExistsError,
@@ -85,6 +86,7 @@ POINTER_LABEL: Final[str] = "pointer"
 METADATA_LABEL: Final[str] = "version metadata"
 MAXIMUM_RESERVATION_ATTEMPTS: Final[int] = 32
 MAXIMUM_DELETION_ATTEMPTS: Final[int] = 4
+MAXIMUM_CLAIM_ATTEMPTS: Final[int] = 4
 
 
 class VectorCollectionPointer(BaseModel):
@@ -109,6 +111,22 @@ class CollectionEntry:
 
     record: FeatureDataset
     revision: str
+
+
+@dataclass(frozen=True, slots=True)
+class CollectionWriteTarget:
+    """What a write claims at an identifier: the revision it swaps against and the collection it extends.
+
+    ``revision`` is None only when the identifier holds no record at all, which is the one case a write
+    claims with a conditional create. Every other write replaces a record under compare-and-swap: the
+    live collection it extends, or a dead one - a tombstone, or the mark of a deletion this write
+    finished - that it takes the identifier back from. ``extended`` is set only in the first of those,
+    so a write over a dead record is a first write in every respect but the swap: a generation of its
+    own, a fresh ``created_at``, and no title, terms or publication inherited from what stood there.
+    """
+
+    revision: str | None = None
+    extended: FeatureDataset | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,16 +303,10 @@ class VectorCollectionStore:
     ) -> VectorWriteResult:
         """Write a frame as the next version of a collection and optionally publish it right away."""
         identifier = validate_dataset_identifier(collection_identifier)
-        existing = self._existing_collection(identifier)
-        if existing is not None and existing.record.is_deleting:
-            # The generation that record names is being emptied. Finishing that deletion first is the
-            # only way to leave it behind; what follows is a first write, under a generation of its
-            # own, so the sweep of the dead one can never reach the objects written here.
-            self._complete_deletion(existing)
-            existing = None
+        target = self._write_target(identifier)
         prepared = self._prepare_frame(frame, identifier_property=identifier_property)
         declared = self._validate_selectable_columns(prepared, selectable_columns)
-        previous = None if existing is None else existing.record
+        previous = target.extended
         # A first write mints a generation of its own; a later one stays in the generation of the
         # record it read, which is the only thing that says where the live data of a collection is.
         if previous is None:
@@ -313,10 +325,7 @@ class VectorCollectionStore:
             attribution=attribution or (previous.attribution if previous is not None else None),
         )
         record = self._build_record(identifier, storage_prefix, metadata, title=title, previous=previous)
-        if existing is None:
-            self._create_record(record, storage_prefix)
-        else:
-            self._catalog.put(record, revision=existing.revision)
+        self._claim_record(record, target)
         if publish:
             self.publish(identifier, version=version)
         return VectorWriteResult(
@@ -493,12 +502,17 @@ class VectorCollectionStore:
         return None if pointer is None else pointer.version
 
     def delete(self, collection_identifier: str) -> int:
-        """Mark the record of a collection as deleting, sweep the generation it names, then drop it.
+        """Mark the record of a collection as deleting, sweep the generation it names, then tombstone it.
 
         The record goes last rather than first: while it is there and marked, a concurrent writer is
         told a deletion is running instead of finding no record at all and writing into a prefix that
         is about to be emptied. A deletion that stops half way leaves the marked record behind, and
         deleting again, or writing the collection again, finishes it.
+
+        The record is never removed. A finished deletion swaps the mark it holds for a tombstone, which
+        is the same record under ``lifecycle: deleted``, so every transition of a catalog record is a
+        compare-and-swap even though obstore exposes no conditional delete. A deleter that loses that
+        swap leaves the record alone: whoever moved it on owns whatever stands under the name now.
 
         Nothing is ever swept without the reservation, and the sweep only ever empties the storage
         prefix of the record that reservation was taken on. A collection written again under the same
@@ -506,7 +520,8 @@ class VectorCollectionStore:
         generation empty and leaves the new one untouched.
         """
         identifier = validate_dataset_identifier(collection_identifier)
-        # Read raw: a record already marked as deleting is exactly what this call is here to finish.
+        # Read raw: a record already marked as deleting is exactly what this call is here to finish,
+        # while a tombstone stands for a collection that is already gone and is refused as absent.
         entry = self._collection_entry(identifier)
         reserved = self._reserve_deletion(entry)
         if reserved is None:
@@ -515,7 +530,7 @@ class VectorCollectionStore:
             # sweeping it would erase a live collection this deletion never reserved.
             return 0
         removed = self._sweep(reserved.record.storage_key)
-        self._drop_reserved_record(identifier, reserved.revision)
+        self._tombstone(reserved)
         return removed
 
     def _list_versions(self, storage_prefix: str, *, completed_only: bool) -> list[int]:
@@ -704,26 +719,47 @@ class VectorCollectionStore:
             features=metadata.feature_detail(),
         )
 
-    def _existing_collection(self, identifier: str) -> CollectionEntry | None:
-        """Read the catalog entry of a collection, or None when the catalog holds no record for it."""
+    def _write_target(self, identifier: str) -> CollectionWriteTarget:
+        """Return what a write claims at an identifier, finishing a deletion it finds under way first."""
         entry = self._catalog.get_entry(identifier)
         if entry is None:
-            return None
+            # Nothing was ever written here, or what was is a record dropped before tombstones existed.
+            return CollectionWriteTarget()
+        if entry.record.is_deleting:
+            # The generation that record names is being emptied. Finishing that deletion first is the
+            # only way to leave it behind; what follows is a first write, under a generation of its
+            # own, so the sweep of the dead one can never reach the objects written here. The mark is
+            # swapped straight for the new record rather than tombstoned first, so two writers taking
+            # the same deletion over meet at that one compare-and-swap and exactly one of them wins.
+            self._sweep(entry.record.storage_key)
+            return CollectionWriteTarget(revision=entry.revision)
+        if entry.record.is_tombstone:
+            # A tombstone says only that the identifier was used and swept, whatever item type it was
+            # written for, so it is replaced rather than extended and never reaches the item type
+            # check below: a collection may be written over the tombstone of a coverage.
+            return CollectionWriteTarget(revision=entry.revision)
         if not isinstance(entry.record, FeatureDataset):
             raise ItemTypeMismatchError(f"dataset {identifier!r} is not a vector collection")
-        return CollectionEntry(record=entry.record, revision=entry.revision)
+        return CollectionWriteTarget(revision=entry.revision, extended=entry.record)
 
     def _collection_entry(self, identifier: str) -> CollectionEntry:
-        """Read the catalog entry of a collection, including one whose deletion is under way."""
+        """Read the entry of a collection that still exists, including one whose deletion is under way.
+
+        A tombstone is refused here rather than narrowed: the record a finished deletion leaves behind
+        stands for no dataset at all, so it answers exactly as an absent identifier does, whatever item
+        type it was written for.
+        """
         entry = self._catalog.require_entry(identifier)
+        if entry.record.is_tombstone:
+            raise no_such_record(identifier)
         if not isinstance(entry.record, FeatureDataset):
             raise ItemTypeMismatchError(f"dataset {identifier!r} is not a vector collection")
         return CollectionEntry(record=entry.record, revision=entry.revision)
 
     def _require_collection(self, identifier: str) -> CollectionEntry:
-        """Read the catalog entry of a live collection, refusing another item type or a deletion under way."""
+        """Read the entry of a live collection, refusing another item type, a tombstone or a deletion under way."""
         entry = self._collection_entry(identifier)
-        if entry.record.is_deleting:
+        if not entry.record.is_live:
             raise DatasetNotFoundError(f"collection {identifier!r} is being deleted")
         return entry
 
@@ -731,16 +767,64 @@ class VectorCollectionStore:
         """Read the record of a live collection, which is what names the generation holding its objects."""
         return self._require_collection(validate_dataset_identifier(collection_identifier)).record
 
-    def _create_record(self, record: FeatureDataset, storage_prefix: str) -> None:
-        """Create the record of a new collection, sweeping the generation this write minted when it loses."""
+    def _claim_record(self, record: FeatureDataset, target: CollectionWriteTarget) -> None:
+        """Claim the record a write built, sweeping the generation a first write minted when it loses it."""
+        if target.extended is not None:
+            # A later write of a live collection replaces the record it read, under its revision.
+            self._catalog.put(record, revision=target.revision)
+            return
         try:
-            self._catalog.put(record, create=True)
-        except DatasetAlreadyExistsError:
-            # Another writer claimed the identifier first, so this generation will never be named by a
-            # record. Nobody else knows its token, so sweeping it removes exactly what this write put
-            # there and the loser leaves no orphan behind.
-            self._sweep(storage_prefix)
+            self._claim_free_identifier(record, target.revision)
+        except (DatasetAlreadyExistsError, PublicationConflictError):
+            # The identifier went to somebody else, so the generation this write minted will never be
+            # named by a record. Nobody else knows its token, so sweeping it removes exactly what this
+            # write put there and the loser leaves no orphan behind.
+            self._sweep(record.storage_key)
             raise
+
+    def _claim_free_identifier(self, record: FeatureDataset, revision: str | None) -> None:
+        """Claim an identifier no live collection holds, following the dead record it holds while it moves.
+
+        A deletion that is still running, rather than one that crashed, is the ordinary reason to find a
+        dead record, and it swaps its mark for a tombstone while this write is putting its bytes down.
+        Losing the compare-and-swap to that is not losing the identifier: nothing owns the name, and the
+        generation this write minted is untouched, because no record names it and nobody else knows its
+        token. The claim is therefore retried against whatever the record has become, and only a live
+        record means another writer really won the name.
+        """
+        identifier = record.dataset_identifier
+        for _ in range(MAXIMUM_CLAIM_ATTEMPTS):
+            try:
+                if revision is None:
+                    self._catalog.put(record, create=True)
+                else:
+                    # A dead record is replaced under compare-and-swap rather than deleted and created
+                    # again, so a writer that claimed the identifier in between is refused here instead
+                    # of having its record overwritten by this one.
+                    self._catalog.put(record, revision=revision)
+                return
+            except (DatasetAlreadyExistsError, PublicationConflictError) as lost:
+                revision = self._dead_record_revision(identifier, lost)
+        raise PublicationConflictError(
+            f"collection {identifier!r} changed hands during every one of the "
+            f"{MAXIMUM_CLAIM_ATTEMPTS} attempts to claim it",
+        )
+
+    def _dead_record_revision(self, identifier: str, lost: StorageError) -> str | None:
+        """Return the revision of the dead record an identifier holds, refusing one a live collection holds."""
+        entry = self._catalog.get_entry(identifier)
+        if entry is None:
+            # A record dropped before tombstones existed, so a conditional create claims the name again.
+            return None
+        if entry.record.is_live:
+            raise already_exists(identifier) from lost
+        if entry.record.is_deleting:
+            # A deleter reserved the record again, or the identifier was written and marked for deletion
+            # while this write was running. Either way the generation that mark names has to be emptied
+            # before the mark is replaced, exactly as a takeover does. It is never the generation of
+            # this write, because no record names that one yet.
+            self._sweep(entry.record.storage_key)
+        return entry.revision
 
     def _sweep(self, storage_prefix: str) -> int:
         """Delete every object below one storage prefix and forget the pointer etag of this thread."""
@@ -766,16 +850,16 @@ class VectorCollectionStore:
                 # A writer changed the record between the read and this compare-and-swap. Sweeping now
                 # would erase the versions that writer just published while its record stayed live, so
                 # the reservation is reacquired against the record it left behind instead.
-                refreshed = self._existing_collection(identifier)
+                refreshed = self._reservable_entry(identifier, current.record.storage_key)
                 if refreshed is None:
                     return None
                 current = refreshed
                 continue
             # The mark landed, but the record it landed on need not still be there: another deleter can
-            # have seen it, finished the deletion and dropped the record, leaving a writer free to
-            # create the collection again under the same name. Only a record still marked as deleting
-            # is this call's reservation; a live one is the new collection of whoever wrote it.
-            reserved = self._existing_collection(identifier)
+            # have seen it, finished the deletion and tombstoned the record, leaving a writer free to
+            # create the collection again under the same name. Only a record still marked as deleting,
+            # in the generation this call read, is its reservation.
+            reserved = self._reservable_entry(identifier, current.record.storage_key)
             if reserved is None or not reserved.record.is_deleting:
                 return None
             return reserved
@@ -784,30 +868,31 @@ class VectorCollectionStore:
             f"{MAXIMUM_DELETION_ATTEMPTS} attempts to reserve its deletion",
         )
 
-    def _drop_reserved_record(self, identifier: str, reserved: str) -> None:
-        """Delete the record of a swept collection, leaving alone one that was reclaimed in the meantime."""
+    def _reservable_entry(self, identifier: str, storage_prefix: str) -> CollectionEntry | None:
+        """Re-read the record of one generation, or None once the deletion of that generation is over."""
         entry = self._catalog.get_entry(identifier)
-        # obstore exposes no conditional delete on any of the three backends, so this is a read
-        # followed by a delete rather than one compare-and-swap. It refuses the outcome that matters
-        # in the common case: erasing the record of a collection that was written again while this
-        # deletion was sweeping.
-        #
-        # One window is left, and it is narrow rather than harmless. Between this read and the delete
-        # below, another actor can finish the deletion, drop the record and let a writer create the
-        # collection again; the delete then removes that writer's record. No bytes are lost, because
-        # the sweep above only ever emptied this deletion's own generation and the new versions are
-        # untouched, but the objects are left unreferenced and the collection answers 404 after a
-        # write that succeeded. Closing it needs a conditional delete, which obstore does not expose,
-        # or never deleting a record at all: a tombstone the next create replaces under
-        # compare-and-swap.
-        if entry is None or entry.revision != reserved:
-            return
-        self._catalog.delete(identifier)
+        if entry is None or not isinstance(entry.record, FeatureDataset):
+            # No record at all is one dropped before tombstones existed, and another item type can only
+            # be a dataset written after somebody else finished this deletion. Neither is ours to sweep.
+            return None
+        if entry.record.is_tombstone or entry.record.storage_key != storage_prefix:
+            # Somebody else finished this deletion, and what stands under the identifier now is theirs:
+            # a tombstone, or a collection written into a generation this call never reserved.
+            return None
+        return CollectionEntry(record=entry.record, revision=entry.revision)
 
-    def _complete_deletion(self, entry: CollectionEntry) -> None:
-        """Finish a deletion that stopped half way, emptying only the generation its record names."""
-        self._sweep(entry.record.storage_key)
-        self._drop_reserved_record(entry.record.dataset_identifier, entry.revision)
+    def _tombstone(self, reserved: CollectionEntry) -> None:
+        """Replace the record of a swept collection with its tombstone, under the revision of its mark."""
+        tombstone = reserved.record.model_copy(
+            update={"lifecycle": DatasetLifecycle.DELETED, "updated_at": current_timestamp()},
+        )
+        try:
+            self._catalog.put(tombstone, revision=reserved.revision)
+        except PublicationConflictError:
+            # Somebody else moved the record on: another deleter tombstoned this deletion itself, or a
+            # writer took it over and swapped the mark for a collection of its own. Either way the
+            # record is no longer this call's to write, and the collection it named is gone regardless.
+            return
 
     def _guard_unqualified_read(
         self,

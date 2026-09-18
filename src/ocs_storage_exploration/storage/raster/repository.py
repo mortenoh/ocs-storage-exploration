@@ -20,6 +20,7 @@ from pyproj import CRS
 from zarr.errors import GroupNotFoundError
 
 from ocs_storage_exploration.storage.addresses import StorageAddress
+from ocs_storage_exploration.storage.catalog import already_exists, no_such_record
 from ocs_storage_exploration.storage.errors import (
     DatasetAlreadyExistsError,
     DatasetNotFoundError,
@@ -29,6 +30,7 @@ from ocs_storage_exploration.storage.errors import (
     QuerySizeGuardError,
     RasterContractError,
     SnapshotNotFoundError,
+    StorageError,
 )
 from ocs_storage_exploration.storage.failures import backend_transport_failures
 from ocs_storage_exploration.storage.keys import (
@@ -81,7 +83,9 @@ DEFAULT_CREATE_MESSAGE: Final[str] = "initial write"
 DEFAULT_APPEND_MESSAGE: Final[str] = "append"
 CUBE_DIMENSION_COUNT: Final[int] = 3
 MAXIMUM_DELETION_ATTEMPTS: Final[int] = 4
+MAXIMUM_CLAIM_ATTEMPTS: Final[int] = 4
 BBOX_VALUE_COUNT: Final[int] = 4
+TITLE_METADATA_KEY: Final[str] = "title"
 LICENSE_METADATA_KEY: Final[str] = "license"
 ATTRIBUTION_METADATA_KEY: Final[str] = "attribution"
 # How far a recorded bbox may sit from the one measured on the coordinates of a store, as a fraction of
@@ -118,6 +122,22 @@ class CoverageEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class CoverageWriteTarget:
+    """What a write claims at an identifier: the revision it swaps against and the record it replaces.
+
+    ``revision`` is None only when the identifier holds no record at all, which is the one case a write
+    claims with a conditional create. Every other write replaces a record under compare-and-swap: the
+    live coverage an overwrite or an append reads, or a dead one - a tombstone, or the mark of a
+    deletion this write finished - that it takes the identifier back from. ``replaced`` is set only in
+    the first of those, so a create over a dead record is a first write in every respect but the swap:
+    a generation of its own, a fresh ``created_at``, no overwrite flag required, and nothing inherited.
+    """
+
+    revision: str | None = None
+    replaced: CoverageDataset | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RasterReadHandle:
     """Open dataset of one raster snapshot together with the snapshot and group it was read from."""
 
@@ -146,8 +166,10 @@ class RasterStoreDescription:
     # The root attributes of the snapshot, which are the ones its grid was written with plus whatever
     # the source of an ingest carried. The two GeoZarr keys the writer stamps itself are left out.
     attributes: dict[str, str]
-    # The terms the bytes of this snapshot were written under, taken from the commit that wrote them
-    # rather than from the record, which describes the newest write and not the snapshot being read.
+    # The title and the terms the bytes of this snapshot were written under, taken from the commit
+    # that wrote them rather than from the record, which describes the newest write and not the
+    # snapshot being read. A snapshot committed before a write carried its title reports None.
+    title: str | None = None
     license: str | None = None
     attribution: str | None = None
 
@@ -207,14 +229,14 @@ class RasterRepository:
         """Write a coverage onto the main branch and record it in the catalog."""
         identifier = validate_dataset_identifier(dataset_identifier)
         self._assert_cube_size(identifier, grid.shape, _incoming_timestep_count(dataset, grid.time_dimension))
-        existing = self._existing_entry(identifier, overwrite=overwrite)
+        target = self._write_target(identifier, overwrite=overwrite)
         prepared = self._prepare(grid, dataset)
         # A first write mints a generation of its own; an overwrite stays in the generation of the
         # record it read, which is the only thing that says where the live repository of a coverage is.
-        if existing is None:
+        if target.replaced is None:
             storage_prefix = raster_generation_prefix(identifier, mint_generation_token())
         else:
-            storage_prefix = existing.record.storage_key
+            storage_prefix = target.replaced.storage_key
         record = self._build_record(
             identifier,
             storage_prefix,
@@ -223,7 +245,7 @@ class RasterRepository:
             title=title,
             license=license,
             attribution=attribution,
-            existing=None if existing is None else existing.record,
+            existing=target.replaced,
         )
         repository = self._open_repository(record)
         try:
@@ -236,17 +258,19 @@ class RasterRepository:
                 record=record,
                 # A first write claims the record, an overwrite replaces the one it read: either way a
                 # concurrent writer that got there first is refused rather than overwritten.
-                revision=None if existing is None else existing.revision,
-                # The terms travel with the commit, so a published snapshot keeps advertising the ones it
-                # was written under even after a draft replaces the record with other ones.
-                metadata=_commit_metadata(record.license, record.attribution),
-                replaced=None if existing is None else existing.record,
+                target=target,
+                # The title and the terms travel with the commit, so a published snapshot keeps
+                # advertising the ones it was written under even after a draft replaces the record.
+                metadata=_commit_metadata(record.title, record.license, record.attribution),
             )
-        except DatasetAlreadyExistsError:
-            if existing is None:
-                # Another writer claimed the identifier first, so the generation minted above will never
-                # be named by a record. Nobody else knows its token, so sweeping it removes exactly the
-                # repository this write created and the loser leaves no orphan behind.
+        except (DatasetAlreadyExistsError, PublicationConflictError):
+            if target.replaced is None:
+                # Another writer claimed the identifier first, or it changed hands under every attempt,
+                # so the generation minted above will never be named by a record. With nothing replaced
+                # the conflict can only be the record claim: a first write cannot lose the fast-forward
+                # onto `main`, because it was staged in a generation nobody else knows the token of.
+                # That is also why sweeping removes exactly the repository this write created, and why
+                # the loser leaves no orphan behind.
                 self._sweep(storage_prefix)
             raise
         return self._write_result(record, snapshot_identifier)
@@ -278,11 +302,10 @@ class RasterRepository:
             message=message,
             apply=lambda session: to_icechunk(prepared, session, append_dim=grid.time_dimension),
             record=updated,
-            revision=entry.revision,
-            # An append declares no terms of its own, so it extends the snapshot it grows under the
-            # terms that snapshot already carries.
+            target=CoverageWriteTarget(revision=entry.revision, replaced=record),
+            # An append declares no title or terms of its own, so it extends the snapshot it grows
+            # under the ones that snapshot already carries.
             metadata=self._snapshot_metadata(repository, previous),
-            replaced=record,
         )
         return self._write_result(updated, snapshot_identifier)
 
@@ -295,9 +318,8 @@ class RasterRepository:
         message: str,
         apply: Callable[[icechunk.Session], None],
         record: CoverageDataset,
-        revision: str | None,
+        target: CoverageWriteTarget,
         metadata: dict[str, Any] | None = None,
-        replaced: CoverageDataset | None = None,
     ) -> str:
         """Commit a write on a scratch branch, claim the record, then fast-forward the draft branch onto it."""
         branch = f"{SCRATCH_BRANCH_PREFIX}{uuid4().hex}"
@@ -308,10 +330,7 @@ class RasterRepository:
             snapshot_identifier = session.commit(message, metadata)
             # The catalog claim is the arbiter of the race, and it runs before anything a reader can
             # see moves: a writer that loses it leaves the draft branch exactly where it found it.
-            if revision is None:
-                self._catalog.put(record, create=True)
-            else:
-                self._catalog.put(record, revision=revision)
+            self._claim_record(record, target)
             try:
                 with _publication_conflicts(
                     f"draft branch of {dataset_identifier!r} moved while the write was being staged",
@@ -321,12 +340,66 @@ class RasterRepository:
                 # The commit was rejected, so the record just claimed describes data no reader can see.
                 # Putting the replaced record back closes that window at once, and reconciliation
                 # repairs it from the store on its own when this call never gets to run.
-                if replaced is not None:
-                    self._restore_replaced_record(record, replaced)
+                if target.replaced is not None:
+                    self._restore_replaced_record(record, target.replaced)
                 raise
         finally:
             repository.delete_branch(branch)
         return snapshot_identifier
+
+    def _claim_record(self, record: CoverageDataset, target: CoverageWriteTarget) -> None:
+        """Claim the record a write built against whatever the identifier held when the write started."""
+        if target.replaced is not None:
+            # An overwrite or an append replaces the record it read, under its revision. Losing that is
+            # a conflict rather than a taken identifier: the coverage is still there, and still the
+            # coverage of whoever moved it on.
+            self._catalog.put(record, revision=target.revision)
+            return
+        self._claim_free_identifier(record, target.revision)
+
+    def _claim_free_identifier(self, record: CoverageDataset, revision: str | None) -> None:
+        """Claim an identifier no live coverage holds, following the dead record it holds while it moves.
+
+        A deletion that is still running, rather than one that crashed, is the ordinary reason to find a
+        dead record, and it swaps its mark for a tombstone while this write is putting its bytes down.
+        Losing the compare-and-swap to that is not losing the identifier: nothing owns the name, and the
+        generation this write minted is untouched, because no record names it and nobody else knows its
+        token. The claim is therefore retried against whatever the record has become, and only a live
+        record means another writer really won the name.
+        """
+        identifier = record.dataset_identifier
+        for _ in range(MAXIMUM_CLAIM_ATTEMPTS):
+            try:
+                if revision is None:
+                    self._catalog.put(record, create=True)
+                else:
+                    # A dead record is replaced under compare-and-swap rather than deleted and created
+                    # again, so a writer that claimed the identifier in between is refused here instead
+                    # of having its record overwritten by this one.
+                    self._catalog.put(record, revision=revision)
+                return
+            except (DatasetAlreadyExistsError, PublicationConflictError) as lost:
+                revision = self._dead_record_revision(identifier, lost)
+        raise PublicationConflictError(
+            f"coverage {identifier!r} changed hands during every one of the "
+            f"{MAXIMUM_CLAIM_ATTEMPTS} attempts to claim it",
+        )
+
+    def _dead_record_revision(self, dataset_identifier: str, lost: StorageError) -> str | None:
+        """Return the revision of the dead record an identifier holds, refusing one a live coverage holds."""
+        entry = self._catalog.get_entry(dataset_identifier)
+        if entry is None:
+            # A record dropped before tombstones existed, so a conditional create claims the name again.
+            return None
+        if entry.record.is_live:
+            raise already_exists(dataset_identifier) from lost
+        if entry.record.is_deleting:
+            # A deleter reserved the record again, or the identifier was written and marked for deletion
+            # while this write was running. Either way the generation that mark names has to be emptied
+            # before the mark is replaced, exactly as a takeover does. It is never the generation of
+            # this write, because no record names that one yet.
+            self._sweep(entry.record.storage_key)
+        return entry.revision
 
     def _restore_replaced_record(self, rejected: CoverageDataset, replaced: CoverageDataset) -> None:
         """Put the record a rejected write replaced back, leaving alone one a later writer has moved on."""
@@ -528,13 +601,16 @@ class RasterRepository:
             "timestep_count": description.timestep_count,
             "variables": description.variables,
             "temporal": temporal,
-            # The terms travel with the commit, so the draft snapshot carries the ones the write that
-            # was actually accepted declared, and a rejected one leaves its own behind in the record.
+            # The title and the terms travel with the commit, so the draft snapshot carries the ones
+            # the write that was actually accepted declared, and a rejected one leaves its own behind
+            # in the record.
             "license": description.license,
             "attribution": description.attribution,
         }
-        # The title is the one field an overwrite changes that the store never holds, so a record whose
-        # title a rejected overwrite replaced keeps the replacement rather than the title it had.
+        if description.title is not None:
+            # A snapshot committed before a write carried its title holds none, and a record whose
+            # title cannot be read back is left alone rather than blanked.
+            facts["title"] = description.title
         stale = {name: value for name, value in facts.items() if getattr(record, name) != value}
         stored_grid = _grid_from_description(description)
         if stored_grid is not None and not _grid_matches(record.grid, stored_grid):
@@ -588,12 +664,17 @@ class RasterRepository:
             return {str(key): value for key, value in handle.dataset.attrs.items()}
 
     def delete(self, dataset_identifier: str) -> None:
-        """Mark the record of a coverage as deleting, sweep the generation it names, then drop it.
+        """Mark the record of a coverage as deleting, sweep the generation it names, then tombstone it.
 
         The record goes last rather than first: while it is there and marked, a concurrent writer is
         told a deletion is running instead of finding no record at all and writing into a prefix that
         is about to be emptied. A deletion that stops half way leaves the marked record behind, and
         deleting again, or creating the coverage again, finishes it.
+
+        The record is never removed. A finished deletion swaps the mark it holds for a tombstone, which
+        is the same record under ``lifecycle: deleted``, so every transition of a catalog record is a
+        compare-and-swap even though obstore exposes no conditional delete. A deleter that loses that
+        swap leaves the record alone: whoever moved it on owns whatever stands under the name now.
 
         Nothing is ever swept without the reservation, and the sweep only ever empties the storage
         prefix of the record that reservation was taken on. A coverage created again under the same
@@ -601,7 +682,8 @@ class RasterRepository:
         generation empty and leaves the new repository untouched.
         """
         identifier = validate_dataset_identifier(dataset_identifier)
-        # Read raw: a record already marked as deleting is exactly what this call is here to finish.
+        # Read raw: a record already marked as deleting is exactly what this call is here to finish,
+        # while a tombstone stands for a coverage that is already gone and is refused as absent.
         entry = self._coverage_entry(identifier)
         reserved = self._reserve_deletion(entry)
         if reserved is None:
@@ -610,7 +692,7 @@ class RasterRepository:
             # sweeping it would erase a live coverage this deletion never reserved.
             return
         self._sweep(reserved.record.storage_key)
-        self._drop_reserved_record(identifier, reserved.revision)
+        self._tombstone(reserved)
 
     def _open_repository(self, record: CoverageDataset) -> icechunk.Repository:
         """Open the Icechunk repository the generation of a record names, creating it when it does not exist."""
@@ -621,41 +703,49 @@ class RasterRepository:
                 config=self._backend.repository_config(),
             )
 
-    def _existing_coverage(self, dataset_identifier: str) -> CoverageEntry | None:
-        """Read the coverage entry of a dataset, or None when the catalog holds no record for it."""
+    def _write_target(self, dataset_identifier: str, *, overwrite: bool) -> CoverageWriteTarget:
+        """Return what a create claims at an identifier, finishing a deletion it finds under way first."""
         entry = self._catalog.get_entry(dataset_identifier)
         if entry is None:
-            return None
-        if not isinstance(entry.record, CoverageDataset):
-            raise ItemTypeMismatchError(f"dataset {dataset_identifier!r} is not a coverage")
-        return CoverageEntry(record=entry.record, revision=entry.revision)
-
-    def _existing_entry(self, dataset_identifier: str, *, overwrite: bool) -> CoverageEntry | None:
-        """Return the entry being overwritten, refusing an existing dataset unless overwrite is set."""
-        existing = self._existing_coverage(dataset_identifier)
-        if existing is None:
-            return None
-        if existing.record.is_deleting:
+            # Nothing was ever written here, or what was is a record dropped before tombstones existed.
+            return CoverageWriteTarget()
+        if entry.record.is_deleting:
             # The generation that record names is being emptied. Finishing that deletion first is the
             # only way to leave it behind; what follows is a first write, under a generation of its
-            # own, so the sweep of the dead one can never reach the repository written here.
-            self._complete_deletion(existing)
-            return None
+            # own, so the sweep of the dead one can never reach the repository written here. The mark
+            # is swapped straight for the new record rather than tombstoned first, so two writers
+            # taking the same deletion over meet at that one compare-and-swap and one of them wins.
+            self._sweep(entry.record.storage_key)
+            return CoverageWriteTarget(revision=entry.revision)
+        if entry.record.is_tombstone:
+            # A tombstone says only that the identifier was used and swept, whatever item type it was
+            # written for, so it is replaced rather than overwritten and never reaches the item type
+            # check below: a coverage may be created over the tombstone of a vector collection.
+            return CoverageWriteTarget(revision=entry.revision)
+        if not isinstance(entry.record, CoverageDataset):
+            raise ItemTypeMismatchError(f"dataset {dataset_identifier!r} is not a coverage")
         if not overwrite:
             raise DatasetAlreadyExistsError(f"dataset {dataset_identifier!r} already exists")
-        return existing
+        return CoverageWriteTarget(revision=entry.revision, replaced=entry.record)
 
     def _coverage_entry(self, dataset_identifier: str) -> CoverageEntry:
-        """Read the coverage entry of a dataset, including one whose deletion is under way."""
+        """Read the entry of a coverage that still exists, including one whose deletion is under way.
+
+        A tombstone is refused here rather than narrowed: the record a finished deletion leaves behind
+        stands for no dataset at all, so it answers exactly as an absent identifier does, whatever item
+        type it was written for.
+        """
         entry = self._catalog.require_entry(dataset_identifier)
+        if entry.record.is_tombstone:
+            raise no_such_record(dataset_identifier)
         if not isinstance(entry.record, CoverageDataset):
             raise ItemTypeMismatchError(f"dataset {dataset_identifier!r} is not a coverage")
         return CoverageEntry(record=entry.record, revision=entry.revision)
 
     def _require_coverage_entry(self, dataset_identifier: str) -> CoverageEntry:
-        """Read the entry of a live coverage, refusing another item type or a deletion under way."""
+        """Read the entry of a live coverage, refusing another item type, a tombstone or a deletion under way."""
         entry = self._coverage_entry(dataset_identifier)
-        if entry.record.is_deleting:
+        if not entry.record.is_live:
             raise DatasetNotFoundError(f"coverage {dataset_identifier!r} is being deleted")
         return entry
 
@@ -681,16 +771,16 @@ class RasterRepository:
                 # A writer changed the record between the read and this compare-and-swap. Sweeping now
                 # would erase the snapshots that writer just committed while its record stayed live, so
                 # the reservation is reacquired against the record it left behind instead.
-                refreshed = self._existing_coverage(identifier)
+                refreshed = self._reservable_entry(identifier, current.record.storage_key)
                 if refreshed is None:
                     return None
                 current = refreshed
                 continue
             # The mark landed, but the record it landed on need not still be there: another deleter can
-            # have seen it, finished the deletion and dropped the record, leaving a writer free to
-            # create the coverage again under the same name. Only a record still marked as deleting is
-            # this call's reservation; a live one is the new coverage of whoever wrote it.
-            reserved = self._existing_coverage(identifier)
+            # have seen it, finished the deletion and tombstoned the record, leaving a writer free to
+            # create the coverage again under the same name. Only a record still marked as deleting, in
+            # the generation this call read, is its reservation.
+            reserved = self._reservable_entry(identifier, current.record.storage_key)
             if reserved is None or not reserved.record.is_deleting:
                 return None
             return reserved
@@ -699,29 +789,31 @@ class RasterRepository:
             f"{MAXIMUM_DELETION_ATTEMPTS} attempts to reserve its deletion",
         )
 
-    def _drop_reserved_record(self, dataset_identifier: str, reserved: str) -> None:
-        """Delete the record of a swept coverage, leaving alone one that was reclaimed in the meantime."""
+    def _reservable_entry(self, dataset_identifier: str, storage_prefix: str) -> CoverageEntry | None:
+        """Re-read the record of one generation, or None once the deletion of that generation is over."""
         entry = self._catalog.get_entry(dataset_identifier)
-        # obstore exposes no conditional delete on any of the three backends, so this is a read
-        # followed by a delete rather than one compare-and-swap. It refuses the outcome that matters
-        # in the common case: erasing the record of a coverage that was created again while this
-        # deletion was sweeping.
-        #
-        # One window is left, and it is narrow rather than harmless. Between this read and the delete
-        # below, another actor can finish the deletion, drop the record and let a writer create the
-        # coverage again; the delete then removes that writer's record. No bytes are lost, because the
-        # sweep above only ever emptied this deletion's own generation and the new repository is
-        # untouched, but the objects are left unreferenced and the coverage answers 404 after a write
-        # that succeeded. Closing it needs a conditional delete, which obstore does not expose, or
-        # never deleting a record at all: a tombstone the next create replaces under compare-and-swap.
-        if entry is None or entry.revision != reserved:
-            return
-        self._catalog.delete(dataset_identifier)
+        if entry is None or not isinstance(entry.record, CoverageDataset):
+            # No record at all is one dropped before tombstones existed, and another item type can only
+            # be a dataset written after somebody else finished this deletion. Neither is ours to sweep.
+            return None
+        if entry.record.is_tombstone or entry.record.storage_key != storage_prefix:
+            # Somebody else finished this deletion, and what stands under the identifier now is theirs:
+            # a tombstone, or a coverage created into a generation this call never reserved.
+            return None
+        return CoverageEntry(record=entry.record, revision=entry.revision)
 
-    def _complete_deletion(self, entry: CoverageEntry) -> None:
-        """Finish a deletion that stopped half way, emptying only the generation its record names."""
-        self._sweep(entry.record.storage_key)
-        self._drop_reserved_record(entry.record.dataset_identifier, entry.revision)
+    def _tombstone(self, reserved: CoverageEntry) -> None:
+        """Replace the record of a swept coverage with its tombstone, under the revision of its mark."""
+        tombstone = reserved.record.model_copy(
+            update={"lifecycle": DatasetLifecycle.DELETED, "updated_at": current_timestamp()},
+        )
+        try:
+            self._catalog.put(tombstone, revision=reserved.revision)
+        except PublicationConflictError:
+            # Somebody else moved the record on: another deleter tombstoned this deletion itself, or a
+            # writer took it over and swapped the mark for a coverage of its own. Either way the record
+            # is no longer this call's to write, and the coverage it named is gone regardless.
+            return
 
     def _require_coverage(self, dataset_identifier: str) -> CoverageDataset:
         """Read the coverage record of a dataset or raise."""
@@ -958,6 +1050,7 @@ class RasterRepository:
             data_type=str(numpy.dtype(leading.dtype)),
             nodata_value=self._nodata_value(leading),
             attributes=_store_attributes(dataset),
+            title=_metadata_text(metadata, TITLE_METADATA_KEY),
             license=_metadata_text(metadata, LICENSE_METADATA_KEY),
             attribution=_metadata_text(metadata, ATTRIBUTION_METADATA_KEY),
         )
@@ -1247,9 +1340,13 @@ class RasterRepository:
         )
 
 
-def _commit_metadata(license: str | None, attribution: str | None) -> dict[str, Any]:
-    """Return the commit metadata of a write, carrying only the terms the write actually declares."""
-    declared = {LICENSE_METADATA_KEY: license, ATTRIBUTION_METADATA_KEY: attribution}
+def _commit_metadata(title: str | None, license: str | None, attribution: str | None) -> dict[str, Any]:
+    """Return the commit metadata of a write, carrying only the title and terms the write declares."""
+    declared = {
+        TITLE_METADATA_KEY: title,
+        LICENSE_METADATA_KEY: license,
+        ATTRIBUTION_METADATA_KEY: attribution,
+    }
     return {name: value for name, value in declared.items() if value is not None}
 
 

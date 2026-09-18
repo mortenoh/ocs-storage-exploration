@@ -184,7 +184,9 @@ def test_a_record_is_live_unless_a_deletion_marked_it() -> None:
     record = build_coverage()
 
     assert record.lifecycle is DatasetLifecycle.LIVE
+    assert record.is_live is True
     assert record.is_deleting is False
+    assert record.is_tombstone is False
 
 
 def test_a_deleting_record_round_trips_through_the_dataset_union() -> None:
@@ -194,7 +196,21 @@ def test_a_deleting_record_round_trips_through_the_dataset_union() -> None:
 
     assert restored.lifecycle is DatasetLifecycle.DELETING
     assert restored.is_deleting is True
+    assert restored.is_live is False
+    assert restored.is_tombstone is False
     assert DATASET_ADAPTER.dump_python(marked, mode="json")["lifecycle"] == "deleting"
+
+
+def test_a_tombstone_round_trips_through_the_dataset_union() -> None:
+    tombstone = build_feature().model_copy(update={"lifecycle": DatasetLifecycle.DELETED})
+
+    restored = DATASET_ADAPTER.validate_json(DATASET_ADAPTER.dump_json(tombstone))
+
+    assert restored.lifecycle is DatasetLifecycle.DELETED
+    assert restored.is_tombstone is True
+    assert restored.is_live is False
+    assert restored.is_deleting is False
+    assert DATASET_ADAPTER.dump_python(tombstone, mode="json")["lifecycle"] == "deleted"
 
 
 def test_an_unknown_lifecycle_is_refused() -> None:

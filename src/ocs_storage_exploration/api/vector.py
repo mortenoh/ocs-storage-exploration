@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import partial
 from typing import Annotated, Final
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Response, status
 
 from ocs_storage_exploration.api.dependencies import AsyncStorageServiceDependency, SettingsDependency
 from ocs_storage_exploration.api.parameters import (
@@ -32,6 +32,10 @@ router = APIRouter(prefix="/api/v1/vector", tags=["vector"])
 # worker threads and the event loop stays free. See docs/architecture.md for the threading model.
 
 MAXIMUM_FEATURE_LIMIT: Final[int] = 100_000
+# The media type this read has always answered with, and the one the docs name for every endpoint
+# here. GeoJSON has `application/geo+json` of its own, but nothing promises it, so moving the
+# rendering off the event loop is not the change that starts answering a different type.
+FEATURE_MEDIA_TYPE: Final[str] = "application/json"
 
 FeatureLimitQuery = Annotated[
     int | None, Query(ge=1, le=MAXIMUM_FEATURE_LIMIT, description="How many features to keep")
@@ -76,7 +80,11 @@ async def ingest_vector(
     return await storage.vector.ingest(dataset_identifier, partial(request.to_plan, settings))
 
 
-@router.get("/{dataset_identifier}/features", summary="Read features of a vector collection")
+@router.get(
+    "/{dataset_identifier}/features",
+    summary="Read features of a vector collection",
+    response_model=FeatureCollectionResponse,
+)
 async def read_features(
     dataset_identifier: str,
     storage: AsyncStorageServiceDependency,
@@ -86,14 +94,17 @@ async def read_features(
     columns: ColumnsQuery = None,
     limit: FeatureLimitQuery = None,
     version: VersionQuery = None,
-) -> FeatureCollectionResponse:
+) -> Response:
     """Read features as GeoJSON, keeping the coordinates in the frame the collection was written in."""
     selected = parse_columns(columns)
-    # The GeoJSON conversion is as blocking as the read, so it runs on the same worker thread rather
-    # than on the event loop: a fifty thousand feature answer would otherwise stall every other request.
-    return await storage.vector.read_as(
+    # The GeoJSON conversion and the JSON encoding are both as blocking as the read, so the worker
+    # thread hands back the finished bytes: returning the model instead left FastAPI dumping,
+    # re-validating and encoding a fifty thousand feature answer on the event loop, which measured
+    # 0.84 seconds with every other request waiting behind it. FastAPI neither validates nor
+    # serialises a Response it is handed, so response_model here is what still documents the body.
+    body: bytes = await storage.vector.read_as(
         dataset_identifier,
-        partial(FeatureCollectionResponse.from_handle, limit=limit),
+        partial(FeatureCollectionResponse.body_from_handle, limit=limit),
         bbox=parse_bbox(bbox),
         bbox_crs=parse_crs(bbox_crs, parameter="bbox-crs") or DEFAULT_CRS,
         where=parse_where(where or []),
@@ -101,6 +112,7 @@ async def read_features(
         limit=limit,
         version=version,
     )
+    return Response(content=body, media_type=FEATURE_MEDIA_TYPE)
 
 
 @router.post("/{dataset_identifier}/publish", summary="Publish a collection version")

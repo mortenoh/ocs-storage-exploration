@@ -100,3 +100,38 @@ def test_deleting_an_unknown_dataset_is_reported_as_missing(populated_client: Te
 
     assert response.status_code == 404
     assert response.json()["error"] == "DatasetNotFoundError"
+
+
+def test_a_deleted_dataset_answers_exactly_as_one_that_never_existed(populated_client: TestClient) -> None:
+    assert populated_client.delete(f"/api/v1/datasets/{COVERAGE}").status_code == 204
+    assert populated_client.delete(f"/api/v1/datasets/{COLLECTION}").status_code == 204
+
+    # A deletion leaves a tombstone behind rather than removing the record, and a tombstone is not a
+    # dataset: every reader, publisher and deleter answers for it as for an identifier never used.
+    for identifier in (COVERAGE, COLLECTION, "absent"):
+        assert populated_client.get(f"/api/v1/datasets/{identifier}").status_code == 404
+        assert populated_client.delete(f"/api/v1/datasets/{identifier}").status_code == 404
+        assert populated_client.get(f"/stac/collections/{identifier}").status_code == 404
+    for identifier in (COVERAGE, "absent"):
+        assert populated_client.get(f"/api/v1/raster/{identifier}/query").status_code == 404
+        assert populated_client.get(f"/api/v1/raster/{identifier}/versions").status_code == 404
+        assert populated_client.post(f"/api/v1/raster/{identifier}/publish").status_code == 404
+    for identifier in (COLLECTION, "absent"):
+        assert populated_client.get(f"/api/v1/vector/{identifier}/features").status_code == 404
+        assert populated_client.post(f"/api/v1/vector/{identifier}/publish").status_code == 404
+    assert populated_client.get("/api/v1/datasets").json()["items"] == []
+    assert populated_client.get("/stac/collections").json()["collections"] == []
+
+
+def test_a_dataset_can_be_deleted_recreated_and_deleted_again(populated_client: TestClient) -> None:
+    assert populated_client.delete(f"/api/v1/datasets/{COVERAGE}").status_code == 204
+
+    # No overwrite flag: a tombstone is replaced by a first write rather than overwritten by one.
+    assert populated_client.post(f"/api/v1/raster/{COVERAGE}", json=RASTER_BODY).status_code == 201
+
+    assert populated_client.get(f"/api/v1/raster/{COVERAGE}/query").status_code == 200
+    assert [item["dataset_identifier"] for item in populated_client.get("/api/v1/datasets").json()["items"]] == sorted(
+        (COLLECTION, COVERAGE),
+    )
+    assert populated_client.delete(f"/api/v1/datasets/{COVERAGE}").status_code == 204
+    assert populated_client.get(f"/api/v1/datasets/{COVERAGE}").status_code == 404

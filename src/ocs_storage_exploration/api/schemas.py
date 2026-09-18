@@ -19,8 +19,12 @@ from ocs_storage_exploration.storage.errors import (
     RasterContractError,
 )
 from ocs_storage_exploration.storage.raster import TimeStep, build_synthetic_cube, build_timestamps
+from ocs_storage_exploration.storage.raster.grid import assert_variable_names_available
 from ocs_storage_exploration.storage.raster.ingest import (
     DEFAULT_FILENAME_DATE_PATTERN,
+    DEFAULT_TIME_DIMENSION,
+    DEFAULT_X_DIMENSION,
+    DEFAULT_Y_DIMENSION,
     RasterIngestPlan,
     build_raster_ingest_plan,
 )
@@ -55,6 +59,23 @@ def validate_crs(value: str) -> str:
         require_crs(value)
     except CrsError as error:
         raise ValueError(f"unknown coordinate reference system: {value!r}") from error
+    return value
+
+
+def validate_variable_name(value: str, *, time_dimension: str, y_dimension: str, x_dimension: str) -> str:
+    """Refuse a data variable name that a coordinate of the written coverage already takes."""
+    # The engine refuses the same names when it builds a cube or normalises a source, and stays the
+    # second line. Calling its own check here rather than restating its reserved names is what keeps
+    # the request boundary and the engine from drifting apart.
+    try:
+        assert_variable_names_available(
+            [value],
+            time_dimension=time_dimension,
+            y_dimension=y_dimension,
+            x_dimension=x_dimension,
+        )
+    except RasterContractError as error:
+        raise ValueError(error.message) from error
     return value
 
 
@@ -121,6 +142,20 @@ class CreateRasterRequest(BaseModel):
         """Trim the attribution string, treating a blank one as absent."""
         return normalise_attribution(value)
 
+    @model_validator(mode="after")
+    def check_variable(self) -> Self:
+        """Refuse a variable name the coordinates of the grid this request writes already take."""
+        # The grid this asks is the one the write uses, so the reserved names are the request's own
+        # dimension names rather than a copy of the defaults that would drift away from them.
+        grid = self.to_grid()
+        validate_variable_name(
+            self.variable,
+            time_dimension=grid.time_dimension,
+            y_dimension=grid.y_dimension,
+            x_dimension=grid.x_dimension,
+        )
+        return self
+
     def to_grid(self) -> GridSpecification:
         """Build the grid of this request, recording the time step so an append can continue the axis."""
         return GridSpecification(
@@ -176,6 +211,17 @@ class IngestRasterRequest(BaseModel):
     attribution: str | None = None
     overwrite: bool = False
     publish: bool = False
+
+    @field_validator("variable")
+    @classmethod
+    def check_variable(cls, value: str) -> str:
+        """Refuse a variable name the coordinates an ingested coverage is normalised onto already take."""
+        return validate_variable_name(
+            value,
+            time_dimension=DEFAULT_TIME_DIMENSION,
+            y_dimension=DEFAULT_Y_DIMENSION,
+            x_dimension=DEFAULT_X_DIMENSION,
+        )
 
     @field_validator("license")
     @classmethod
@@ -355,6 +401,13 @@ class FeatureCollectionResponse(FeatureCollection):
                 "truncated": truncated,
             },
         )
+
+    @classmethod
+    def body_from_handle(cls, handle: VectorReadHandle, *, limit: int | None = None) -> bytes:
+        """Render a read handle as the finished response body, so the route serialises nothing afterwards."""
+        # by_alias is what FastAPI would have serialised the model with, so the bytes are the ones the
+        # route answered before the rendering moved here, down to the compact separators.
+        return cls.from_handle(handle, limit=limit).model_dump_json(by_alias=True).encode()
 
 
 class DatasetListResponse(BaseModel):

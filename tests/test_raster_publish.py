@@ -18,8 +18,10 @@ from ocs_storage_exploration.storage.errors import (
 )
 from ocs_storage_exploration.storage.protocols import StorageBackend
 from ocs_storage_exploration.storage.raster import (
+    MAIN_BRANCH,
     PUBLISHED_BRANCH,
     CoverageEntry,
+    CoverageWriteTarget,
     RasterRepository,
     TimeStep,
     VersionSelector,
@@ -294,7 +296,7 @@ def test_two_raster_creates_racing_one_record_lose_the_conditional_create(
     racing = RasterRepository(storage_backend, catalog, settings)
     raster_repository.create(IDENTIFIER, grid, build_cube(grid))
     # Freeze the empty catalog the racing writer saw before the first create landed.
-    monkeypatch.setattr(racing, "_existing_entry", lambda dataset_identifier, *, overwrite: None)
+    monkeypatch.setattr(racing, "_write_target", lambda dataset_identifier, *, overwrite: CoverageWriteTarget())
 
     winning = build_cube(grid)
 
@@ -375,6 +377,7 @@ def test_reconcile_rebuilds_the_extents_a_record_disagrees_with(
                 "timestep_count": 99,
                 "variables": ("humidity",),
                 "temporal": TemporalExtent(start=datetime(1999, 1, 1), end=datetime(1999, 1, 2)),
+                "title": "A title no write ever committed",
             },
         ),
         revision=entry.revision,
@@ -387,10 +390,13 @@ def test_reconcile_rebuilds_the_extents_a_record_disagrees_with(
     assert reconciled.temporal is not None
     assert reconciled.temporal.start == START
     assert reconciled.temporal.end == datetime(2020, 1, 3)
+    # The title travels with the commit, so it is read back from the store like everything else.
+    assert reconciled.title == IDENTIFIER
     stored = catalog.require(IDENTIFIER)
     assert isinstance(stored, CoverageDataset)
     assert stored.timestep_count == 3
     assert stored.variables == (VARIABLE,)
+    assert stored.title == IDENTIFIER
 
 
 def build_wider_grid() -> GridSpecification:
@@ -416,7 +422,15 @@ def move_the_draft_branch_under_the_next_write(
         if not raced["done"]:
             raced["done"] = True
             racing = icechunk.Repository.open(storage_backend.icechunk_storage(address))
-            racing.writable_session("main").commit("a racing writer moved the draft branch", allow_empty=True)
+            tip = racing.lookup_branch(MAIN_BRANCH)
+            # A racing writer commits through the engine, so its commit carries the title and the terms
+            # of the snapshot it extends rather than none at all.
+            carried = next(iter(racing.ancestry(snapshot_id=tip))).metadata
+            racing.writable_session(MAIN_BRANCH).commit(
+                "a racing writer moved the draft branch",
+                carried,
+                allow_empty=True,
+            )
         written(dataset, session, **keywords)
 
     monkeypatch.setattr(repository_module, "to_icechunk", to_icechunk_after_a_racing_commit)
@@ -459,11 +473,12 @@ def test_reconcile_restores_the_grid_a_rejected_overwrite_left_behind(
     monkeypatch.setattr(raster_repository, "_restore_replaced_record", lambda rejected, replaced: None)
 
     with pytest.raises(PublicationConflictError):
-        raster_repository.create(IDENTIFIER, wider, build_cube(wider, count=1), overwrite=True)
+        raster_repository.create(IDENTIFIER, wider, build_cube(wider, count=1), overwrite=True, title="Rejected")
 
     stale = catalog.require(IDENTIFIER)
     assert isinstance(stale, CoverageDataset)
     assert stale.grid.shape == wider.shape
+    assert stale.title == "Rejected"
 
     reconciled = raster_repository.reconcile_publication(IDENTIFIER)
 
@@ -472,6 +487,8 @@ def test_reconcile_restores_the_grid_a_rejected_overwrite_left_behind(
     assert reconciled.bbox == grid.bbox
     assert reconciled.timestep_count == 3
     assert reconciled.variables == (VARIABLE,)
+    # The title travels with the commit too, so the one the rejected overwrite wrote is put back.
+    assert reconciled.title == IDENTIFIER
     # The grid an append is checked against is the record's, so a repaired one lets the coverage grow.
     raster_repository.append(IDENTIFIER, build_cube(grid, count=2, start=datetime(2020, 1, 4), seed=1))
     summary = raster_repository.query(IDENTIFIER, version=VersionSelector.DRAFT)
@@ -561,3 +578,44 @@ def test_a_draft_written_under_other_terms_leaves_the_published_snapshot_alone(
     # The record tracks the newest write; each snapshot keeps the terms its own bytes were written under.
     assert raster_repository.describe(IDENTIFIER, version=VersionSelector.PUBLISHED).license == "CC-BY-4.0"
     assert raster_repository.describe(IDENTIFIER, version=VersionSelector.DRAFT).license == "proprietary"
+
+
+def test_reconcile_leaves_the_title_alone_when_the_snapshot_carries_none(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+    catalog: ObjectCatalog,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # A snapshot committed before a write carried its title: the commit metadata holds only the terms.
+    written = repository_module._commit_metadata
+
+    def metadata_without_a_title(title: str | None, license: str | None, attribution: str | None) -> dict[str, Any]:
+        return written(None, license, attribution)
+
+    monkeypatch.setattr(repository_module, "_commit_metadata", metadata_without_a_title)
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid, count=3), title="Written before titles travelled")
+
+    reconciled = raster_repository.reconcile_publication(IDENTIFIER)
+
+    # Nothing can be read back, so the record keeps the title it has rather than being blanked.
+    assert raster_repository.describe(IDENTIFIER, version=VersionSelector.DRAFT).title is None
+    assert reconciled.title == "Written before titles travelled"
+    stored = catalog.require(IDENTIFIER)
+    assert isinstance(stored, CoverageDataset)
+    assert stored.title == "Written before titles travelled"
+
+
+def test_the_commit_metadata_carries_the_title_of_the_snapshot_it_was_written_with(
+    raster_repository: RasterRepository,
+    grid: GridSpecification,
+):
+    created = raster_repository.create(IDENTIFIER, grid, build_cube(grid, count=3), title="Daily temperature")
+    raster_repository.publish(IDENTIFIER, snapshot_identifier=created.snapshot_identifier)
+
+    raster_repository.append(IDENTIFIER, build_cube(grid, count=2, start=datetime(2020, 1, 4), seed=1))
+    raster_repository.create(IDENTIFIER, grid, build_cube(grid, seed=2), overwrite=True, title="Renamed")
+
+    # The title lives on the commit like the terms do: an append carries forward the one it extends,
+    # and an overwrite leaves the published snapshot advertising the title it was written under.
+    assert raster_repository.describe(IDENTIFIER, version=VersionSelector.PUBLISHED).title == "Daily temperature"
+    assert raster_repository.describe(IDENTIFIER, version=VersionSelector.DRAFT).title == "Renamed"

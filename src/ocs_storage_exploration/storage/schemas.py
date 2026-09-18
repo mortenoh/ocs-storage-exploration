@@ -60,10 +60,11 @@ class ItemType(StrEnum):
 
 
 class DatasetLifecycle(StrEnum):
-    """Whether a record stands for a dataset that exists or for one whose deletion is under way."""
+    """Whether a record stands for a dataset that exists, for one being deleted, or for one that is gone."""
 
     LIVE = "live"
     DELETING = "deleting"
+    DELETED = "deleted"
 
 
 class StorageFormat(StrEnum):
@@ -176,7 +177,8 @@ class DatasetBase(BaseModel):
     storage_key: str
     schema_version: str = "1"
     # A deletion marks the record before it sweeps the objects, so the record is what tells a
-    # concurrent writer that the prefix it is about to write into is being emptied.
+    # concurrent writer that the prefix it is about to write into is being emptied, and it tombstones
+    # the record afterwards rather than deleting it, so every transition is a compare-and-swap.
     lifecycle: DatasetLifecycle = DatasetLifecycle.LIVE
     created_at: datetime = Field(default_factory=current_timestamp)
     updated_at: datetime = Field(default_factory=current_timestamp)
@@ -186,9 +188,19 @@ class DatasetBase(BaseModel):
     publication: Publication = Field(default_factory=Publication)
 
     @property
+    def is_live(self) -> bool:
+        """Report whether this record stands for a dataset a reader is allowed to see."""
+        return self.lifecycle is DatasetLifecycle.LIVE
+
+    @property
     def is_deleting(self) -> bool:
         """Report whether this record stands for a deletion under way rather than a live dataset."""
         return self.lifecycle is DatasetLifecycle.DELETING
+
+    @property
+    def is_tombstone(self) -> bool:
+        """Report whether this record is the tombstone a finished deletion left behind."""
+        return self.lifecycle is DatasetLifecycle.DELETED
 
     @field_validator("storage_key")
     @classmethod

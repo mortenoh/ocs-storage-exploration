@@ -296,7 +296,11 @@ def test_delete_marks_the_record_before_it_sweeps_the_repository(
     assert marked is not None
     assert marked.lifecycle is DatasetLifecycle.DELETING
     assert marked.is_deleting is True
-    assert catalog.get(IDENTIFIER) is None
+    # The record outlives the dataset as a tombstone, and a tombstone answers as an absent identifier.
+    tombstone = catalog.require(IDENTIFIER)
+    assert tombstone.lifecycle is DatasetLifecycle.DELETED
+    assert tombstone.is_tombstone is True
+    assert catalog.list_datasets() == []
     with pytest.raises(DatasetNotFoundError), raster_repository.read(IDENTIFIER, version=VersionSelector.DRAFT):
         pass
 
@@ -327,7 +331,7 @@ def test_a_create_after_a_deletion_that_crashed_mid_sweep_inherits_no_history(
     assert len(raster_repository.versions(IDENTIFIER)) == 2
     record = catalog.require(IDENTIFIER)
     assert isinstance(record, CoverageDataset)
-    assert record.is_deleting is False
+    assert record.is_live is True
     assert record.timestep_count == 1
 
 
@@ -342,7 +346,8 @@ def test_a_second_delete_finishes_a_deletion_that_stopped_before_its_sweep(
 
     raster_repository.delete(IDENTIFIER)
 
-    assert catalog.get(IDENTIFIER) is None
+    assert catalog.require(IDENTIFIER).is_tombstone is True
+    assert catalog.list_datasets() == []
     assert storage_backend.list_keys(storage_backend.address(RASTER_PREFIX, IDENTIFIER)) == []
 
 

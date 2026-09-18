@@ -408,4 +408,5 @@ async def test_a_dataset_being_deleted_is_gone_for_readers_but_can_still_be_dele
     deleted = await populated.delete_dataset(COLLECTION)
 
     assert deleted.dataset_identifier == COLLECTION
-    assert await populated.catalog.get(COLLECTION) is None
+    tombstone = await populated.catalog.require(COLLECTION)
+    assert tombstone.is_tombstone is True

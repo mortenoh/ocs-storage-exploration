@@ -205,6 +205,72 @@ column the demo declares, a re-seeded collection rolled back to version 1, the
 published-only STAC listing with its table row count, and the relative storage
 keys in the records.
 
+**Pass 10: third review.** A third review, run after the demo stacks, found five
+more places where the prototype held in the happy path and not under a second
+actor, an unusual window or a large answer. All five are closed, each with a
+regression test that was red before the fix:
+
+- A deletion never sweeps without its reservation: a lost compare-and-swap is
+  retried, a persistent conflict answers 409, and a record another writer
+  recreated after the mark is left alone rather than swept out from under it.
+- Raster ingest checks the cube guard before any cell of a source is read, so an
+  oversized file is refused rather than loaded and then refused.
+- A longitude window spanning the full circle selects every cell, instead of
+  wrapping onto an empty intersection.
+- A draft STAC asset names the `main` branch, pins the snapshot it describes and
+  carries the matching selector on its API href, so what it advertises and what
+  the href returns cannot disagree.
+- The GeoJSON conversion of a vector read runs on the bounded worker call that
+  produced the handle, through `AsyncVectorCollectionStore.read_as`.
+
+**Pass 11: fourth review.** A fourth review found five more, in the seams the
+third one had just moved. All five are closed the same way:
+
+- Each generation of a dataset gets its own storage prefix, named by the record,
+  so a deletion only sweeps the generation it reserved and can no longer erase a
+  dataset that was created again under the same identifier.
+- Reconciliation restores the grid, the envelope and the terms from the
+  committed snapshot, and a rejected overwrite puts the record it replaced back.
+- Ingest plans resolve on the worker inside the timeout, and a glob is refused
+  where its walk would start rather than after it has been expanded.
+- `spatial_ref` and the grid's own axis names are refused as variable names,
+  because assigning the coordinate would otherwise write over the data variable
+  of the same name and report the coverage as created.
+- Timestamps outside the range a nanosecond time coordinate holds are refused at
+  write, and query bounds outside it are clamped onto it rather than wrapped.
+
+**Pass 12: tombstones, a recoverable title and an answer rendered off the loop.**
+A fifth review found the last window in the deletion protocol, and four smaller
+things around it. All five are closed, each with a regression test that was red
+before the fix:
+
+- A deletion never removes its catalog record. It marks the record, sweeps the
+  one generation that mark names, and then swaps the mark for a tombstone under
+  the revision it holds, so every transition a record makes is a compare-and-swap
+  even though obstore exposes no conditional delete. Dropping the record used to
+  be a read followed by an unconditional delete, which could erase the record of
+  a dataset written again between the two. A tombstone answers 404 exactly as an
+  identifier nothing was ever written under, and the next write of that name
+  replaces it in a generation of its own, inheriting nothing and, because the
+  tombstone is checked before the item type, of either item type.
+- A write that takes over a deletion that is still running keeps the bytes it has
+  already written. The deletion tombstones the mark that write is claiming
+  against, so the claim is re-read and retried against the tombstone rather than
+  answering 409 for an identifier nobody owns. Only a live record means another
+  writer took the name.
+- The title of a coverage travels in the Icechunk commit metadata beside the
+  licence and the attribution, so reconciliation restores the title a rejected
+  overwrite left behind. It was the one field an overwrite changed that the store
+  never held. A snapshot committed before the title travelled carries none, and
+  reconciliation then leaves the record alone rather than blanking it.
+- A feature read is serialised to its response bytes on the bounded worker call
+  that produced the handle, so nothing of a fifty thousand feature answer is
+  encoded on the event loop.
+- A data variable name the coordinates of the grid being written would take is
+  refused at the request boundary, by the engine's own check rather than a copy
+  of its reserved names.
+
+
 ## Next
 
 1. **Fetching as well as reading.** The ingest reads what is already on the
@@ -232,7 +298,24 @@ keys in the records.
    does, so a coarse read does not pay for the full resolution. That is also
    what would make the Zarr media type worth deriving per store rather than
    pinning it, as OCS does with its `profile=multiscales` variant.
-6. **OCS migration steps.** Map the work onto CLIM-555, CLIM-880, CLIM-1067 and
+6. **A tombstone is a one-way step for a bucket.** A record marked
+   `lifecycle: deleted` is a value a binary that predates tombstones cannot
+   validate, so it fails the listing that reads it rather than skipping it. One
+   bucket must therefore not be served by two binaries that disagree about the
+   state, which makes the rollout ordered rather than free: every reader moves
+   before the first deleter does. Nothing in the layout detects the mistake
+   today, and a `schema_version` the reader checks is the candidate guard.
+7. **Tombstones are never purged, and they keep the whole record.** One small
+   JSON object stays behind per identifier ever deleted, and it is the dead
+   record entire: title, attribution, envelope and the rest of the descriptive
+   metadata, although only the lifecycle and the revision are ever read from it.
+   For a dataset deleted because it may not be kept that is the wrong default,
+   and a purge is not the answer, because purging is exactly the unconditional
+   record delete tombstones removed. Blanking everything but the identifier, the
+   item type and the lifecycle is, and it needs a decision about what a tombstone
+   is for: an audit trail of what an identifier used to hold, or nothing but a
+   revision to swap against.
+8. **OCS migration steps.** Map the work onto CLIM-555, CLIM-880, CLIM-1067 and
    CLIM-1068, starting from the call-site mapping table in
    [the unified model](research/unified-model.md#mapping-back-to-ocs). Upgrading
    OCS from icechunk 2.0.5 to 2.2 is a prerequisite rather than a follow-up.

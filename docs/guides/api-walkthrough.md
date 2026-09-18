@@ -336,8 +336,9 @@ curl -s -o /dev/null -X DELETE $BASE/api/v1/datasets/draft-demo
 ```
 
 [The STAC catalog](../concepts/stac-catalog.md) explains what each kind
-advertises, why the media types are the ones they are, and where the coverage
-temporal extent still tracks the record rather than the published snapshot.
+advertises, why the media types are the ones they are, and why the coverage
+temporal extent is read back from the advertised snapshot rather than taken from
+the record.
 
 ## List and delete
 
@@ -371,8 +372,12 @@ curl -s -o /dev/null -w '%{http_code}\n' $BASE/api/v1/datasets/temperature-demo
 404
 ```
 
-The record is deleted before the bytes, so a failure halfway leaves orphan
-objects that a prefix listing finds rather than a record that points at nothing.
+The bytes go before the record, and the record is never deleted: it is marked,
+swept behind, and then replaced by a tombstone, so a failure halfway leaves a
+marked record the next delete or write finishes rather than a prefix nothing
+names. A tombstone answers 404 exactly as an identifier nothing was ever written
+under, and the next write of that name replaces it. See
+[versioning](../concepts/versioning.md).
 
 ## The same walkthrough against rustfs
 

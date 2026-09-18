@@ -110,13 +110,47 @@ def test_an_unknown_coordinate_reference_system_is_refused(client: TestClient) -
 
 
 @pytest.mark.parametrize("reserved", ["spatial_ref", "t", "y", "x"])
-def test_create_refuses_a_variable_a_written_coordinate_takes(client: TestClient, reserved: str) -> None:
+def test_create_refuses_a_variable_a_written_coordinate_takes(
+    client: TestClient, reserved: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Accepting the name wrote the coordinate over the data and answered 201 with no variables at all.
+    # The request model refuses it now, so the answer is the 422 a validator produces rather than the
+    # one the exception handler builds, and the engine that used to raise it is never reached at all.
+    refuse_cube_allocation(monkeypatch)
+
     response = client.post(f"/api/v1/raster/{IDENTIFIER}", json={**CREATE_BODY, "variable": reserved})
 
     assert response.status_code == 422
-    assert response.json()["error"] == "RasterContractError"
+    # The grid a create writes on is decided by the whole request, so the refusal is a model validator
+    # and names the body rather than the field, as the other cross-field validators here do.
+    assert [(error["type"], error["loc"]) for error in response.json()["detail"]] == [("value_error", ["body"])]
+    assert f"variable names ['{reserved}'] are taken" in response.text
     assert client.get(f"/api/v1/datasets/{IDENTIFIER}").status_code == 404
+
+
+@pytest.mark.parametrize("reserved", ["spatial_ref", "t", "y", "x"])
+def test_ingest_refuses_a_variable_a_written_coordinate_takes(client: TestClient, reserved: str) -> None:
+    # The name is applied by renaming what the file carries, so a reserved one is refused here rather
+    # than after the ingest has walked the roots and opened the first source.
+    body = {"files": ["rain.tif"], "variable": reserved, "timestamp": "2024-01-01T00:00:00Z"}
+
+    response = client.post(f"/api/v1/raster/{IDENTIFIER}/ingest", json=body)
+
+    assert response.status_code == 422
+    assert [error["loc"] for error in response.json()["detail"]] == [["body", "variable"]]
+    assert f"variable names ['{reserved}'] are taken" in response.text
+    assert client.get(f"/api/v1/datasets/{IDENTIFIER}").status_code == 404
+
+
+def test_append_keeps_the_variable_of_the_coverage_it_continues(client: TestClient) -> None:
+    # An append carries no variable name to refuse: it continues the series the coverage already holds,
+    # which create checked before it was written, and a name in the body is not a way to rename it.
+    create_coverage(client, publish=True)
+
+    response = client.post(f"/api/v1/raster/{IDENTIFIER}/append", json={"timestep_count": 1, "variable": "t"})
+
+    assert response.status_code == 200, response.text
+    assert client.get(f"/api/v1/datasets/{IDENTIFIER}").json()["variables"] == [VARIABLE]
 
 
 def test_create_refuses_a_start_time_no_time_coordinate_can_hold(client: TestClient) -> None:

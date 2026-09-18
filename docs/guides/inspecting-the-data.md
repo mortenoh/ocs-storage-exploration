@@ -313,8 +313,12 @@ for item in obstore.list(store, "ocs").collect():
     print(item["path"])
 ```
 
-One filesystem detail: deleting a dataset deletes every object below its prefix,
-but obstore deletes objects rather than directories, so the empty
+Two details of a deletion show up here. The catalog record survives it: a delete
+replaces it with a tombstone carrying `"lifecycle": "deleted"` rather than
+removing it, so `catalog/datasets/` keeps one small object per identifier ever
+deleted, which every listing reads and skips. And, on a filesystem, deleting a
+dataset deletes every object below its prefix, but obstore deletes objects rather
+than directories, so the empty
 `raster/{dataset_identifier}/{generation}` and
 `vector/{dataset_identifier}/{generation}` directories are left behind on disk. An object store has no directories, so there is nothing
 equivalent to leave behind there.

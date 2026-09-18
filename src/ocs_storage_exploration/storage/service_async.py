@@ -329,7 +329,7 @@ class AsyncRasterRepository:
         )
 
     async def delete(self, dataset_identifier: str) -> None:
-        """Delete the catalog record of a coverage first, then every object of its repository."""
+        """Mark the record of a coverage, sweep every object of its repository, then tombstone the record."""
         await self._runner.run(
             lambda: self._repository.delete(dataset_identifier),
             description=f"deleting coverage {dataset_identifier!r}",
@@ -459,10 +459,12 @@ class AsyncVectorCollectionStore:
         """Read one version of a collection and turn the handle into a result inside the same bounded call.
 
         Rendering a read is as blocking as the read itself: converting a frame of fifty thousand features
-        into GeoJSON and validating it costs the best part of a second. The builder therefore runs on the
-        worker thread that produced the handle, under the same limiter token and the same timeout, rather
-        than on the event loop of a caller that would block every other request while it converts. The
-        builder is passed in because the storage layer knows nothing of the API schemas it renders into.
+        into GeoJSON, validating it and encoding the answer costs the best part of a second. The builder
+        therefore runs on the worker thread that produced the handle, under the same limiter token and the
+        same timeout, rather than on the event loop of a caller that would block every other request while
+        it converts. A builder that returns the finished bytes leaves nothing of the answer for the caller
+        to serialise afterwards. The builder is passed in because the storage layer knows nothing of the
+        API schemas it renders into.
         """
         return await self._runner.run(
             lambda: build(
@@ -548,7 +550,7 @@ class AsyncVectorCollectionStore:
         )
 
     async def delete(self, collection_identifier: str) -> int:
-        """Delete the catalog record of a collection first, then every object below its prefix."""
+        """Mark the record of a collection, sweep every object below its prefix, then tombstone the record."""
         return await self._runner.run(
             lambda: self._store.delete(collection_identifier),
             description=f"deleting collection {collection_identifier!r}",
@@ -652,7 +654,9 @@ class AsyncStorageService:
         """Read the record of a dataset and delete it through the engine its item type names.
 
         The record is read raw rather than through ``get_dataset``: a deletion that did not finish
-        leaves a record marked as deleting, and deleting again is how that deletion is completed.
+        leaves a record marked as deleting, and deleting again is how that deletion is completed. A
+        tombstone is dispatched the same way and refused by the engine, so deleting a dataset that is
+        already gone answers exactly as deleting an identifier nothing was ever written under does.
         """
         record = await self._catalog.require(dataset_identifier)
         return await self._runner.run(

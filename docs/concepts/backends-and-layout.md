@@ -199,7 +199,7 @@ Each part of the storage package uses exactly what it needs:
 | --- | --- |
 | `RasterRepository` | `icechunk_storage` for every read and write; `delete_prefix` to remove a repository |
 | `VectorCollectionStore` | `parquet_filesystem` and `parquet_path` to write and read Parquet, falling back to obstore plus a `pyarrow.BufferReader` when the filesystem is `None`; obstore for the `current.json` pointer, the per-version `reservation.json` and `metadata.json`, and for listing versions |
-| `ObjectCatalog`, `AsyncObjectCatalog` | obstore only: `put` as a conditional create, an etag compare-and-swap or a plain overwrite, `get`, `delete`, `list` |
+| `ObjectCatalog`, `AsyncObjectCatalog` | obstore only: `put` as a conditional create, an etag compare-and-swap or a plain overwrite, `get`, `list`. There is no `delete`: a deletion tombstones its record instead, so every transition is a compare-and-swap |
 
 The catalogue record and every conditional vector object go through
 `storage/objects.py`, which is the one place that knows how a conditional PUT
@@ -327,7 +327,10 @@ Per-dataset isolation is by prefix rather than by bucket, for three reasons:
   dataset satisfies that without a bucket per dataset.
 - Delete is a prefix sweep: list everything below the dataset prefix and hand the
   keys to a bulk delete. That works the same for a directory and for a bucket
-  prefix, and it is why there is no delete-repository API to miss.
+  prefix, and it is why there is no delete-repository API to miss. The catalog
+  record above it is not swept: it is replaced by a tombstone, because obstore
+  offers no conditional delete and a compare-and-swap is what the next writer of
+  that identifier needs. See [versioning](versioning.md).
 - IAM scopes on prefixes. A reader that may see one dataset gets a policy on
   `{base_prefix}/raster/{dataset_identifier}/*` without a new bucket, and buckets
   are a limited, region-bound, slow-to-create resource.

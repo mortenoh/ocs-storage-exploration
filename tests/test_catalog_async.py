@@ -82,9 +82,6 @@ async def test_missing_records_are_reported(async_catalog: AsyncObjectCatalog) -
     with pytest.raises(DatasetNotFoundError):
         await async_catalog.require_entry("absent")
 
-    with pytest.raises(DatasetNotFoundError):
-        await async_catalog.delete("absent")
-
 
 async def test_records_are_listed_and_filtered_by_item_type(async_catalog: AsyncObjectCatalog) -> None:
     await async_catalog.put(build_coverage())
@@ -152,15 +149,19 @@ async def test_a_stale_revision_loses_the_compare_and_swap(storage_backend: Stor
     assert (await first.require("temperature")).title == "Written by the second catalog"
 
 
-async def test_a_deleted_record_loses_the_compare_and_swap(storage_backend: StorageBackend) -> None:
+async def test_a_tombstoned_record_loses_the_compare_and_swap(storage_backend: StorageBackend) -> None:
     first = AsyncObjectCatalog(storage_backend)
     second = AsyncObjectCatalog(storage_backend)
     await first.put(build_coverage(), create=True)
     entry = await first.require_entry("temperature")
-    await second.delete("temperature")
+    tombstoned = await second.require_entry("temperature")
+    await second.put(
+        tombstoned.record.model_copy(update={"lifecycle": DatasetLifecycle.DELETED}),
+        revision=tombstoned.revision,
+    )
 
     with pytest.raises(PublicationConflictError):
-        await first.put(build_coverage(title="Written after the delete"), revision=entry.revision)
+        await first.put(build_coverage(title="Written after the deletion"), revision=entry.revision)
 
 
 async def test_a_write_is_either_a_create_or_a_compare_and_swap(async_catalog: AsyncObjectCatalog) -> None:
@@ -174,14 +175,6 @@ async def test_a_put_without_a_revision_overwrites_whatever_is_there(async_catal
     await async_catalog.put(build_coverage(title="Forced overwrite"))
 
     assert (await async_catalog.require("temperature")).title == "Forced overwrite"
-
-
-async def test_records_can_be_deleted(async_catalog: AsyncObjectCatalog) -> None:
-    await async_catalog.put(build_coverage())
-
-    await async_catalog.delete("temperature")
-
-    assert await async_catalog.get("temperature") is None
 
 
 def test_the_record_address_is_below_the_base_prefix(async_catalog: AsyncObjectCatalog) -> None:
@@ -206,3 +199,22 @@ async def test_list_datasets_skips_a_record_being_deleted_while_get_still_reads_
     assert [record.dataset_identifier for record in listed] == ["temperature"]
     assert await async_catalog.list_datasets(ItemType.FEATURE) == []
     assert (await async_catalog.require("districts")).is_deleting is True
+
+
+async def test_list_datasets_skips_a_tombstone_while_get_still_reads_it(
+    async_catalog: AsyncObjectCatalog,
+) -> None:
+    await async_catalog.put(build_coverage(), create=True)
+    await async_catalog.put(build_feature(), create=True)
+    entry = await async_catalog.require_entry("districts")
+    await async_catalog.put(
+        entry.record.model_copy(update={"lifecycle": DatasetLifecycle.DELETED}),
+        revision=entry.revision,
+    )
+
+    listed = await async_catalog.list_datasets()
+
+    assert [record.dataset_identifier for record in listed] == ["temperature"]
+    assert await async_catalog.list_datasets(ItemType.FEATURE) == []
+    # The record outlives the dataset, which is what lets the next write replace it under a swap.
+    assert (await async_catalog.require("districts")).is_tombstone is True

@@ -1,4 +1,4 @@
-"""Tests that a deletion never sweeps a prefix it does not hold the reservation for."""
+"""Tests that a deletion sweeps and tombstones only what it still holds the reservation for."""
 
 from __future__ import annotations
 
@@ -13,7 +13,11 @@ import xarray
 from ocs_storage_exploration.settings import Settings
 from ocs_storage_exploration.storage.addresses import StorageAddress
 from ocs_storage_exploration.storage.catalog import ObjectCatalog
-from ocs_storage_exploration.storage.errors import DatasetAlreadyExistsError, PublicationConflictError
+from ocs_storage_exploration.storage.errors import (
+    DatasetAlreadyExistsError,
+    DatasetNotFoundError,
+    PublicationConflictError,
+)
 from ocs_storage_exploration.storage.keys import RASTER_PREFIX, VECTOR_PREFIX, validate_generation_token
 from ocs_storage_exploration.storage.protocols import StorageBackend
 from ocs_storage_exploration.storage.raster import (
@@ -23,6 +27,7 @@ from ocs_storage_exploration.storage.raster import (
     build_synthetic_cube,
     build_timestamps,
 )
+from ocs_storage_exploration.storage.raster.repository import MAXIMUM_CLAIM_ATTEMPTS as RASTER_CLAIM_ATTEMPTS
 from ocs_storage_exploration.storage.raster.repository import MAXIMUM_DELETION_ATTEMPTS as RASTER_DELETION_ATTEMPTS
 from ocs_storage_exploration.storage.schemas import (
     BoundingBox,
@@ -31,7 +36,9 @@ from ocs_storage_exploration.storage.schemas import (
     DatasetLifecycle,
     FeatureDataset,
     GridSpecification,
+    current_timestamp,
 )
+from ocs_storage_exploration.storage.vector.collection import MAXIMUM_CLAIM_ATTEMPTS as VECTOR_CLAIM_ATTEMPTS
 from ocs_storage_exploration.storage.vector.collection import MAXIMUM_DELETION_ATTEMPTS as VECTOR_DELETION_ATTEMPTS
 from ocs_storage_exploration.storage.vector.collection import VectorCollectionStore
 
@@ -50,27 +57,38 @@ class RacingCatalog(ObjectCatalog):
         *,
         before_mark: Callable[[], None] | None = None,
         after_mark: Callable[[], None] | None = None,
-        before_create: Callable[[], None] | None = None,
+        before_claim: Callable[[], None] | None = None,
+        before_tombstone: Callable[[], None] | None = None,
         rounds: int = 1,
+        claim_rounds: int = 1,
     ) -> None:
-        """Bind the catalog to the interferences it runs around each of the first rounds deletion marks."""
+        """Bind the catalog to the interferences it runs around the record transitions it is given."""
         super().__init__(backend)
         self._before_mark = before_mark
         self._after_mark = after_mark
-        self._before_create = before_create
+        self._before_claim = before_claim
+        self._before_tombstone = before_tombstone
         self._remaining = rounds
+        self._claim_rounds = claim_rounds
 
     def put(self, dataset: Dataset, *, revision: str | None = None, create: bool = False) -> None:
-        """Write a record, running the interferences around a deletion mark while it still has rounds left."""
+        """Write a record, running the interference of the transition it stands for before it lands."""
         racing = revision is not None and dataset.is_deleting and self._remaining > 0
         if racing:
             self._remaining -= 1
             if self._before_mark is not None:
                 self._before_mark()
-        if create and self._before_create is not None:
-            # Once only: the interference writes a record of its own, and the write that loses this
-            # create must be free to sweep what it wrote without tripping the interference again.
-            interference, self._before_create = self._before_create, None
+        claiming = create or (revision is not None and dataset.is_live)
+        if claiming and self._claim_rounds > 0 and self._before_claim is not None:
+            # Bounded by claim_rounds, one by default: a write retries a lost claim against whatever
+            # the record has become, and must be free to win that retry, and to sweep what it wrote
+            # when it does not, without tripping the interference again.
+            self._claim_rounds -= 1
+            self._before_claim()
+        if revision is not None and dataset.is_tombstone and self._before_tombstone is not None:
+            # Once only, for the same reason: the interference finishes this deletion itself, and the
+            # tombstone below has to be free to lose its compare-and-swap to whatever it left.
+            interference, self._before_tombstone = self._before_tombstone, None
             interference()
         super().put(dataset, revision=revision, create=create)
         if racing and self._after_mark is not None:
@@ -100,7 +118,7 @@ def live_collection_record(catalog: ObjectCatalog) -> FeatureDataset:
     """Return the record of the test collection, which is the only thing naming its live generation."""
     record = catalog.require(COLLECTION)
     assert isinstance(record, FeatureDataset)
-    assert record.is_deleting is False
+    assert record.is_live is True
     return record
 
 
@@ -108,8 +126,15 @@ def live_coverage_record(catalog: ObjectCatalog) -> CoverageDataset:
     """Return the record of the test coverage, which is the only thing naming its live generation."""
     record = catalog.require(COVERAGE)
     assert isinstance(record, CoverageDataset)
-    assert record.is_deleting is False
+    assert record.is_live is True
     return record
+
+
+def assert_tombstoned(catalog: ObjectCatalog, identifier: str) -> None:
+    """Assert a finished deletion left the tombstone of an identifier behind rather than a dataset."""
+    record = catalog.require(identifier)
+    assert record.is_tombstone is True
+    assert [listed.dataset_identifier for listed in catalog.list_datasets()] == []
 
 
 def assert_stored_below(storage_backend: StorageBackend, record: Dataset, stored: list[str]) -> None:
@@ -132,6 +157,21 @@ def assert_minted_generation(record: Dataset, engine_prefix: str, identifier: st
     engine, name, generation = record.storage_key.split("/")
     assert (engine, name) == (engine_prefix, identifier)
     assert validate_generation_token(generation) == generation
+
+
+def mark_deleting(catalog: ObjectCatalog, identifier: str) -> None:
+    """Leave an identifier in the state a deletion that stopped before its sweep leaves behind."""
+    entry = catalog.require_entry(identifier)
+    catalog.put(entry.record.model_copy(update={"lifecycle": DatasetLifecycle.DELETING}), revision=entry.revision)
+
+
+def bump_the_dead_record(catalog: ObjectCatalog, identifier: str) -> None:
+    """Move the dead record of an identifier on without reviving it, so every claim against it loses."""
+    entry = catalog.require_entry(identifier)
+    assert entry.record.is_live is False
+    # The bytes have to change: an S3 etag is the digest of the object, so rewriting a record
+    # unchanged would leave the revision a claim is racing exactly where it was.
+    catalog.put(entry.record.model_copy(update={"updated_at": current_timestamp()}), revision=entry.revision)
 
 
 def sweep_after(
@@ -220,7 +260,7 @@ def test_a_vector_deletion_that_loses_its_mark_to_a_writer_retries_and_finishes(
     # The mark lost its compare-and-swap to version 2, was reacquired against the record that write
     # left behind, and only then swept: the record and every version go together.
     assert removed > 0
-    assert ObjectCatalog(storage_backend).get(COLLECTION) is None
+    assert_tombstoned(ObjectCatalog(storage_backend), COLLECTION)
     assert vector_keys(storage_backend) == []
 
 
@@ -244,7 +284,7 @@ def test_a_vector_deletion_that_keeps_losing_is_refused_and_sweeps_nothing(
     reader = build_collection_store(storage_backend, settings, ObjectCatalog(storage_backend))
     record = ObjectCatalog(storage_backend).get(COLLECTION)
     assert record is not None
-    assert record.is_deleting is False
+    assert record.is_live is True
     assert reader.versions(COLLECTION) == list(range(1, VECTOR_DELETION_ATTEMPTS + 2))
     assert reader.current_version(COLLECTION) == VECTOR_DELETION_ATTEMPTS + 1
     assert len(reader.read(COLLECTION, version=1).frame) == 12
@@ -260,18 +300,14 @@ def test_a_vector_deletion_that_loses_to_another_deleter_finishes_that_deletion(
     writer = build_collection_store(storage_backend, settings, plain)
     writer.write(COLLECTION, sample_features, identifier_property="id", publish=True)
 
-    def mark_deleting() -> None:
-        entry = plain.require_entry(COLLECTION)
-        plain.put(entry.record.model_copy(update={"lifecycle": DatasetLifecycle.DELETING}), revision=entry.revision)
-
-    racing = RacingCatalog(storage_backend, before_mark=mark_deleting)
+    racing = RacingCatalog(storage_backend, before_mark=lambda: mark_deleting(plain, COLLECTION))
     deleter = build_collection_store(storage_backend, settings, racing)
 
     removed = deleter.delete(COLLECTION)
 
     # The re-read found the record already reserved, and finishing that deletion is what this call is for.
     assert removed > 0
-    assert plain.get(COLLECTION) is None
+    assert_tombstoned(plain, COLLECTION)
     assert vector_keys(storage_backend) == []
 
 
@@ -293,7 +329,7 @@ def test_a_vector_deletion_that_loses_to_a_finished_deleter_sweeps_nothing(
     removed = deleter.delete(COLLECTION)
 
     assert removed == 0
-    assert plain.get(COLLECTION) is None
+    assert_tombstoned(plain, COLLECTION)
     assert vector_keys(storage_backend) == []
 
 
@@ -307,7 +343,7 @@ def test_a_raster_deletion_that_loses_its_mark_to_a_writer_retries_and_finishes(
 
     deleter.delete(COVERAGE)
 
-    assert ObjectCatalog(storage_backend).get(COVERAGE) is None
+    assert_tombstoned(ObjectCatalog(storage_backend), COVERAGE)
     assert raster_keys(storage_backend) == []
 
 
@@ -325,7 +361,7 @@ def test_a_raster_deletion_that_keeps_losing_is_refused_and_sweeps_nothing(
     reader = RasterRepository(storage_backend, ObjectCatalog(storage_backend), settings)
     record = ObjectCatalog(storage_backend).get(COVERAGE)
     assert record is not None
-    assert record.is_deleting is False
+    assert record.is_live is True
     # The published snapshot still reads, and every timestep the racing appends committed is still there.
     assert reader.query(COVERAGE).cell_count == 2 * 4 * 6
     draft = reader.describe(COVERAGE, version=VersionSelector.DRAFT)
@@ -339,16 +375,12 @@ def test_a_raster_deletion_that_loses_to_another_deleter_finishes_that_deletion(
     plain = ObjectCatalog(storage_backend)
     published_coverage(storage_backend, settings)
 
-    def mark_deleting() -> None:
-        entry = plain.require_entry(COVERAGE)
-        plain.put(entry.record.model_copy(update={"lifecycle": DatasetLifecycle.DELETING}), revision=entry.revision)
-
-    racing = RacingCatalog(storage_backend, before_mark=mark_deleting)
+    racing = RacingCatalog(storage_backend, before_mark=lambda: mark_deleting(plain, COVERAGE))
     deleter = RasterRepository(storage_backend, racing, settings)
 
     deleter.delete(COVERAGE)
 
-    assert plain.get(COVERAGE) is None
+    assert_tombstoned(plain, COVERAGE)
     assert raster_keys(storage_backend) == []
 
 
@@ -377,7 +409,7 @@ def test_a_raster_deletion_that_loses_to_a_finished_deleter_sweeps_nothing(
 
     # Only the deleter that held the reservation swept; the one that lost the record swept nothing.
     assert len(swept) == 1
-    assert plain.get(COVERAGE) is None
+    assert_tombstoned(plain, COVERAGE)
     assert raster_keys(storage_backend) == []
 
 
@@ -408,7 +440,7 @@ def test_a_vector_deletion_whose_collection_is_recreated_after_its_mark_sweeps_n
     reader = build_collection_store(storage_backend, settings, ObjectCatalog(storage_backend))
     record = plain.get(COLLECTION)
     assert record is not None
-    assert record.is_deleting is False
+    assert record.is_live is True
     assert reader.versions(COLLECTION) == [1]
     assert reader.current_version(COLLECTION) == 1
     assert len(reader.read(COLLECTION).frame) == 4
@@ -463,7 +495,7 @@ def test_a_vector_write_that_loses_the_conditional_create_sweeps_the_generation_
     def claim_the_identifier_first() -> None:
         winner.write(COLLECTION, sample_features.iloc[:4], identifier_property="id", publish=True)
 
-    racing = RacingCatalog(storage_backend, before_create=claim_the_identifier_first)
+    racing = RacingCatalog(storage_backend, before_claim=claim_the_identifier_first)
     loser = build_collection_store(storage_backend, settings, racing)
 
     with pytest.raises(DatasetAlreadyExistsError):
@@ -508,8 +540,7 @@ def test_two_vector_writers_taking_over_one_deletion_leave_the_winner_whole(
     first_writer = build_collection_store(storage_backend, settings, plain)
     first_writer.write(COLLECTION, sample_features, identifier_property="id", publish=True)
     doomed = live_collection_record(plain).storage_key
-    entry = plain.require_entry(COLLECTION)
-    plain.put(entry.record.model_copy(update={"lifecycle": DatasetLifecycle.DELETING}), revision=entry.revision)
+    mark_deleting(plain, COLLECTION)
 
     def take_the_deletion_over_first() -> None:
         # The winner sees the same marked record, finishes the same deletion, and creates the
@@ -576,7 +607,7 @@ def test_a_raster_deletion_whose_coverage_is_recreated_after_its_mark_sweeps_not
     reader = RasterRepository(storage_backend, ObjectCatalog(storage_backend), settings)
     record = plain.get(COVERAGE)
     assert record is not None
-    assert record.is_deleting is False
+    assert record.is_live is True
     assert reader.query(COVERAGE).cell_count == 1 * 4 * 6
     assert reader.describe(COVERAGE).timestep_count == 1
 
@@ -626,7 +657,7 @@ def test_a_raster_create_that_loses_the_conditional_create_sweeps_the_generation
         winner.create(COVERAGE, build_grid(), build_cube(build_grid(), count=1))
         winner.publish(COVERAGE)
 
-    racing = RacingCatalog(storage_backend, before_create=claim_the_identifier_first)
+    racing = RacingCatalog(storage_backend, before_claim=claim_the_identifier_first)
     loser = RasterRepository(storage_backend, racing, settings)
 
     with pytest.raises(DatasetAlreadyExistsError):
@@ -685,8 +716,7 @@ def test_two_raster_writers_taking_over_one_deletion_leave_the_winner_whole(
     plain = ObjectCatalog(storage_backend)
     published_coverage(storage_backend, settings)
     doomed = live_coverage_record(plain).storage_key
-    entry = plain.require_entry(COVERAGE)
-    plain.put(entry.record.model_copy(update={"lifecycle": DatasetLifecycle.DELETING}), revision=entry.revision)
+    mark_deleting(plain, COVERAGE)
 
     def take_the_deletion_over_first() -> None:
         # The winner sees the same marked record, finishes the same deletion, and creates the coverage
@@ -712,3 +742,416 @@ def test_two_raster_writers_taking_over_one_deletion_leave_the_winner_whole(
     reader = RasterRepository(storage_backend, ObjectCatalog(storage_backend), settings)
     assert reader.query(COVERAGE).cell_count == 1 * 4 * 6
     assert reader.describe(COVERAGE).timestep_count == 1
+
+
+def test_a_vector_deletion_that_loses_its_tombstone_leaves_the_recreated_collection_whole(
+    storage_backend: StorageBackend,
+    settings: Settings,
+    sample_features: geopandas.GeoDataFrame,
+) -> None:
+    plain = ObjectCatalog(storage_backend)
+    build_collection_store(storage_backend, settings, plain).write(
+        COLLECTION,
+        sample_features,
+        identifier_property="id",
+        publish=True,
+    )
+
+    def finish_the_deletion_and_write_again() -> None:
+        # The window the unconditional record delete left open: between the last read of this deleter
+        # and its last write, another actor finishes the same deletion and a writer claims the name
+        # again. The delete that followed removed that writer's record, and the collection answered
+        # 404 over objects nothing named any more.
+        other = build_collection_store(storage_backend, settings, plain)
+        other.delete(COLLECTION)
+        other.write(COLLECTION, sample_features.iloc[:4], identifier_property="id", publish=True)
+
+    racing = RacingCatalog(storage_backend, before_tombstone=finish_the_deletion_and_write_again)
+
+    removed = build_collection_store(storage_backend, settings, racing).delete(COLLECTION)
+
+    # The deleter emptied the generation it reserved, which was its own and already dead, and then
+    # lost its tombstone to the record that writer created: the recreated collection is live, listed
+    # and readable rather than answering 404 over objects nothing names.
+    assert removed > 0
+    record = live_collection_record(plain)
+    assert [listed.dataset_identifier for listed in plain.list_datasets()] == [COLLECTION]
+    reader = build_collection_store(storage_backend, settings, ObjectCatalog(storage_backend))
+    assert reader.versions(COLLECTION) == [1]
+    assert reader.current_version(COLLECTION) == 1
+    assert len(reader.read(COLLECTION).frame) == 4
+    assert_stored_below(storage_backend, record, vector_keys(storage_backend))
+
+
+def test_a_raster_deletion_that_loses_its_tombstone_leaves_the_recreated_coverage_whole(
+    storage_backend: StorageBackend,
+    settings: Settings,
+) -> None:
+    plain = ObjectCatalog(storage_backend)
+    published_coverage(storage_backend, settings)
+
+    def finish_the_deletion_and_create_again() -> None:
+        # The same window as the vector case: another actor finishes this deletion and a writer
+        # creates the coverage again, between the last read of this deleter and its last write.
+        other = RasterRepository(storage_backend, plain, settings)
+        other.delete(COVERAGE)
+        other.create(COVERAGE, build_grid(), build_cube(build_grid(), count=1))
+        other.publish(COVERAGE)
+
+    racing = RacingCatalog(storage_backend, before_tombstone=finish_the_deletion_and_create_again)
+
+    RasterRepository(storage_backend, racing, settings).delete(COVERAGE)
+
+    record = live_coverage_record(plain)
+    assert [listed.dataset_identifier for listed in plain.list_datasets()] == [COVERAGE]
+    reader = RasterRepository(storage_backend, ObjectCatalog(storage_backend), settings)
+    assert reader.query(COVERAGE).cell_count == 1 * 4 * 6
+    assert reader.describe(COVERAGE).timestep_count == 1
+    assert_no_stray_raster_objects(storage_backend, record)
+
+
+def test_a_vector_collection_written_over_a_tombstone_inherits_nothing_from_the_dead_one(
+    storage_backend: StorageBackend,
+    settings: Settings,
+    sample_features: geopandas.GeoDataFrame,
+) -> None:
+    plain = ObjectCatalog(storage_backend)
+    store = build_collection_store(storage_backend, settings, plain)
+    store.write(
+        COLLECTION,
+        sample_features,
+        identifier_property="id",
+        title="Before the deletion",
+        license="CC-BY-4.0",
+        attribution="Statistics Norway",
+        publish=True,
+    )
+    first = live_collection_record(plain)
+
+    store.delete(COLLECTION)
+    store.write(COLLECTION, sample_features.iloc[:4], identifier_property="id")
+
+    # A write over a tombstone is a first write in every respect but the compare-and-swap it claims
+    # the identifier with: a generation of its own, and nothing carried over from the dead collection.
+    record = live_collection_record(plain)
+    assert record.storage_key != first.storage_key
+    assert_minted_generation(record, "vector", COLLECTION)
+    assert record.title == COLLECTION
+    assert record.license is None
+    assert record.attribution is None
+    assert record.publication.published is False
+    assert record.created_at == record.updated_at
+    assert record.created_at != first.created_at
+    assert store.versions(COLLECTION) == [1]
+
+
+def test_a_raster_coverage_created_over_a_tombstone_inherits_nothing_from_the_dead_one(
+    storage_backend: StorageBackend,
+    settings: Settings,
+) -> None:
+    plain = ObjectCatalog(storage_backend)
+    repository = RasterRepository(storage_backend, plain, settings)
+    repository.create(
+        COVERAGE,
+        build_grid(),
+        build_cube(build_grid()),
+        title="Before the deletion",
+        license="CC-BY-4.0",
+        attribution="Statistics Norway",
+    )
+    repository.publish(COVERAGE)
+    first = live_coverage_record(plain)
+
+    repository.delete(COVERAGE)
+    # No overwrite flag: a tombstone is replaced by a first write rather than overwritten by one.
+    repository.create(COVERAGE, build_grid(), build_cube(build_grid(), count=1))
+
+    record = live_coverage_record(plain)
+    assert record.storage_key != first.storage_key
+    assert_minted_generation(record, "raster", COVERAGE)
+    assert record.title == COVERAGE
+    assert record.license is None
+    assert record.attribution is None
+    assert record.publication.published is False
+    assert record.created_at == record.updated_at
+    assert record.created_at != first.created_at
+
+
+def test_a_coverage_is_created_over_the_tombstone_of_a_collection(
+    storage_backend: StorageBackend,
+    settings: Settings,
+    sample_features: geopandas.GeoDataFrame,
+) -> None:
+    plain = ObjectCatalog(storage_backend)
+    store = build_collection_store(storage_backend, settings, plain)
+    store.write(COLLECTION, sample_features, identifier_property="id", publish=True)
+    store.delete(COLLECTION)
+
+    # The tombstone is checked before the item type is, so the name is free for either engine again.
+    repository = RasterRepository(storage_backend, plain, settings)
+    repository.create(COLLECTION, build_grid(), build_cube(build_grid(), count=1))
+    repository.publish(COLLECTION)
+
+    record = plain.require(COLLECTION)
+    assert isinstance(record, CoverageDataset)
+    assert record.is_live is True
+    assert_minted_generation(record, "raster", COLLECTION)
+    assert repository.query(COLLECTION).cell_count == 1 * 4 * 6
+
+
+def test_a_collection_is_written_over_the_tombstone_of_a_coverage(
+    storage_backend: StorageBackend,
+    settings: Settings,
+    sample_features: geopandas.GeoDataFrame,
+) -> None:
+    plain = ObjectCatalog(storage_backend)
+    RasterRepository(storage_backend, plain, settings).create(COVERAGE, build_grid(), build_cube(build_grid()))
+    RasterRepository(storage_backend, plain, settings).delete(COVERAGE)
+
+    store = build_collection_store(storage_backend, settings, plain)
+    store.write(COVERAGE, sample_features.iloc[:4], identifier_property="id", publish=True)
+
+    record = plain.require(COVERAGE)
+    assert isinstance(record, FeatureDataset)
+    assert record.is_live is True
+    assert_minted_generation(record, "vector", COVERAGE)
+    assert len(store.read(COVERAGE).frame) == 4
+
+
+def test_two_vector_writers_over_one_tombstone_leave_the_winner_whole(
+    storage_backend: StorageBackend,
+    settings: Settings,
+    sample_features: geopandas.GeoDataFrame,
+) -> None:
+    plain = ObjectCatalog(storage_backend)
+    store = build_collection_store(storage_backend, settings, plain)
+    store.write(COLLECTION, sample_features, identifier_property="id", publish=True)
+    store.delete(COLLECTION)
+
+    def claim_the_tombstone_first() -> None:
+        build_collection_store(storage_backend, settings, plain).write(
+            COLLECTION,
+            sample_features.iloc[:4],
+            identifier_property="id",
+            publish=True,
+        )
+
+    racing = RacingCatalog(storage_backend, before_claim=claim_the_tombstone_first)
+    loser = build_collection_store(storage_backend, settings, racing)
+
+    with pytest.raises(DatasetAlreadyExistsError):
+        loser.write(COLLECTION, sample_features.iloc[:3], identifier_property="id")
+
+    # Both writers replaced the same tombstone under compare-and-swap, so exactly one holds the
+    # identifier, and the loser swept the generation it had minted rather than leaving it behind.
+    winner = live_collection_record(plain)
+    assert winner.features.feature_count == 4
+    assert_stored_below(storage_backend, winner, vector_keys(storage_backend))
+    reader = build_collection_store(storage_backend, settings, ObjectCatalog(storage_backend))
+    assert reader.versions(COLLECTION) == [1]
+    assert len(reader.read(COLLECTION).frame) == 4
+
+
+def test_two_raster_creates_over_one_tombstone_leave_the_winner_whole(
+    storage_backend: StorageBackend,
+    settings: Settings,
+) -> None:
+    plain = ObjectCatalog(storage_backend)
+    published_coverage(storage_backend, settings)
+    RasterRepository(storage_backend, plain, settings).delete(COVERAGE)
+
+    def claim_the_tombstone_first() -> None:
+        other = RasterRepository(storage_backend, plain, settings)
+        other.create(COVERAGE, build_grid(), build_cube(build_grid(), count=1))
+        other.publish(COVERAGE)
+
+    racing = RacingCatalog(storage_backend, before_claim=claim_the_tombstone_first)
+    loser = RasterRepository(storage_backend, racing, settings)
+
+    with pytest.raises(DatasetAlreadyExistsError):
+        loser.create(COVERAGE, build_grid(), build_cube(build_grid()))
+
+    winner = live_coverage_record(plain)
+    assert_no_stray_raster_objects(storage_backend, winner)
+    reader = RasterRepository(storage_backend, ObjectCatalog(storage_backend), settings)
+    assert reader.query(COVERAGE).cell_count == 1 * 4 * 6
+    assert reader.describe(COVERAGE).timestep_count == 1
+
+
+def test_a_vector_collection_can_be_deleted_written_again_and_deleted_again(
+    storage_backend: StorageBackend,
+    settings: Settings,
+    sample_features: geopandas.GeoDataFrame,
+) -> None:
+    plain = ObjectCatalog(storage_backend)
+    store = build_collection_store(storage_backend, settings, plain)
+    store.write(COLLECTION, sample_features, identifier_property="id", publish=True)
+
+    assert store.delete(COLLECTION) > 0
+    store.write(COLLECTION, sample_features.iloc[:4], identifier_property="id", publish=True)
+    assert store.delete(COLLECTION) > 0
+
+    # The second deletion reserved the tombstone of the first, marked it and tombstoned it again.
+    assert_tombstoned(plain, COLLECTION)
+    assert vector_keys(storage_backend) == []
+
+
+def test_a_raster_coverage_can_be_deleted_created_again_and_deleted_again(
+    storage_backend: StorageBackend,
+    settings: Settings,
+) -> None:
+    plain = ObjectCatalog(storage_backend)
+    repository = RasterRepository(storage_backend, plain, settings)
+    repository.create(COVERAGE, build_grid(), build_cube(build_grid()))
+    repository.publish(COVERAGE)
+
+    repository.delete(COVERAGE)
+    repository.create(COVERAGE, build_grid(), build_cube(build_grid(), count=1))
+    repository.publish(COVERAGE)
+    repository.delete(COVERAGE)
+
+    assert_tombstoned(plain, COVERAGE)
+    assert raster_keys(storage_backend) == []
+
+
+def test_deleting_a_tombstoned_dataset_answers_as_an_absent_one(
+    storage_backend: StorageBackend,
+    settings: Settings,
+    sample_features: geopandas.GeoDataFrame,
+) -> None:
+    plain = ObjectCatalog(storage_backend)
+    store = build_collection_store(storage_backend, settings, plain)
+    store.write(COLLECTION, sample_features, identifier_property="id", publish=True)
+    store.delete(COLLECTION)
+    repository = RasterRepository(storage_backend, plain, settings)
+    repository.create(COVERAGE, build_grid(), build_cube(build_grid()))
+    repository.delete(COVERAGE)
+
+    with pytest.raises(DatasetNotFoundError):
+        store.delete(COLLECTION)
+    with pytest.raises(DatasetNotFoundError):
+        repository.delete(COVERAGE)
+    with pytest.raises(DatasetNotFoundError):
+        store.read(COLLECTION)
+    with pytest.raises(DatasetNotFoundError):
+        repository.describe(COVERAGE)
+    # A tombstone of the other item type is refused as absent too, rather than as a type mismatch.
+    with pytest.raises(DatasetNotFoundError):
+        store.delete(COVERAGE)
+    with pytest.raises(DatasetNotFoundError):
+        repository.delete(COLLECTION)
+
+
+def test_a_vector_write_taking_over_a_running_deletion_wins_when_the_deleter_tombstones_first(
+    storage_backend: StorageBackend,
+    settings: Settings,
+    sample_features: geopandas.GeoDataFrame,
+) -> None:
+    plain = ObjectCatalog(storage_backend)
+    build_collection_store(storage_backend, settings, plain).write(
+        COLLECTION,
+        sample_features,
+        identifier_property="id",
+        publish=True,
+    )
+    doomed = live_collection_record(plain).storage_key
+    mark_deleting(plain, COLLECTION)
+
+    def let_the_deleter_finish() -> None:
+        # The ordinary case rather than a rare race: the deletion this write took over is still
+        # running, and it swaps its mark for a tombstone while the write is putting its bytes down.
+        build_collection_store(storage_backend, settings, plain).delete(COLLECTION)
+
+    racing = RacingCatalog(storage_backend, before_claim=let_the_deleter_finish)
+    writer = build_collection_store(storage_backend, settings, racing)
+
+    result = writer.write(COLLECTION, sample_features.iloc[:4], identifier_property="id", publish=True)
+
+    # The claim lost to the tombstone and was retried against it. Nobody owned the name, so the write
+    # keeps the generation it had already filled instead of throwing it away and answering 409.
+    assert result.version == 1
+    record = live_collection_record(plain)
+    assert record.storage_key != doomed
+    assert_minted_generation(record, "vector", COLLECTION)
+    reader = build_collection_store(storage_backend, settings, ObjectCatalog(storage_backend))
+    assert reader.versions(COLLECTION) == [1]
+    assert reader.current_version(COLLECTION) == 1
+    assert len(reader.read(COLLECTION).frame) == 4
+    assert_stored_below(storage_backend, record, vector_keys(storage_backend))
+
+
+def test_a_raster_create_taking_over_a_running_deletion_wins_when_the_deleter_tombstones_first(
+    storage_backend: StorageBackend,
+    settings: Settings,
+) -> None:
+    plain = ObjectCatalog(storage_backend)
+    published_coverage(storage_backend, settings)
+    doomed = live_coverage_record(plain).storage_key
+    mark_deleting(plain, COVERAGE)
+
+    def let_the_deleter_finish() -> None:
+        RasterRepository(storage_backend, plain, settings).delete(COVERAGE)
+
+    racing = RacingCatalog(storage_backend, before_claim=let_the_deleter_finish)
+    writer = RasterRepository(storage_backend, racing, settings)
+
+    writer.create(COVERAGE, build_grid(), build_cube(build_grid(), count=1))
+
+    record = live_coverage_record(plain)
+    assert record.storage_key != doomed
+    assert_minted_generation(record, "raster", COVERAGE)
+    reader = RasterRepository(storage_backend, ObjectCatalog(storage_backend), settings)
+    assert reader.describe(COVERAGE, version=VersionSelector.DRAFT).timestep_count == 1
+    assert_no_stray_raster_objects(storage_backend, record)
+
+
+def test_a_vector_claim_that_keeps_losing_to_a_moving_dead_record_is_refused_and_leaves_nothing(
+    storage_backend: StorageBackend,
+    settings: Settings,
+    sample_features: geopandas.GeoDataFrame,
+) -> None:
+    plain = ObjectCatalog(storage_backend)
+    build_collection_store(storage_backend, settings, plain).write(
+        COLLECTION,
+        sample_features,
+        identifier_property="id",
+        publish=True,
+    )
+    mark_deleting(plain, COLLECTION)
+
+    racing = RacingCatalog(
+        storage_backend,
+        before_claim=lambda: bump_the_dead_record(plain, COLLECTION),
+        claim_rounds=VECTOR_CLAIM_ATTEMPTS,
+    )
+    writer = build_collection_store(storage_backend, settings, racing)
+
+    with pytest.raises(PublicationConflictError):
+        writer.write(COLLECTION, sample_features.iloc[:4], identifier_property="id")
+
+    # Every attempt raced a record that moved again, so the write gave up and swept the generation it
+    # had minted: nothing of it survives, and the dead record is still dead.
+    assert plain.require(COLLECTION).is_live is False
+    assert vector_keys(storage_backend) == []
+
+
+def test_a_raster_claim_that_keeps_losing_to_a_moving_dead_record_is_refused_and_leaves_nothing(
+    storage_backend: StorageBackend,
+    settings: Settings,
+) -> None:
+    plain = ObjectCatalog(storage_backend)
+    published_coverage(storage_backend, settings)
+    mark_deleting(plain, COVERAGE)
+
+    racing = RacingCatalog(
+        storage_backend,
+        before_claim=lambda: bump_the_dead_record(plain, COVERAGE),
+        claim_rounds=RASTER_CLAIM_ATTEMPTS,
+    )
+    writer = RasterRepository(storage_backend, racing, settings)
+
+    with pytest.raises(PublicationConflictError):
+        writer.create(COVERAGE, build_grid(), build_cube(build_grid(), count=1))
+
+    assert plain.require(COVERAGE).is_live is False
+    assert raster_keys(storage_backend) == []

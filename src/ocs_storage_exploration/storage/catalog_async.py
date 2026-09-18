@@ -18,9 +18,7 @@ from ocs_storage_exploration.storage.errors import PublicationConflictError
 from ocs_storage_exploration.storage.keys import CATALOG_PREFIX, catalog_record_key
 from ocs_storage_exploration.storage.objects import (
     create_object_async,
-    delete_objects_async,
     list_object_keys_async,
-    object_exists_async,
     put_object_async,
     read_object_async,
     replace_object_async,
@@ -35,7 +33,8 @@ class AsyncObjectCatalog:
     obstore is the one layer of this service that is natively asynchronous, so the catalog is the one
     component that does not need a worker thread: every call here is an awaitable obstore request on the
     event loop. The key layout, the record encoding and the failure mapping are shared with
-    ``ObjectCatalog`` rather than restated, so the two can never drift apart.
+    ``ObjectCatalog`` rather than restated, so the two can never drift apart. It has no delete either:
+    a finished deletion tombstones its record rather than removing it.
     """
 
     def __init__(self, backend: StorageBackend) -> None:
@@ -91,24 +90,17 @@ class AsyncObjectCatalog:
         return entry
 
     async def list_datasets(self, item_type: ItemType | None = None) -> list[Dataset]:
-        """List dataset records, optionally filtered by item type, skipping datasets being deleted."""
+        """List dataset records, optionally filtered by item type, skipping everything that is not live."""
         datasets: list[Dataset] = []
         async for identifier in self.iter_identifiers():
             dataset = await self.get(identifier)
-            if dataset is None or dataset.is_deleting:
-                # A deletion marks its record before it sweeps; from here on the dataset is gone.
+            if dataset is None or not dataset.is_live:
+                # A deletion marks its record before it sweeps and tombstones it afterwards; from
+                # the mark onwards the dataset is gone as far as a listing is concerned.
                 continue
             if item_type is None or dataset.item_type is item_type:
                 datasets.append(dataset)
         return datasets
-
-    async def delete(self, identifier: str) -> None:
-        """Delete a dataset record, raising DatasetNotFoundError when it is absent."""
-        address = self.record_address(identifier)
-        store = self._backend.object_store()
-        if not await object_exists_async(store, address.key):
-            raise no_such_record(identifier)
-        await delete_objects_async(store, address.key)
 
     async def iter_identifiers(self) -> AsyncIterator[str]:
         """Iterate over the identifiers of every known dataset in key order."""

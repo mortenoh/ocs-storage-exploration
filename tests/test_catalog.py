@@ -77,9 +77,6 @@ def test_missing_records_are_reported(catalog: ObjectCatalog) -> None:
     with pytest.raises(DatasetNotFoundError):
         catalog.require("absent")
 
-    with pytest.raises(DatasetNotFoundError):
-        catalog.delete("absent")
-
 
 def test_records_are_listed_and_filtered_by_item_type(catalog: ObjectCatalog) -> None:
     catalog.put(build_coverage())
@@ -97,15 +94,6 @@ def test_records_can_be_replaced(catalog: ObjectCatalog) -> None:
     catalog.put(build_coverage(title="Revised title"))
 
     assert catalog.require("temperature").title == "Revised title"
-
-
-def test_records_can_be_deleted(catalog: ObjectCatalog) -> None:
-    catalog.put(build_coverage())
-
-    catalog.delete("temperature")
-
-    assert catalog.get("temperature") is None
-    assert list(catalog.iter_identifiers()) == []
 
 
 def test_a_second_catalog_over_the_same_backend_sees_the_record(storage_backend: StorageBackend) -> None:
@@ -177,16 +165,20 @@ def test_a_read_in_between_does_not_launder_a_stale_revision(storage_backend: St
         first.put(build_coverage(title="Written by the first catalog"), revision=stale.revision)
 
 
-def test_a_deleted_record_loses_the_compare_and_swap(storage_backend: StorageBackend) -> None:
+def test_a_tombstoned_record_loses_the_compare_and_swap(storage_backend: StorageBackend) -> None:
     first = ObjectCatalog(storage_backend)
     second = ObjectCatalog(storage_backend)
     first.put(build_coverage(), create=True)
     entry = first.get_entry("temperature")
     assert entry is not None
-    second.delete("temperature")
+    tombstoned = second.require_entry("temperature")
+    second.put(
+        tombstoned.record.model_copy(update={"lifecycle": DatasetLifecycle.DELETED}),
+        revision=tombstoned.revision,
+    )
 
     with pytest.raises(PublicationConflictError):
-        first.put(build_coverage(title="Written after the delete"), revision=entry.revision)
+        first.put(build_coverage(title="Written after the deletion"), revision=entry.revision)
 
 
 def test_a_put_without_a_revision_overwrites_whatever_is_there(storage_backend: StorageBackend) -> None:
@@ -226,4 +218,22 @@ def test_list_datasets_skips_a_record_being_deleted_while_get_still_reads_it(cat
     # A deletion that stopped half way has to be findable, or nothing could ever finish it.
     marked = catalog.require("districts")
     assert marked.is_deleting is True
+    assert marked.is_live is False
     assert catalog.get("districts") is not None
+
+
+def test_list_datasets_skips_a_tombstone_while_get_still_reads_it(catalog: ObjectCatalog) -> None:
+    catalog.put(build_coverage(), create=True)
+    catalog.put(build_feature(), create=True)
+    entry = catalog.require_entry("districts")
+    catalog.put(entry.record.model_copy(update={"lifecycle": DatasetLifecycle.DELETED}), revision=entry.revision)
+
+    listed = catalog.list_datasets()
+
+    assert [record.dataset_identifier for record in listed] == ["temperature"]
+    assert catalog.list_datasets(ItemType.FEATURE) == []
+    # The record outlives the dataset, which is what lets the next write replace it under a swap.
+    tombstone = catalog.require("districts")
+    assert tombstone.is_tombstone is True
+    assert tombstone.is_live is False
+    assert list(catalog.iter_identifiers()) == ["districts", "temperature"]
